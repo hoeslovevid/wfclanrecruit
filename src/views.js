@@ -143,7 +143,6 @@ export function homeView({ clans, alliances, user }) {
 
   return `
     <section class="hero">
-      <p class="eyebrow">WF Clan Recruit</p>
       <h1>Find a clan.<br /><em>Or post yours.</em></h1>
       <p class="lead">Browse open clans and alliances, read the post, then join their Discord. Leaders publish once — everyone sees the same board.</p>
       <form class="search" data-hero-search>
