@@ -26,17 +26,22 @@ const dbPath = path.join(dataDir, "db.json");
 
 export const paths = { dataDir, uploadDir, dbPath };
 
+const isProd = process.env.NODE_ENV === "production";
+const DEMO_USER_ID = "user-leader";
+
 function emptyDb() {
   const now = new Date().toISOString();
   return {
-    users: [
-      {
-        id: "user-leader",
-        username: "leader",
-        password: hashPassword("recruit1"),
-        createdAt: now,
-      },
-    ],
+    users: isProd
+      ? []
+      : [
+          {
+            id: DEMO_USER_ID,
+            username: "leader",
+            password: hashPassword("recruit1"),
+            createdAt: now,
+          },
+        ],
     sessions: [],
     clans: [],
     alliances: [],
@@ -52,6 +57,20 @@ function stripSeedListings(db) {
   return { ...db, clans, alliances };
 }
 
+function stripDemoUser(db) {
+  if (!isProd) return db;
+  const users = (db.users || []).filter((user) => user.id !== DEMO_USER_ID);
+  const sessions = (db.sessions || []).filter((session) => session.userId !== DEMO_USER_ID);
+  if (users.length === (db.users || []).length && sessions.length === (db.sessions || []).length) {
+    return db;
+  }
+  return { ...db, users, sessions };
+}
+
+function sanitizeDb(db) {
+  return stripDemoUser(stripSeedListings(db));
+}
+
 export function ensureStorage() {
   fs.mkdirSync(dataDir, { recursive: true });
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -60,7 +79,7 @@ export function ensureStorage() {
     return;
   }
   const current = JSON.parse(fs.readFileSync(dbPath, "utf8"));
-  const next = stripSeedListings(current);
+  const next = sanitizeDb(current);
   if (next !== current) {
     fs.writeFileSync(dbPath, JSON.stringify(next, null, 2));
   }

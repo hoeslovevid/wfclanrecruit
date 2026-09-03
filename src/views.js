@@ -323,6 +323,11 @@ function checks(name, values, selected = []) {
     .join("");
 }
 
+function demoLoginHint() {
+  if (!import.meta.env.DEV) return "";
+  return `<p class="muted">Demo account: <code>leader</code> / <code>recruit1</code></p>`;
+}
+
 function authGate(nextHash) {
   return `
     <section class="auth-card">
@@ -333,7 +338,7 @@ function authGate(nextHash) {
         <a class="btn btn-primary" href="#/login?next=${encodeURIComponent(nextHash)}" data-link>Sign in</a>
         <a class="btn btn-ghost" href="#/register?next=${encodeURIComponent(nextHash)}" data-link>Create account</a>
       </div>
-      <p class="muted">Demo account: <code>leader</code> / <code>recruit1</code></p>
+      ${demoLoginHint()}
     </section>
   `;
 }
@@ -343,16 +348,16 @@ export function postView({ user, alliances = [], draft = {} }) {
   return `
     <section class="page-hero">
       <p class="eyebrow">Leaders</p>
-      <h1>Post a clan</h1>
+      <h1>Post a listing</h1>
       <p class="lead">Upload an image, write the post once, and send recruits to Discord.</p>
-      <div class="tabs">
+      <div class="tabs" role="tablist" aria-label="Listing type">
         <a class="tab is-active" href="#/post" data-link>Clan</a>
         <a class="tab" href="#/post-alliance" data-link>Alliance</a>
       </div>
     </section>
     <section class="composer">
       <form id="post-form" class="stack" novalidate>
-        <div class="panel stack">
+        <div class="form-block">
           <h2>Identity</h2>
           <div class="two-col">
             <label class="field"><span>Clan name</span><input name="name" required maxlength="48" value="${escapeHtml(draft.name || "")}" /></label>
@@ -366,7 +371,7 @@ export function postView({ user, alliances = [], draft = {} }) {
             <small>PNG, JPG, WEBP, GIF, or SVG. Max 2 MB.</small>
           </label>
         </div>
-        <div class="panel stack">
+        <div class="form-block">
           <h2>Details</h2>
           <div class="two-col">
             <label class="field"><span>Platform</span><select name="platform" required>${optionList(PLATFORMS, draft.platform)}</select></label>
@@ -387,7 +392,7 @@ export function postView({ user, alliances = [], draft = {} }) {
           </div>
           <fieldset class="fieldset"><legend>Playstyles</legend><div class="checks">${checks("playstyles", PLAYSTYLES, draft.playstyles || [])}</div></fieldset>
         </div>
-        <div class="panel stack">
+        <div class="form-block">
           <h2>The post</h2>
           <label class="field"><span>Headline</span><input name="headline" required maxlength="90" /></label>
           <label class="field"><span>Short summary</span><textarea name="summary" required maxlength="220" rows="3"></textarea></label>
@@ -396,15 +401,15 @@ export function postView({ user, alliances = [], draft = {} }) {
             <label class="field"><span>What you offer <small>one per line</small></span><textarea name="offering" required rows="5"></textarea></label>
             <label class="field"><span>Requirements <small>one per line</small></span><textarea name="requirements" required rows="5"></textarea></label>
           </div>
-          <div class="row-between">
-            <p class="error" id="form-note" hidden></p>
-            <button class="btn btn-primary" type="submit">Publish clan</button>
-          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" type="submit">Publish clan</button>
+          <p class="error" id="form-note" hidden></p>
         </div>
       </form>
-      <aside>
-        <p class="eyebrow">Preview</p>
-        <div id="live-preview"></div>
+      <aside class="preview-panel">
+        <h2>Preview</h2>
+        <div class="live-preview" id="live-preview"></div>
       </aside>
     </section>
   `;
@@ -415,16 +420,16 @@ export function alliancePostView({ user }) {
   return `
     <section class="page-hero">
       <p class="eyebrow">Leaders</p>
-      <h1>Post an alliance</h1>
+      <h1>Post a listing</h1>
       <p class="lead">For groups of clans that share a Discord and want one public listing.</p>
-      <div class="tabs">
+      <div class="tabs" role="tablist" aria-label="Listing type">
         <a class="tab" href="#/post" data-link>Clan</a>
         <a class="tab is-active" href="#/post-alliance" data-link>Alliance</a>
       </div>
     </section>
     <section class="composer">
       <form id="alliance-form" class="stack" novalidate>
-        <div class="panel stack">
+        <div class="form-block">
           <h2>Identity</h2>
           <div class="two-col">
             <label class="field"><span>Alliance name</span><input name="name" required maxlength="48" /></label>
@@ -434,7 +439,7 @@ export function alliancePostView({ user }) {
           </div>
           <label class="field"><span>Alliance image</span><input name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" /><small>PNG, JPG, WEBP, GIF, or SVG. Max 2 MB.</small></label>
         </div>
-        <div class="panel stack">
+        <div class="form-block">
           <h2>Details</h2>
           <div class="two-col">
             <label class="field"><span>Region</span><select name="region" required>${optionList(REGIONS, "Global")}</select></label>
@@ -444,7 +449,7 @@ export function alliancePostView({ user }) {
           </div>
           <fieldset class="fieldset"><legend>Platforms</legend><div class="checks">${checks("platforms", PLATFORMS)}</div></fieldset>
         </div>
-        <div class="panel stack">
+        <div class="form-block">
           <h2>The post</h2>
           <label class="field"><span>Headline</span><input name="headline" required maxlength="90" /></label>
           <label class="field"><span>Short summary</span><textarea name="summary" required maxlength="220" rows="3"></textarea></label>
@@ -453,15 +458,15 @@ export function alliancePostView({ user }) {
             <label class="field"><span>What you offer</span><textarea name="offering" required rows="5"></textarea></label>
             <label class="field"><span>Requirements</span><textarea name="requirements" required rows="5"></textarea></label>
           </div>
-          <div class="row-between">
-            <p class="error" id="form-note" hidden></p>
-            <button class="btn btn-primary" type="submit">Publish alliance</button>
-          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" type="submit">Publish alliance</button>
+          <p class="error" id="form-note" hidden></p>
         </div>
       </form>
-      <aside>
-        <p class="eyebrow">Preview</p>
-        <div id="live-preview"></div>
+      <aside class="preview-panel">
+        <h2>Preview</h2>
+        <div class="live-preview" id="live-preview"></div>
       </aside>
     </section>
   `;
@@ -485,7 +490,7 @@ export function authView(mode, next = "/") {
           ? `Need an account? <a href="#/register?next=${encodeURIComponent(next)}" data-link>Register</a>`
           : `Already have one? <a href="#/login?next=${encodeURIComponent(next)}" data-link>Sign in</a>`
       }</p>
-      <p class="muted">Demo: <code>leader</code> / <code>recruit1</code></p>
+      ${demoLoginHint()}
     </section>
   `;
 }
@@ -538,21 +543,40 @@ export function guideView() {
   return `
     <section class="page-hero">
       <p class="eyebrow">Guide</p>
-      <h1>How WF Clan Recruit works</h1>
-      <p class="lead">A straight path from a listing to a Discord server to an in-game invite.</p>
+      <h1>How it works</h1>
+      <p class="lead">A listing here is a public post. Recruits read it, join your Discord, then wait for the in-game invite.</p>
     </section>
-    <section class="grid three">
-      <article class="panel"><p class="kicker">01</p><h2>Create an account</h2><p class="muted">Leaders sign in so posts persist on the server. Players can browse without an account.</p></article>
-      <article class="panel"><p class="kicker">02</p><h2>Publish a listing</h2><p class="muted">Add a clan or alliance, upload an image, and include a Discord invite you control.</p></article>
-      <article class="panel"><p class="kicker">03</p><h2>Recruits join Discord</h2><p class="muted">They read the post here, click through, introduce themselves, then wait for the in-game invite.</p></article>
-    </section>
-    <section class="panel section">
-      <h2>Rules of the board</h2>
-      <ul class="muted">
-        <li>Use a real Discord invite. People will click it.</li>
-        <li>Be exact about MR, trials, and behavior rules.</li>
-        <li>You can remove your own posts from the account page.</li>
-      </ul>
+    <section class="guide-page">
+      <div class="grid three">
+        <article class="panel guide-step">
+          <p class="kicker">Step 01</p>
+          <h3>Create an account</h3>
+          <p class="muted">Leaders sign in so posts stay on the server. Players can browse without one.</p>
+        </article>
+        <article class="panel guide-step">
+          <p class="kicker">Step 02</p>
+          <h3>Publish a listing</h3>
+          <p class="muted">Add a clan or alliance, upload an image, and include a Discord invite you control.</p>
+        </article>
+        <article class="panel guide-step">
+          <p class="kicker">Step 03</p>
+          <h3>Recruits join Discord</h3>
+          <p class="muted">They read the post, click through, introduce themselves, then wait for the invite.</p>
+        </article>
+      </div>
+      <article class="panel">
+        <p class="kicker">Rules</p>
+        <h3>Keep listings honest</h3>
+        <ul class="guide-rules">
+          <li>Use a real Discord invite. People will click it.</li>
+          <li>Be exact about MR, trials, and behavior rules.</li>
+          <li>You can remove your own posts from the account page.</li>
+        </ul>
+      </article>
+      <div class="row guide-actions">
+        <a class="btn btn-primary" href="#/browse" data-link>Browse clans</a>
+        <a class="btn btn-ghost" href="#/post" data-link>Post a listing</a>
+      </div>
     </section>
   `;
 }
