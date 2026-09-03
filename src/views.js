@@ -155,7 +155,6 @@ export function homeView({ clans, alliances, user }) {
         <div><dt>Clan posts</dt><dd>${clans.length}</dd></div>
         <div><dt>Open now</dt><dd>${openCount}</dd></div>
         <div><dt>Alliances</dt><dd>${alliances.length}</dd></div>
-        <div><dt>Accounts</dt><dd>${user ? "Signed in" : "Required to post"}</dd></div>
       </dl>
     </section>
 
