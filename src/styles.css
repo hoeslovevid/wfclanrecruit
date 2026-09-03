@@ -783,6 +783,41 @@ select {
   box-shadow: var(--shadow);
 }
 .auth-card .row { justify-content: flex-start; margin: 16px 0; }
+.auth-advanced {
+  margin-top: 18px;
+  color: var(--muted);
+}
+.auth-advanced summary {
+  cursor: pointer;
+  font-weight: 650;
+  color: var(--text);
+}
+.auth-advanced form { margin-top: 12px; }
+.verify-steps {
+  margin: 0 0 16px;
+  padding-left: 1.2em;
+}
+.verify-steps a { color: var(--accent); }
+.verify-status {
+  margin: 8px 0 12px;
+  padding-left: 1.2em;
+}
+.verify-code {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  background: var(--input);
+}
+.verify-code code {
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  user-select: all;
+}
 
 .composer {
   display: grid;

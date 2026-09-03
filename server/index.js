@@ -6,9 +6,24 @@ import path from "node:path";
 import fs from "node:fs";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { hashPassword, newToken, publicUser, verifyPassword } from "./auth.js";
+import { hashPassword, newToken, verifyPassword } from "./auth.js";
 import { ensureStorage, paths, readDb, writeDb } from "./db.js";
 import { aboutTooLong, normalizeAbout, plainTextFromHtml } from "../src/richtext.js";
+import {
+  DISCORD_MIN_AGE_DAYS,
+  FORUM_CHECK_COOLDOWN_MS,
+  discordAgeDays,
+  discordConfigured,
+  listingCreateWait,
+  newForumToken,
+  normalizeForumUrl,
+  forumNameFromUrl,
+  profileHasToken,
+  publicAccount,
+  publishGate,
+  readForumProfile,
+  uniqueDiscordUsername,
+} from "./verify.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const COOKIE = "wfr_session";
@@ -104,8 +119,55 @@ function requireUser(req, res, next) {
   next();
 }
 
+function requirePoster(req, res, next) {
+  const user = currentUser(req);
+  if (!user) {
+    res.status(401).json({ error: "Sign in with Discord to continue." });
+    return;
+  }
+  req.user = user;
+  const gate = publishGate(user, { isProd });
+  if (!gate.ok) {
+    res.status(403).json({ error: gate.message, code: gate.reason });
+    return;
+  }
+  next();
+}
+
 function canRemove(user, listing) {
   return Boolean(user.admin) || listing.ownerId === user.id;
+}
+
+function publicOrigin(req) {
+  if (process.env.PUBLIC_URL) return String(process.env.PUBLIC_URL).replace(/\/$/, "");
+  if (process.env.RAILWAY_PUBLIC_DOMAIN) return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+  const proto = req.headers["x-forwarded-proto"] || req.protocol || "http";
+  const host = req.headers["x-forwarded-host"] || req.get("host");
+  return `${proto}://${host}`;
+}
+
+function discordRedirectUri(req) {
+  return process.env.DISCORD_REDIRECT_URI || `${publicOrigin(req)}/api/auth/discord/callback`;
+}
+
+function safeNextPath(value) {
+  const next = String(value || "/account");
+  if (!next.startsWith("/") || next.startsWith("//") || next.includes("\\")) return "/account";
+  return next.slice(0, 180);
+}
+
+const OAUTH_COOKIE = "wfr_oauth";
+
+function encodeOauth(value) {
+  return Buffer.from(JSON.stringify(value)).toString("base64url");
+}
+
+function decodeOauth(value) {
+  try {
+    return JSON.parse(Buffer.from(String(value || ""), "base64url").toString("utf8"));
+  } catch {
+    return {};
+  }
 }
 
 const BUMP_COOLDOWN_MS = 12 * 60 * 60 * 1000;
@@ -367,10 +429,222 @@ app.get("/api/health", (_req, res) => {
 
 app.get("/api/auth/me", (req, res) => {
   const user = currentUser(req);
-  res.json({ user: user ? publicUser(user) : null });
+  res.json({
+    user: publicAccount(user, { isProd }),
+    auth: {
+      discord: discordConfigured(),
+      minAgeDays: DISCORD_MIN_AGE_DAYS,
+      passwordRegister: !isProd,
+    },
+  });
+});
+
+app.get("/api/auth/discord", (req, res) => {
+  if (!discordConfigured()) {
+    res.status(503).json({ error: "Discord sign-in is not configured." });
+    return;
+  }
+  const state = newToken();
+  const next = safeNextPath(req.query.next);
+  res.cookie(
+    OAUTH_COOKIE,
+    encodeOauth({ state, next }),
+    { ...cookieOptions(), maxAge: 10 * 60 * 1000 }
+  );
+  const params = new URLSearchParams({
+    client_id: process.env.DISCORD_CLIENT_ID,
+    redirect_uri: discordRedirectUri(req),
+    response_type: "code",
+    scope: "identify email",
+    state,
+  });
+  res.redirect(`https://discord.com/oauth2/authorize?${params}`);
+});
+
+app.get("/api/auth/discord/callback", async (req, res) => {
+  const origin = publicOrigin(req);
+  const fail = (code) => {
+    res.clearCookie(OAUTH_COOKIE, cookieOptions());
+    res.redirect(`${origin}/#/login?error=${encodeURIComponent(code)}`);
+  };
+  if (!discordConfigured()) {
+    fail("discord-config");
+    return;
+  }
+  let stored = {};
+  try {
+    stored = decodeOauth(req.cookies[OAUTH_COOKIE]);
+  } catch {
+    stored = {};
+  }
+  if (!req.query.code || !req.query.state || req.query.state !== stored.state) {
+    fail("discord-state");
+    return;
+  }
+  if (req.query.error) {
+    fail("discord-denied");
+    return;
+  }
+
+  try {
+    const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: process.env.DISCORD_CLIENT_ID,
+        client_secret: process.env.DISCORD_CLIENT_SECRET,
+        grant_type: "authorization_code",
+        code: String(req.query.code),
+        redirect_uri: discordRedirectUri(req),
+      }),
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenRes.ok || !tokenData.access_token) {
+      fail("discord-token");
+      return;
+    }
+    const profileRes = await fetch("https://discord.com/api/users/@me", {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    const discordUser = await profileRes.json();
+    if (!profileRes.ok || !discordUser.id) {
+      fail("discord-profile");
+      return;
+    }
+    if (isProd && discordUser.verified === false) {
+      fail("discord-email");
+      return;
+    }
+    if (discordAgeDays(discordUser.id) < DISCORD_MIN_AGE_DAYS) {
+      fail("discord-age");
+      return;
+    }
+
+    const linked = currentUser(req);
+    const sessionToken = newToken();
+    const next = safeNextPath(stored.next);
+    let errorCode = null;
+    await writeDb((db) => {
+      const byDiscord = db.users.find((item) => item.discordId === discordUser.id);
+      const bySession = linked ? db.users.find((item) => item.id === linked.id) : null;
+      if (byDiscord && bySession && byDiscord.id !== bySession.id) {
+        errorCode = "discord-linked";
+        return db;
+      }
+      let user = byDiscord || (bySession && !bySession.discordId ? bySession : null);
+      if (!user) {
+        user = {
+          id: `user-discord-${discordUser.id}`,
+          username: uniqueDiscordUsername(db, discordUser),
+          password: hashPassword(newToken()),
+          admin: false,
+          createdAt: new Date().toISOString(),
+        };
+        db.users.push(user);
+      }
+      user.discordId = discordUser.id;
+      user.discordUsername = discordUser.global_name || discordUser.username;
+      user.discordEmail = discordUser.email || null;
+      db.sessions.push({
+        token: sessionToken,
+        userId: user.id,
+        expires: Date.now() + 1000 * 60 * 60 * 24 * 30,
+      });
+      return db;
+    });
+    if (errorCode) {
+      fail(errorCode);
+      return;
+    }
+    res.clearCookie(OAUTH_COOKIE, cookieOptions());
+    setSession(res, sessionToken);
+    res.redirect(`${origin}/#${next}`);
+  } catch {
+    fail("discord-error");
+  }
+});
+
+app.post("/api/auth/forum/start", requireUser, (req, res) => {
+  const profileUrl = normalizeForumUrl(req.body.profileUrl || req.user.forumProfileUrl);
+  if (!profileUrl) {
+    res.status(400).json({ error: "Paste your Warframe Forum profile URL (forums.warframe.com/profile/...)." });
+    return;
+  }
+  writeDb((db) => {
+    const user = db.users.find((item) => item.id === req.user.id);
+    if (!user) {
+      res.status(404).json({ error: "Account not found." });
+      return db;
+    }
+    if (!user.forumToken) user.forumToken = newForumToken();
+    if (user.forumVerified && user.forumProfileUrl && user.forumProfileUrl !== profileUrl) {
+      user.forumVerified = false;
+      user.forumToken = newForumToken();
+    }
+    user.forumProfileUrl = profileUrl;
+    user.forumName = forumNameFromUrl(profileUrl);
+    res.json({ user: publicAccount(user, { isProd }) });
+    return db;
+  });
+});
+
+app.post("/api/auth/forum/check", requireUser, async (req, res) => {
+  const profileUrl = normalizeForumUrl(req.body.profileUrl || req.user.forumProfileUrl);
+  if (!profileUrl) {
+    res.status(400).json({ error: "Paste your Warframe Forum profile URL first." });
+    return;
+  }
+  const wait = req.user.forumCheckedAt
+    ? FORUM_CHECK_COOLDOWN_MS - (Date.now() - new Date(req.user.forumCheckedAt).getTime())
+    : 0;
+  if (wait > 0) {
+    res.status(429).json({ error: "Wait a few seconds before checking again." });
+    return;
+  }
+
+  let token = req.user.forumToken;
+  await writeDb((db) => {
+    const user = db.users.find((item) => item.id === req.user.id);
+    if (!user) return db;
+    if (!user.forumToken) user.forumToken = newForumToken();
+    user.forumProfileUrl = profileUrl;
+    user.forumName = forumNameFromUrl(profileUrl);
+    user.forumCheckedAt = new Date().toISOString();
+    token = user.forumToken;
+    return db;
+  });
+
+  try {
+    const profile = await readForumProfile(profileUrl);
+    if (!profileHasToken(profile.html, token)) {
+      res.status(400).json({
+        error: "That profile does not contain your verification code yet. Add it to About Me, save, then check again.",
+      });
+      return;
+    }
+    writeDb((db) => {
+      const user = db.users.find((item) => item.id === req.user.id);
+      if (!user) {
+        res.status(404).json({ error: "Account not found." });
+        return db;
+      }
+      user.forumVerified = true;
+      user.forumProfileUrl = profile.url;
+      user.forumName = forumNameFromUrl(profile.url);
+      user.forumVerifiedAt = new Date().toISOString();
+      res.json({ user: publicAccount(user, { isProd }) });
+      return db;
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message || "Forum check failed." });
+  }
 });
 
 app.post("/api/auth/register", (req, res) => {
+  if (isProd) {
+    res.status(403).json({ error: "Create an account with Discord." });
+    return;
+  }
   const username = String(req.body.username || "").trim();
   const password = String(req.body.password || "");
   if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
@@ -398,7 +672,7 @@ app.post("/api/auth/register", (req, res) => {
     db.users.push(user);
     db.sessions.push({ token, userId: user.id, expires: Date.now() + 1000 * 60 * 60 * 24 * 30 });
     setSession(res, token);
-    res.status(201).json({ user: publicUser(user) });
+    res.status(201).json({ user: publicAccount(user, { isProd }) });
     return db;
   }).catch((error) => {
     if (!res.headersSent) res.status(500).json({ error: error.message });
@@ -420,7 +694,7 @@ app.post("/api/auth/login", (req, res) => {
     return next;
   }).then(() => {
     setSession(res, token);
-    res.json({ user: publicUser(user) });
+    res.json({ user: publicAccount(user, { isProd }) });
   });
 });
 
@@ -453,7 +727,7 @@ app.get("/api/clans/:id", (req, res) => {
   res.json({ clan: decorateClan(clan, db) });
 });
 
-app.post("/api/clans", requireUser, listingUpload, (req, res) => {
+app.post("/api/clans", requirePoster, listingUpload, (req, res) => {
   if (!assertListingFiles(req, res)) return;
   const parsed = parseClanBody(req.body, req.user);
   if (parsed.error) {
@@ -463,6 +737,12 @@ app.post("/api/clans", requireUser, listingUpload, (req, res) => {
   }
 
   writeDb((db) => {
+    const wait = listingCreateWait(db, req.user.id);
+    if (wait) {
+      discardUploads(req);
+      res.status(429).json({ error: wait });
+      return db;
+    }
     if (parsed.fields.allianceId && !db.alliances.some((item) => item.id === parsed.fields.allianceId)) {
       discardUploads(req);
       res.status(400).json({ error: "That alliance does not exist." });
@@ -485,7 +765,7 @@ app.post("/api/clans", requireUser, listingUpload, (req, res) => {
   });
 });
 
-app.put("/api/clans/:id", requireUser, listingUpload, (req, res) => {
+app.put("/api/clans/:id", requirePoster, listingUpload, (req, res) => {
   if (!assertListingFiles(req, res)) return;
   const parsed = parseClanBody(req.body, req.user);
   if (parsed.error) {
@@ -520,7 +800,7 @@ app.put("/api/clans/:id", requireUser, listingUpload, (req, res) => {
   });
 });
 
-app.post("/api/clans/:id/bump", requireUser, (req, res) => {
+app.post("/api/clans/:id/bump", requirePoster, (req, res) => {
   writeDb((db) => {
     const clan = db.clans.find((item) => item.id === req.params.id);
     if (!clan) {
@@ -594,7 +874,7 @@ app.get("/api/alliances/:id", (req, res) => {
   });
 });
 
-app.post("/api/alliances", requireUser, listingUpload, (req, res) => {
+app.post("/api/alliances", requirePoster, listingUpload, (req, res) => {
   if (!assertListingFiles(req, res)) return;
   const parsed = parseAllianceBody(req.body);
   if (parsed.error) {
@@ -604,6 +884,12 @@ app.post("/api/alliances", requireUser, listingUpload, (req, res) => {
   }
 
   writeDb((db) => {
+    const wait = listingCreateWait(db, req.user.id);
+    if (wait) {
+      discardUploads(req);
+      res.status(429).json({ error: wait });
+      return db;
+    }
     const now = new Date().toISOString();
     const alliance = {
       id: slugify(parsed.fields.name),
@@ -621,7 +907,7 @@ app.post("/api/alliances", requireUser, listingUpload, (req, res) => {
   });
 });
 
-app.put("/api/alliances/:id", requireUser, listingUpload, (req, res) => {
+app.put("/api/alliances/:id", requirePoster, listingUpload, (req, res) => {
   if (!assertListingFiles(req, res)) return;
   const parsed = parseAllianceBody(req.body);
   if (parsed.error) {
@@ -651,7 +937,7 @@ app.put("/api/alliances/:id", requireUser, listingUpload, (req, res) => {
   });
 });
 
-app.post("/api/alliances/:id/bump", requireUser, (req, res) => {
+app.post("/api/alliances/:id/bump", requirePoster, (req, res) => {
   writeDb((db) => {
     const alliance = db.alliances.find((item) => item.id === req.params.id);
     if (!alliance) {
@@ -751,6 +1037,9 @@ async function start() {
   console.log(`WF Clan Recruit on http://localhost:${PORT}`);
   console.log(`Storage: ${paths.dbPath}`);
   console.log(`Frontend: ${frontend === "live" ? "live source (same app as production)" : "production dist build"}`);
+  if (!discordConfigured()) {
+    console.warn("DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET are unset. Discord sign-in is off.");
+  }
 }
 
 start().catch((error) => {

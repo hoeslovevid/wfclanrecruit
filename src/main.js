@@ -46,6 +46,7 @@ const state = {
   user: null,
   clans: [],
   alliances: [],
+  auth: { discord: false, passwordRegister: false, minAgeDays: 7 },
 };
 
 function parseRoute() {
@@ -81,6 +82,7 @@ async function refresh() {
     api.alliances(),
   ]);
   state.user = me.user;
+  state.auth = me.auth || state.auth;
   state.clans = clansRes.clans;
   state.alliances = alliancesRes.alliances;
   renderNav();
@@ -189,6 +191,33 @@ function bindCards(root = app) {
     el.addEventListener("keydown", (event) => {
       if (event.key === "Enter") openAlliance(el.dataset.openAlliance);
     });
+  });
+}
+
+function bindForumForm() {
+  const form = app.querySelector("#forum-form");
+  if (!form) return;
+  const note = app.querySelector("#forum-note");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const result = await api.forumStart(form.profileUrl.value.trim());
+      state.user = result.user;
+      renderNav();
+      await render();
+    } catch (error) {
+      showNote(note, error.message);
+    }
+  });
+  app.querySelector("[data-forum='check']")?.addEventListener("click", async () => {
+    try {
+      const result = await api.forumCheck(form.profileUrl.value.trim());
+      state.user = result.user;
+      renderNav();
+      await render();
+    } catch (error) {
+      showNote(note, error.message);
+    }
   });
 }
 
@@ -565,9 +594,12 @@ async function render() {
       app.innerHTML = `<section class="auth-card"><h1>Not allowed</h1><p class="muted">You can only edit your own posts.</p></section>`;
       return;
     }
-    app.innerHTML = postView({ user: state.user, alliances: state.alliances, draft: draft || {} });
+    app.innerHTML = postView({ user: state.user, alliances: state.alliances, draft: draft || {}, auth: state.auth });
     const form = app.querySelector("#post-form");
-    if (!form) return;
+    if (!form) {
+      bindForumForm();
+      return;
+    }
     const preview = app.querySelector("#live-preview");
     const note = app.querySelector("#form-note");
     const mr = app.querySelector("#post-mr");
@@ -617,9 +649,12 @@ async function render() {
       app.innerHTML = `<section class="auth-card"><h1>Not allowed</h1><p class="muted">You can only edit your own posts.</p></section>`;
       return;
     }
-    app.innerHTML = alliancePostView({ user: state.user, draft: draft || {} });
+    app.innerHTML = alliancePostView({ user: state.user, draft: draft || {}, auth: state.auth });
     const form = app.querySelector("#alliance-form");
-    if (!form) return;
+    if (!form) {
+      bindForumForm();
+      return;
+    }
     const preview = app.querySelector("#live-preview");
     const note = app.querySelector("#form-note");
     bindListingComposer(form, {
@@ -659,9 +694,14 @@ async function render() {
 
   if (path === "/login" || path === "/register") {
     const next = params.next || "/account";
-    app.innerHTML = authView(path.slice(1), next);
+    app.innerHTML = authView(path.slice(1), next, {
+      error: params.error || "",
+      discord: Boolean(state.auth.discord),
+      passwordRegister: Boolean(state.auth.passwordRegister),
+    });
     const form = app.querySelector("#auth-form");
     const note = app.querySelector("#form-note");
+    if (!form) return;
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const username = form.username.value.trim();
@@ -690,6 +730,7 @@ async function render() {
       ? state.alliances
       : state.alliances.filter((item) => item.ownerId === state.user.id);
     app.innerHTML = accountView({ user: state.user, clans: mineClans, alliances: mineAlliances });
+    bindForumForm();
     return;
   }
 

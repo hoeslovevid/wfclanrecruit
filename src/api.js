@@ -18,6 +18,10 @@ export const api = {
   register: (username, password) =>
     request("/api/auth/register", { method: "POST", body: JSON.stringify({ username, password }) }),
   logout: () => request("/api/auth/logout", { method: "POST", body: "{}" }),
+  forumStart: (profileUrl) =>
+    request("/api/auth/forum/start", { method: "POST", body: JSON.stringify({ profileUrl }) }),
+  forumCheck: (profileUrl) =>
+    request("/api/auth/forum/check", { method: "POST", body: JSON.stringify({ profileUrl }) }),
   clans: () => request("/api/clans"),
   clan: (id) => request(`/api/clans/${id}`),
   createClan: (formData) => request("/api/clans", { method: "POST", body: formData }),
