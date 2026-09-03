@@ -609,12 +609,14 @@ export function clanModal(clan) {
         <div class="modal-hero">
           ${photo(clan, 72)}
           <div>
-            <p class="kicker">[${escapeHtml(clan.tag)}] · Est. ${escapeHtml(clan.founded || "—")}${clan.allianceName ? ` · ${escapeHtml(clan.allianceName)}` : ""}</p>
+            <div class="modal-kicker">
+              <p class="kicker">[${escapeHtml(clan.tag)}] · Est. ${escapeHtml(clan.founded || "—")}${clan.allianceName ? ` · ${escapeHtml(clan.allianceName)}` : ""}</p>
+              <span class="pill ${statusClass(clan.status)}">${escapeHtml(clan.status)}</span>
+            </div>
             <h2 id="clan-title">${escapeHtml(clan.name)}</h2>
             <p class="headline">${escapeHtml(clan.headline)}</p>
             <div class="chips">${chipList(clan.playstyles)}</div>
           </div>
-          <span class="pill ${statusClass(clan.status)}">${escapeHtml(clan.status)}</span>
         </div>
         <dl class="detail-stats">
           <div><dt>Platform</dt><dd>${escapeHtml(clan.platform)}</dd></div>
@@ -648,11 +650,13 @@ export function allianceModal(alliance) {
         <div class="modal-hero">
           ${photo(alliance, 72)}
           <div>
-            <p class="kicker">[${escapeHtml(alliance.tag)}] · Alliance</p>
+            <div class="modal-kicker">
+              <p class="kicker">[${escapeHtml(alliance.tag)}] · Alliance</p>
+              <span class="pill ${statusClass(alliance.status)}">${escapeHtml(alliance.status)}</span>
+            </div>
             <h2 id="alliance-title">${escapeHtml(alliance.name)}</h2>
             <p class="headline">${escapeHtml(alliance.headline)}</p>
           </div>
-          <span class="pill ${statusClass(alliance.status)}">${escapeHtml(alliance.status)}</span>
         </div>
         <dl class="detail-stats">
           <div><dt>Platforms</dt><dd>${escapeHtml((alliance.platforms || []).join(", "))}</dd></div>
