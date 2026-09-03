@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="WF Clan Recruit is a dark recruitment board for Warframe clans and alliances. Browse posts, join Discord, or publish your own listing."
+    />
+    <title>WF Clan Recruit — Warframe Clans & Alliances</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem("wfr-theme");
+          var theme = saved || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+          document.documentElement.dataset.theme = theme;
+        } catch (e) {
+          document.documentElement.dataset.theme = "dark";
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div class="bg" aria-hidden="true"></div>
+
+    <header class="nav" id="site-nav">
+      <a class="brand" href="#/" data-link>
+        <span class="brand-mark">WF</span>
+        <span class="brand-name">Clan Recruit</span>
+      </a>
+
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#/" data-link data-route="/">Home</a>
+        <a href="#/browse" data-link data-route="/browse">Clans</a>
+        <a href="#/alliances" data-link data-route="/alliances">Alliances</a>
+        <a href="#/post" data-link data-route="/post">Post</a>
+        <a href="#/guide" data-link data-route="/guide">How it works</a>
+      </nav>
+
+      <div class="nav-actions">
+        <label class="theme-switch" title="Switch color theme">
+          <span class="sr-only">Light mode</span>
+          <input id="theme-toggle" type="checkbox" />
+          <span class="theme-switch-ui" aria-hidden="true">
+            <span class="theme-moon">☾</span>
+            <span class="theme-thumb"></span>
+            <span class="theme-sun">☀</span>
+          </span>
+        </label>
+        <div id="nav-account" class="account-slot"></div>
+        <button class="nav-toggle" type="button" aria-label="Open menu" aria-expanded="false">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </header>
+
+    <div class="drawer" id="mobile-drawer" hidden>
+      <nav aria-label="Mobile">
+        <a href="#/" data-link>Home</a>
+        <a href="#/browse" data-link>Clans</a>
+        <a href="#/alliances" data-link>Alliances</a>
+        <a href="#/post" data-link>Post</a>
+        <a href="#/guide" data-link>How it works</a>
+      </nav>
+      <label class="theme-switch drawer-theme" title="Switch color theme">
+        <span class="sr-only">Light mode</span>
+        <input class="theme-toggle-clone" type="checkbox" />
+        <span class="theme-switch-ui" aria-hidden="true">
+          <span class="theme-moon">☾</span>
+          <span class="theme-thumb"></span>
+          <span class="theme-sun">☀</span>
+        </span>
+      </label>
+      <div id="drawer-account" class="account-slot"></div>
+    </div>
+
+    <main id="app"></main>
+
+    <footer class="footer">
+      <div class="wrap footer-grid">
+        <div>
+          <p class="brand"><span class="brand-mark">WF</span><span class="brand-name">Clan Recruit</span></p>
+          <p class="muted">An independent Warframe clan and alliance board. Not affiliated with Digital Extremes.</p>
+        </div>
+        <div>
+          <h3>Navigate</h3>
+          <a href="#/" data-link>Home</a>
+          <a href="#/browse" data-link>Clans</a>
+          <a href="#/alliances" data-link>Alliances</a>
+          <a href="#/post" data-link>Post</a>
+        </div>
+        <div>
+          <h3>Leaders</h3>
+          <p class="muted">Create an account, upload an image, and publish a listing everyone can see.</p>
+          <a class="btn btn-ghost" href="#/register" data-link>Create account</a>
+        </div>
+      </div>
+      <p class="legal">© 2026 WF Clan Recruit</p>
+    </footer>
+
+    <div id="modal-root"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
