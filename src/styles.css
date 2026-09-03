@@ -503,7 +503,7 @@ h2 { font-size: clamp(26px, 3vw, 36px); }
 .field.inline { grid-template-columns: auto 1fr; align-items: center; margin: 0; }
 .field small { color: var(--muted); }
 
-.field input,
+.field input:not([type="file"]):not([type="range"]),
 .field textarea,
 .field select,
 select {
@@ -515,7 +515,7 @@ select {
   outline: none;
 }
 .field textarea { resize: vertical; min-height: 90px; }
-.field input:focus,
+.field input:not([type="file"]):not([type="range"]):focus,
 .field textarea:focus,
 .field select:focus,
 .search:focus-within {
@@ -529,7 +529,85 @@ select {
   background: transparent;
   box-shadow: none;
 }
-.field input[type="file"] { padding: 10px; }
+
+.file-picker {
+  position: relative;
+  display: grid;
+  gap: 8px;
+}
+.file-picker-ui {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 72px;
+  padding: 10px 12px 10px 10px;
+  border: 1px dashed var(--line-strong);
+  background: var(--input);
+  border-radius: 10px;
+  color: var(--text);
+  text-align: left;
+}
+.file-picker-ui:hover {
+  background: var(--ghost-hover);
+  border-color: var(--accent);
+}
+.file-picker-ui:focus-visible {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+.file-picker.has-file .file-picker-ui { border-style: solid; }
+.file-picker.is-dragover .file-picker-ui {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+.file-picker-preview {
+  display: grid;
+  place-items: center;
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  color: var(--muted);
+  background: var(--chip) center / cover no-repeat;
+  border: 1px solid var(--line);
+}
+.file-picker.has-file .file-picker-preview svg { display: none; }
+.file-picker-copy {
+  display: grid;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.file-picker-copy strong {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-picker-copy small { color: var(--muted); font-size: 12px; }
+.file-picker-action {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--ghost);
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.file-picker-clear {
+  justify-self: start;
+  width: max-content;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+.file-picker-clear:hover { color: var(--danger); }
 
 .fieldset {
   border: 1px solid var(--line);

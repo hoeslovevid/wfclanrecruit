@@ -322,6 +322,32 @@ function checks(name, values, selected = []) {
     .join("");
 }
 
+function imagePicker(label) {
+  return `
+    <div class="field">
+      <span>${escapeHtml(label)}</span>
+      <div class="file-picker" data-file-picker>
+        <input class="sr-only" name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" />
+        <button class="file-picker-ui" type="button" data-file-trigger>
+          <span class="file-picker-preview" data-file-preview aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <rect x="2.75" y="4.75" width="14.5" height="10.5" rx="2" stroke="currentColor" stroke-width="1.5"/>
+              <circle cx="7.25" cy="8.5" r="1.25" fill="currentColor"/>
+              <path d="M4.5 13.5 8 10.25l2.5 2.5 2-2 3 2.75" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <span class="file-picker-copy">
+            <strong data-file-label>Upload an image</strong>
+            <small data-file-hint>PNG, JPG, WEBP, GIF, or SVG. Max 2 MB.</small>
+          </span>
+          <span class="file-picker-action" data-file-action>Choose image</span>
+        </button>
+        <button class="file-picker-clear" type="button" data-file-clear hidden>Remove image</button>
+      </div>
+    </div>
+  `;
+}
+
 function demoLoginHint() {
   if (!import.meta.env.DEV) return "";
   return `<p class="muted">Demo account: <code>leader</code> / <code>recruit1</code></p>`;
@@ -364,11 +390,7 @@ export function postView({ user, alliances = [], draft = {} }) {
             <label class="field"><span>In-game leader</span><input name="leader" required maxlength="32" value="${escapeHtml(draft.leader || user.username)}" /></label>
             <label class="field"><span>Founded</span><input name="founded" maxlength="8" value="${escapeHtml(draft.founded || "")}" placeholder="2019" /></label>
           </div>
-          <label class="field">
-            <span>Clan image</span>
-            <input name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" />
-            <small>PNG, JPG, WEBP, GIF, or SVG. Max 2 MB.</small>
-          </label>
+          ${imagePicker("Clan image")}
         </div>
         <div class="form-block">
           <h2>Details</h2>
@@ -436,7 +458,7 @@ export function alliancePostView({ user }) {
             <label class="field"><span>Clans in alliance</span><input name="clanCount" type="number" min="1" required /></label>
             <label class="field"><span>Approx. players</span><input name="members" type="number" min="1" required /></label>
           </div>
-          <label class="field"><span>Alliance image</span><input name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" /><small>PNG, JPG, WEBP, GIF, or SVG. Max 2 MB.</small></label>
+          ${imagePicker("Alliance image")}
         </div>
         <div class="form-block">
           <h2>Details</h2>

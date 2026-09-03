@@ -1,4 +1,4 @@
-export const PLATFORMS = ["PC", "PlayStation", "Xbox", "Nintendo Switch"];
+export const PLATFORMS = ["All Platforms", "PC", "PlayStation", "Xbox", "Nintendo Switch", "Mobile"];
 export const TIERS = ["Ghost", "Shadow", "Storm", "Mountain", "Moon"];
 export const PLAYSTYLES = [
   "Casual",

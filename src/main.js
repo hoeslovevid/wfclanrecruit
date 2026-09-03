@@ -84,6 +84,15 @@ async function refresh() {
   renderNav();
 }
 
+function platformMatches(value, filter) {
+  return value === filter || value === "All Platforms";
+}
+
+function alliancePlatformMatches(platforms, filter) {
+  const list = platforms || [];
+  return list.includes(filter) || list.includes("All Platforms");
+}
+
 function applyClanFilters(clans, filters) {
   const q = filters.q.toLowerCase();
   const mr = Number(filters.mr || 0);
@@ -92,7 +101,7 @@ function applyClanFilters(clans, filters) {
       .join(" ")
       .toLowerCase();
     if (q && !hay.includes(q)) return false;
-    if (filters.platform && clan.platform !== filters.platform) return false;
+    if (filters.platform && !platformMatches(clan.platform, filters.platform)) return false;
     if (filters.tier && clan.tier !== filters.tier) return false;
     if (filters.playstyle && !clan.playstyles.includes(filters.playstyle)) return false;
     if (filters.region && clan.region !== filters.region) return false;
@@ -120,7 +129,7 @@ function applyAllianceFilters(alliances, filters) {
       .join(" ")
       .toLowerCase();
     if (q && !hay.includes(q)) return false;
-    if (filters.platform && !(item.platforms || []).includes(filters.platform)) return false;
+    if (filters.platform && !alliancePlatformMatches(item.platforms, filters.platform)) return false;
     if (filters.region && item.region !== filters.region) return false;
     if (filters.status && item.status !== filters.status) return false;
     return true;
@@ -189,14 +198,56 @@ function showNote(el, message) {
 
 function bindImagePreview(form, renderPreview) {
   let imageUrl = null;
+  const input = form.image;
+  const picker = form.querySelector("[data-file-picker]");
+  const trigger = picker?.querySelector("[data-file-trigger]");
+  const label = picker?.querySelector("[data-file-label]");
+  const hint = picker?.querySelector("[data-file-hint]");
+  const action = picker?.querySelector("[data-file-action]");
+  const preview = picker?.querySelector("[data-file-preview]");
+  const clear = picker?.querySelector("[data-file-clear]");
   const refresh = () => renderPreview(imageUrl);
-  form.addEventListener("input", refresh);
-  form.image?.addEventListener("change", () => {
+
+  function setFile(file) {
     if (imageUrl) URL.revokeObjectURL(imageUrl);
-    const file = form.image.files?.[0];
     imageUrl = file ? URL.createObjectURL(file) : null;
+    picker?.classList.toggle("has-file", Boolean(file));
+    if (label) label.textContent = file ? file.name : "Upload an image";
+    if (hint) hint.hidden = Boolean(file);
+    if (action) action.textContent = file ? "Replace" : "Choose image";
+    if (clear) clear.hidden = !file;
+    if (preview) {
+      preview.style.backgroundImage = imageUrl ? `url("${imageUrl}")` : "";
+    }
     refresh();
+  }
+
+  trigger?.addEventListener("click", () => input?.click());
+  clear?.addEventListener("click", () => {
+    if (input) input.value = "";
+    setFile(null);
   });
+  input?.addEventListener("change", () => setFile(input.files?.[0] || null));
+
+  ["dragenter", "dragover"].forEach((type) => {
+    picker?.addEventListener(type, (event) => {
+      event.preventDefault();
+      picker.classList.add("is-dragover");
+    });
+  });
+  picker?.addEventListener("dragleave", () => picker.classList.remove("is-dragover"));
+  picker?.addEventListener("drop", (event) => {
+    event.preventDefault();
+    picker.classList.remove("is-dragover");
+    const file = event.dataTransfer?.files?.[0];
+    if (!file || !input) return;
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    input.files = transfer.files;
+    setFile(file);
+  });
+
+  form.addEventListener("input", refresh);
 }
 
 function packForm(form, listField) {
