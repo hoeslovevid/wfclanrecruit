@@ -14,10 +14,12 @@ import {
   guideView,
   homeView,
   navAccount,
+  postBodyHtml,
   postView,
   previewAlliance,
   previewClan,
 } from "./views.js";
+import { aboutTooLong, isSafeHref, plainTextFromHtml, sanitizePostHtml, toEditorHtml } from "./richtext.js";
 
 const app = document.querySelector("#app");
 const modalRoot = document.querySelector("#modal-root");
@@ -117,7 +119,7 @@ function applyClanFilters(clans, filters) {
   } else if (filters.sort === "mr") {
     list.sort((a, b) => a.mrRequired - b.mrRequired);
   } else {
-    list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    list.sort((a, b) => new Date(b.bumpedAt || b.createdAt) - new Date(a.bumpedAt || a.createdAt));
   }
   return list;
 }
@@ -196,30 +198,34 @@ function showNote(el, message) {
   el.textContent = message || "";
 }
 
-function bindImagePreview(form, renderPreview) {
-  let imageUrl = null;
+const IMAGE_MAX = 2 * 1024 * 1024;
+const VIDEO_MAX = 25 * 1024 * 1024;
+
+function bindImagePicker(form, initialUrl, onUrl) {
+  let imageUrl = initialUrl;
   const input = form.image;
-  const picker = form.querySelector("[data-file-picker]");
+  const picker = form.querySelector('[data-file-picker="image"]');
   const label = picker?.querySelector("[data-file-label]");
   const hint = picker?.querySelector("[data-file-hint]");
   const action = picker?.querySelector("[data-file-action]");
   const preview = picker?.querySelector("[data-file-preview]");
   const clear = picker?.querySelector("[data-file-clear]");
-  const refresh = () => renderPreview(imageUrl);
 
   function setFile(file) {
-    if (imageUrl) URL.revokeObjectURL(imageUrl);
-    imageUrl = file ? URL.createObjectURL(file) : null;
-    picker?.classList.toggle("has-file", Boolean(file));
-    if (label) label.textContent = file ? file.name : "Upload an image";
-    if (hint) hint.hidden = Boolean(file);
-    if (action) action.textContent = file ? "Replace" : "Choose image";
+    if (imageUrl && imageUrl.startsWith("blob:")) URL.revokeObjectURL(imageUrl);
+    imageUrl = file ? URL.createObjectURL(file) : initialUrl;
+    picker?.classList.toggle("has-file", Boolean(imageUrl));
+    if (label) label.textContent = file ? file.name : imageUrl ? "Current image" : "Upload an image";
+    if (hint) hint.hidden = Boolean(imageUrl);
+    if (action) action.textContent = imageUrl ? "Replace" : "Choose image";
     if (clear) clear.hidden = !file;
     if (preview) {
       preview.style.backgroundImage = imageUrl ? `url("${imageUrl}")` : "";
     }
-    refresh();
+    onUrl(imageUrl);
   }
+
+  if (initialUrl) setFile(null);
 
   clear?.addEventListener("click", () => {
     if (input) input.value = "";
@@ -244,8 +250,231 @@ function bindImagePreview(form, renderPreview) {
     input.files = transfer.files;
     setFile(file);
   });
+}
 
+function bindVideoPicker(form, initialUrl, onUrl) {
+  let videoUrl = initialUrl;
+  const input = form.video;
+  const picker = form.querySelector('[data-file-picker="video"]');
+  const removeField = form.removeVideo;
+  const label = picker?.querySelector("[data-file-label]");
+  const hint = picker?.querySelector("[data-file-hint]");
+  const action = picker?.querySelector("[data-file-action]");
+  const preview = picker?.querySelector("[data-file-preview]");
+  const clear = picker?.querySelector("[data-file-clear]");
+
+  function setPreviewThumb(url) {
+    if (!preview) return;
+    preview.querySelector("video")?.remove();
+    preview.style.backgroundImage = "";
+    if (!url) return;
+    const thumb = document.createElement("video");
+    thumb.src = url;
+    thumb.muted = true;
+    thumb.playsInline = true;
+    thumb.preload = "metadata";
+    preview.appendChild(thumb);
+  }
+
+  function setFile(file, { keepExisting = false } = {}) {
+    if (videoUrl && videoUrl.startsWith("blob:")) URL.revokeObjectURL(videoUrl);
+    if (file) {
+      videoUrl = URL.createObjectURL(file);
+      if (removeField) removeField.value = "";
+    } else if (keepExisting) {
+      videoUrl = initialUrl;
+      if (removeField) removeField.value = "";
+    } else {
+      videoUrl = null;
+      if (removeField) removeField.value = initialUrl ? "1" : "";
+    }
+    picker?.classList.toggle("has-file", Boolean(videoUrl));
+    if (label) label.textContent = file ? file.name : videoUrl ? "Current video" : "Upload a video";
+    if (hint) hint.hidden = Boolean(videoUrl);
+    if (action) action.textContent = videoUrl ? "Replace" : "Choose video";
+    if (clear) clear.hidden = !videoUrl;
+    setPreviewThumb(videoUrl);
+    onUrl(videoUrl);
+  }
+
+  if (initialUrl) setFile(null, { keepExisting: true });
+
+  clear?.addEventListener("click", () => {
+    if (input) input.value = "";
+    setFile(null);
+  });
+  input?.addEventListener("change", () => {
+    const file = input.files?.[0] || null;
+    setFile(file);
+    if (file) ensureVideoMarker(form.querySelector("[data-rich-editor]"));
+  });
+
+  ["dragenter", "dragover"].forEach((type) => {
+    picker?.addEventListener(type, (event) => {
+      event.preventDefault();
+      picker.classList.add("is-dragover");
+    });
+  });
+  picker?.addEventListener("dragleave", () => picker.classList.remove("is-dragover"));
+  picker?.addEventListener("drop", (event) => {
+    event.preventDefault();
+    picker.classList.remove("is-dragover");
+    const file = event.dataTransfer?.files?.[0];
+    if (!file || !input) return;
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    input.files = transfer.files;
+    setFile(file);
+    ensureVideoMarker(form.querySelector("[data-rich-editor]"));
+  });
+}
+
+function insertVideoAtEditor(editor) {
+  if (!editor) return;
+  editor.querySelectorAll("[data-video]").forEach((el) => el.remove());
+  const mark = document.createElement("span");
+  mark.setAttribute("data-video", "");
+  mark.className = "rt-video-mark";
+  mark.contentEditable = "false";
+  const sel = window.getSelection();
+  const inEditor = sel?.anchorNode && editor.contains(sel.anchorNode);
+  if (sel?.rangeCount && inEditor) {
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+    range.insertNode(mark);
+    range.setStartAfter(mark);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } else {
+    editor.appendChild(mark);
+  }
+}
+
+function decorateVideoMarks(editor) {
+  const marks = [...editor.querySelectorAll("[data-video]")];
+  marks.forEach((el, index) => {
+    if (index > 0) {
+      el.remove();
+      return;
+    }
+    el.className = "rt-video-mark";
+    el.contentEditable = "false";
+  });
+}
+
+function ensureVideoMarker(editor) {
+  if (!editor || editor.querySelector("[data-video]")) return;
+  insertVideoAtEditor(editor);
+  decorateVideoMarks(editor);
+  const textarea = editor.closest("form")?.about;
+  if (textarea) {
+    textarea.value = sanitizePostHtml(editor.innerHTML);
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+}
+
+function bindRichText(form, onChange) {
+  const editor = form.querySelector("[data-rich-editor]");
+  const toolbar = form.querySelector(".richtext-toolbar");
+  const textarea = form.about;
+  if (!editor || !textarea) return;
+
+  function sync() {
+    decorateVideoMarks(editor);
+    editor.querySelectorAll("a").forEach((link) => {
+      const safe = isSafeHref(link.getAttribute("href"));
+      if (!safe) {
+        link.replaceWith(...link.childNodes);
+        return;
+      }
+      link.setAttribute("href", safe);
+      link.setAttribute("target", "_blank");
+      link.setAttribute("rel", "noopener noreferrer");
+    });
+    textarea.value = sanitizePostHtml(editor.innerHTML);
+    onChange?.();
+  }
+
+  editor.innerHTML = toEditorHtml(textarea.value);
+  decorateVideoMarks(editor);
+  textarea.value = sanitizePostHtml(editor.innerHTML);
+
+  toolbar?.addEventListener("mousedown", (event) => {
+    if (event.target.closest("button")) event.preventDefault();
+  });
+
+  toolbar?.addEventListener("click", (event) => {
+    const insert = event.target.closest("[data-insert-video]");
+    if (insert) {
+      editor.focus();
+      insertVideoAtEditor(editor);
+      sync();
+      return;
+    }
+    const btn = event.target.closest("[data-rt]");
+    if (!btn) return;
+    editor.focus();
+    const cmd = btn.dataset.rt;
+    if (cmd === "bold") document.execCommand("bold");
+    if (cmd === "italic") document.execCommand("italic");
+    if (cmd === "underline") document.execCommand("underline");
+    if (cmd === "ulist") document.execCommand("insertUnorderedList");
+    if (cmd === "link") {
+      const current = window.getSelection()?.toString() || "";
+      const url = window.prompt("Link URL", current.startsWith("http") ? current : "https://");
+      const safe = isSafeHref(url);
+      if (!safe) return;
+      document.execCommand("createLink", false, safe);
+    }
+    sync();
+  });
+
+  editor.addEventListener("input", sync);
+  editor.addEventListener("click", (event) => {
+    if (event.target.closest("a")) event.preventDefault();
+  });
+  editor.addEventListener("paste", (event) => {
+    event.preventDefault();
+    const html = event.clipboardData?.getData("text/html");
+    const text = event.clipboardData?.getData("text/plain") || "";
+    const clean = html
+      ? sanitizePostHtml(html)
+      : sanitizePostHtml(text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>"));
+    document.execCommand("insertHTML", false, clean || text);
+    sync();
+  });
+}
+
+function bindListingComposer(form, { imageUrl = null, videoUrl = null, onChange }) {
+  const media = { image: imageUrl, video: videoUrl };
+  const refresh = () => onChange(media);
+  bindRichText(form, refresh);
+  bindImagePicker(form, imageUrl, (url) => {
+    media.image = url;
+    refresh();
+  });
+  bindVideoPicker(form, videoUrl, (url) => {
+    media.video = url;
+    refresh();
+  });
   form.addEventListener("input", refresh);
+  refresh();
+}
+
+function aboutError(form) {
+  if (!plainTextFromHtml(form.about?.value || "")) return "Write the full post.";
+  return aboutTooLong(form.about.value);
+}
+
+function mediaTooLarge(form) {
+  if (form.image?.files?.[0] && form.image.files[0].size > IMAGE_MAX) {
+    return "Image must be 2 MB or smaller.";
+  }
+  if (form.video?.files?.[0] && form.video.files[0].size > VIDEO_MAX) {
+    return "Video must be 25 MB or smaller.";
+  }
+  return null;
 }
 
 function packForm(form, listField) {
@@ -327,18 +556,30 @@ async function render() {
   }
 
   if (path === "/post") {
-    app.innerHTML = postView({ user: state.user, alliances: state.alliances });
+    const draft = params.id ? state.clans.find((item) => item.id === params.id) : null;
+    if (params.id && !draft) {
+      app.innerHTML = `<section class="auth-card"><h1>Listing not found</h1><p class="muted">That clan post is gone or the link is wrong.</p></section>`;
+      return;
+    }
+    if (draft && state.user && draft.ownerId !== state.user.id && !state.user.admin) {
+      app.innerHTML = `<section class="auth-card"><h1>Not allowed</h1><p class="muted">You can only edit your own posts.</p></section>`;
+      return;
+    }
+    app.innerHTML = postView({ user: state.user, alliances: state.alliances, draft: draft || {} });
     const form = app.querySelector("#post-form");
     if (!form) return;
     const preview = app.querySelector("#live-preview");
     const note = app.querySelector("#form-note");
     const mr = app.querySelector("#post-mr");
-    bindImagePreview(form, (url) => {
-      if (mr) mr.textContent = form.mrRequired.value;
-      if (form.tag) form.tag.value = form.tag.value.toUpperCase();
-      preview.innerHTML = clanCard(previewClan(form, url || null));
+    bindListingComposer(form, {
+      imageUrl: draft?.image || null,
+      videoUrl: draft?.video || null,
+      onChange: (media) => {
+        if (mr) mr.textContent = form.mrRequired.value;
+        if (form.tag) form.tag.value = form.tag.value.toUpperCase();
+        preview.innerHTML = `${clanCard(previewClan(form, media.image, media.video))}<div class="preview-about"><p class="kicker">Post body</p>${postBodyHtml(form.about.value, media.video, { placeholder: true })}</div>`;
+      },
     });
-    preview.innerHTML = clanCard(previewClan(form));
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (!form.checkValidity()) {
@@ -346,15 +587,19 @@ async function render() {
         form.reportValidity();
         return;
       }
-      if (form.image.files?.[0] && form.image.files[0].size > 2 * 1024 * 1024) {
-        showNote(note, "Image must be 2 MB or smaller.");
+      const tooBig = mediaTooLarge(form) || aboutError(form);
+      if (tooBig) {
+        showNote(note, tooBig);
         return;
       }
       try {
-        const created = await api.createClan(packForm(form, "playstyles"));
+        const payload = packForm(form, "playstyles");
+        const result = draft
+          ? await api.updateClan(draft.id, payload)
+          : await api.createClan(payload);
         await refresh();
         window.location.hash = "#/browse";
-        window.setTimeout(() => openClan(created.clan.id), 80);
+        window.setTimeout(() => openClan(result.clan.id), 80);
       } catch (error) {
         showNote(note, error.message);
       }
@@ -363,16 +608,28 @@ async function render() {
   }
 
   if (path === "/post-alliance") {
-    app.innerHTML = alliancePostView({ user: state.user });
+    const draft = params.id ? state.alliances.find((item) => item.id === params.id) : null;
+    if (params.id && !draft) {
+      app.innerHTML = `<section class="auth-card"><h1>Listing not found</h1><p class="muted">That alliance post is gone or the link is wrong.</p></section>`;
+      return;
+    }
+    if (draft && state.user && draft.ownerId !== state.user.id && !state.user.admin) {
+      app.innerHTML = `<section class="auth-card"><h1>Not allowed</h1><p class="muted">You can only edit your own posts.</p></section>`;
+      return;
+    }
+    app.innerHTML = alliancePostView({ user: state.user, draft: draft || {} });
     const form = app.querySelector("#alliance-form");
     if (!form) return;
     const preview = app.querySelector("#live-preview");
     const note = app.querySelector("#form-note");
-    bindImagePreview(form, (url) => {
-      if (form.tag) form.tag.value = form.tag.value.toUpperCase();
-      preview.innerHTML = allianceCard(previewAlliance(form, url || null));
+    bindListingComposer(form, {
+      imageUrl: draft?.image || null,
+      videoUrl: draft?.video || null,
+      onChange: (media) => {
+        if (form.tag) form.tag.value = form.tag.value.toUpperCase();
+        preview.innerHTML = `${allianceCard(previewAlliance(form, media.image, media.video))}<div class="preview-about"><p class="kicker">Post body</p>${postBodyHtml(form.about.value, media.video, { placeholder: true })}</div>`;
+      },
     });
-    preview.innerHTML = allianceCard(previewAlliance(form));
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (!form.checkValidity()) {
@@ -380,11 +637,19 @@ async function render() {
         form.reportValidity();
         return;
       }
+      const tooBig = mediaTooLarge(form) || aboutError(form);
+      if (tooBig) {
+        showNote(note, tooBig);
+        return;
+      }
       try {
-        const created = await api.createAlliance(packForm(form, "platforms"));
+        const payload = packForm(form, "platforms");
+        const result = draft
+          ? await api.updateAlliance(draft.id, payload)
+          : await api.createAlliance(payload);
         await refresh();
         window.location.hash = "#/alliances";
-        window.setTimeout(() => openAlliance(created.alliance.id), 80);
+        window.setTimeout(() => openAlliance(result.alliance.id), 80);
       } catch (error) {
         showNote(note, error.message);
       }
@@ -480,6 +745,30 @@ document.addEventListener("click", async (event) => {
     closeModal();
     await refresh();
     render();
+    return;
+  }
+  const bumpClan = event.target.closest("[data-bump-clan]");
+  if (bumpClan && !bumpClan.disabled) {
+    event.preventDefault();
+    try {
+      await api.bumpClan(bumpClan.dataset.bumpClan);
+      await refresh();
+      render();
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
+  const bumpAlliance = event.target.closest("[data-bump-alliance]");
+  if (bumpAlliance && !bumpAlliance.disabled) {
+    event.preventDefault();
+    try {
+      await api.bumpAlliance(bumpAlliance.dataset.bumpAlliance);
+      await refresh();
+      render();
+    } catch (error) {
+      alert(error.message);
+    }
   }
 });
 

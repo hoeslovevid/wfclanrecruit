@@ -7,6 +7,7 @@ import {
   TIER_CAPS,
   TIERS,
 } from "./data.js";
+import { sanitizePostHtml, splitVideoHtml, toEditorHtml } from "./richtext.js";
 
 export function escapeHtml(value) {
   return String(value ?? "")
@@ -35,6 +36,15 @@ export function timeAgo(iso) {
   return `${Math.floor(days / 30)}mo ago`;
 }
 
+function activityAt(item) {
+  return item.bumpedAt || item.createdAt;
+}
+
+function postedStat(item) {
+  const bumped = item.bumpedAt && item.bumpedAt !== item.createdAt;
+  return { label: bumped ? "Bumped" : "Posted", at: activityAt(item) };
+}
+
 function statusClass(status) {
   if (status === "Open") return "is-open";
   if (status === "Selective") return "is-selective";
@@ -49,6 +59,34 @@ function hueFrom(seed) {
   let hash = 0;
   for (const char of String(seed)) hash = (hash << 5) - hash + char.charCodeAt(0);
   return Math.abs(hash) % 360;
+}
+
+export function isSafeMediaUrl(url) {
+  return Boolean(url) && (url.startsWith("/uploads/") || url.startsWith("blob:"));
+}
+
+export function postBodyHtml(about, videoUrl, { placeholder = false } = {}) {
+  const html = sanitizePostHtml(toEditorHtml(about));
+  const { before, after, hasMarker } = splitVideoHtml(html);
+  const safe = isSafeMediaUrl(videoUrl) ? videoUrl : null;
+  const showSlot = placeholder && (Boolean(safe) || hasMarker);
+  const player = showSlot
+    ? `<div class="post-video-slot">Video appears here</div>`
+    : safe
+      ? `<video class="post-video" controls playsinline preload="metadata" data-stop src="${escapeHtml(safe)}"></video>`
+      : "";
+
+  if (!player) {
+    return before || after ? `<div class="post-body muted">${before}${after}</div>` : "";
+  }
+
+  if (!hasMarker) {
+    return `${html ? `<div class="post-body muted">${html}</div>` : ""}${player}`;
+  }
+
+  return `${before ? `<div class="post-body muted">${before}</div>` : ""}${player}${
+    after ? `<div class="post-body muted">${after}</div>` : ""
+  }`;
 }
 
 export function photo(item, size = 56) {
@@ -86,8 +124,8 @@ export function clanCard(clan) {
           <strong>${clan.mrRequired === 0 ? "Any" : `${clan.mrRequired}+`}</strong>
         </div>
         <div>
-          <span>Posted</span>
-          <strong>${timeAgo(clan.createdAt)}</strong>
+          <span>${postedStat(clan).label}</span>
+          <strong>${timeAgo(postedStat(clan).at)}</strong>
         </div>
       </div>
       <footer class="card-foot">
@@ -116,7 +154,7 @@ export function allianceCard(alliance) {
       <div class="stats">
         <div><span>Clans</span><strong>${alliance.clanCount}</strong></div>
         <div><span>Players</span><strong>${alliance.members}</strong></div>
-        <div><span>Posted</span><strong>${timeAgo(alliance.createdAt)}</strong></div>
+        <div><span>${postedStat(alliance).label}</span><strong>${timeAgo(postedStat(alliance).at)}</strong></div>
       </div>
       ${
         clans.length
@@ -332,7 +370,7 @@ function imagePicker(label) {
   return `
     <div class="field">
       <span>${escapeHtml(label)}</span>
-      <div class="file-picker" data-file-picker>
+      <div class="file-picker" data-file-picker="image">
         <div class="file-picker-target">
           <input class="file-picker-input" name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" />
           <div class="file-picker-ui">
@@ -353,6 +391,56 @@ function imagePicker(label) {
         <button class="file-picker-clear" type="button" data-file-clear hidden>Remove image</button>
       </div>
     </div>
+  `;
+}
+
+function videoPicker() {
+  return `
+    <div class="field">
+      <span>Video in post</span>
+      <div class="file-picker" data-file-picker="video">
+        <input type="hidden" name="removeVideo" value="" />
+        <div class="file-picker-target">
+          <input class="file-picker-input" name="video" type="file" accept="video/mp4,video/webm,.mp4,.webm" />
+          <div class="file-picker-ui">
+            <span class="file-picker-preview" data-file-preview aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <rect x="2.75" y="4.75" width="14.5" height="10.5" rx="2" stroke="currentColor" stroke-width="1.5"/>
+                <path d="M8.25 8.1v4.8L13.1 10.5 8.25 8.1Z" fill="currentColor"/>
+              </svg>
+            </span>
+            <span class="file-picker-copy">
+              <strong data-file-label>Upload a video</strong>
+              <small data-file-hint>MP4 or WEBM. Max 25 MB.</small>
+            </span>
+            <span class="file-picker-action" data-file-action>Choose video</span>
+          </div>
+        </div>
+        <button class="file-picker-clear" type="button" data-file-clear hidden>Remove video</button>
+      </div>
+    </div>
+  `;
+}
+
+function aboutComposer(draft = {}) {
+  return `
+    <div class="field">
+      <span>Full post</span>
+      <div class="richtext">
+        <div class="richtext-toolbar" role="toolbar" aria-label="Post formatting">
+          <button class="richtext-btn" type="button" data-rt="bold" title="Bold"><strong>B</strong></button>
+          <button class="richtext-btn" type="button" data-rt="italic" title="Italic"><em>I</em></button>
+          <button class="richtext-btn" type="button" data-rt="underline" title="Underline"><u>U</u></button>
+          <button class="richtext-btn" type="button" data-rt="ulist" title="Bullet list">List</button>
+          <button class="richtext-btn" type="button" data-rt="link" title="Add link">Link</button>
+          <button class="richtext-btn" type="button" data-insert-video title="Insert video at cursor">Video</button>
+        </div>
+        <div class="richtext-editor" data-rich-editor contenteditable="true" role="textbox" aria-multiline="true" aria-label="Full post"></div>
+        <textarea name="about" hidden>${escapeHtml(toEditorHtml(draft.about || ""))}</textarea>
+      </div>
+    </div>
+    ${videoPicker()}
+    <small class="field-help">Select text to format. Click in the post, then Video to place the clip. Insert again to move it.</small>
   `;
 }
 
@@ -377,14 +465,15 @@ function authGate(nextHash) {
 }
 
 export function postView({ user, alliances = [], draft = {} }) {
-  if (!user) return authGate("/post");
+  if (!user) return authGate(draft.id ? `/post?id=${draft.id}` : "/post");
+  const editing = Boolean(draft.id);
   return `
     <section class="page-hero">
       <p class="eyebrow">Leaders</p>
-      <h1>Post a listing</h1>
-      <p class="lead">Upload an image, write the post once, and send recruits to Discord.</p>
+      <h1>${editing ? "Edit listing" : "Post a listing"}</h1>
+      <p class="lead">${editing ? "Update this clan post. Bump it from your account page to send it to the top of the board." : "Upload an image, write the post once, and send recruits to Discord."}</p>
       <div class="tabs" role="tablist" aria-label="Listing type">
-        <a class="tab is-active" href="#/post" data-link>Clan</a>
+        <a class="tab is-active" href="#/post${editing ? `?id=${encodeURIComponent(draft.id)}` : ""}" data-link>Clan</a>
         <a class="tab" href="#/post-alliance" data-link>Alliance</a>
       </div>
     </section>
@@ -415,7 +504,7 @@ export function postView({ user, alliances = [], draft = {} }) {
               <span>Alliance</span>
               <select name="allianceId">
                 <option value="">None</option>
-                ${alliances.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("")}
+                ${alliances.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === draft.allianceId ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}
               </select>
             </label>
           </div>
@@ -423,16 +512,16 @@ export function postView({ user, alliances = [], draft = {} }) {
         </div>
         <div class="form-block">
           <h2>The post</h2>
-          <label class="field"><span>Headline</span><input name="headline" required maxlength="90" /></label>
-          <label class="field"><span>Short summary</span><textarea name="summary" required maxlength="220" rows="3"></textarea></label>
-          <label class="field"><span>Full post</span><textarea name="about" required maxlength="1200" rows="7"></textarea><small>Line breaks are preserved.</small></label>
+          <label class="field"><span>Headline</span><input name="headline" required maxlength="90" value="${escapeHtml(draft.headline || "")}" /></label>
+          <label class="field"><span>Short summary</span><textarea name="summary" required maxlength="220" rows="3">${escapeHtml(draft.summary || "")}</textarea></label>
+          ${aboutComposer(draft)}
           <div class="two-col">
-            <label class="field"><span>What you offer <small>one per line</small></span><textarea name="offering" required rows="5" placeholder="Fully researched Moon clan"></textarea></label>
-            <label class="field"><span>Requirements <small>one per line</small></span><textarea name="requirements" required rows="5" placeholder="MR 10+"></textarea></label>
+            <label class="field"><span>What you offer <small>one per line</small></span><textarea name="offering" required rows="5" placeholder="Fully researched Moon clan">${escapeHtml((draft.offering || []).join("\n"))}</textarea></label>
+            <label class="field"><span>Requirements <small>one per line</small></span><textarea name="requirements" required rows="5" placeholder="MR 10+">${escapeHtml((draft.requirements || []).join("\n"))}</textarea></label>
           </div>
         </div>
         <div class="form-actions">
-          <button class="btn btn-primary" type="submit">Publish clan</button>
+          <button class="btn btn-primary" type="submit">${editing ? "Save changes" : "Publish clan"}</button>
           <p class="error" id="form-note" hidden></p>
         </div>
       </form>
@@ -444,16 +533,17 @@ export function postView({ user, alliances = [], draft = {} }) {
   `;
 }
 
-export function alliancePostView({ user }) {
-  if (!user) return authGate("/post-alliance");
+export function alliancePostView({ user, draft = {} }) {
+  if (!user) return authGate(draft.id ? `/post-alliance?id=${draft.id}` : "/post-alliance");
+  const editing = Boolean(draft.id);
   return `
     <section class="page-hero">
       <p class="eyebrow">Leaders</p>
-      <h1>Post a listing</h1>
-      <p class="lead">For groups of clans that share a Discord and want one public listing.</p>
+      <h1>${editing ? "Edit listing" : "Post a listing"}</h1>
+      <p class="lead">${editing ? "Update this alliance post. Bump it from your account page to send it to the top of the board." : "For groups of clans that share a Discord and want one public listing."}</p>
       <div class="tabs" role="tablist" aria-label="Listing type">
         <a class="tab" href="#/post" data-link>Clan</a>
-        <a class="tab is-active" href="#/post-alliance" data-link>Alliance</a>
+        <a class="tab is-active" href="#/post-alliance${editing ? `?id=${encodeURIComponent(draft.id)}` : ""}" data-link>Alliance</a>
       </div>
     </section>
     <section class="composer">
@@ -461,35 +551,35 @@ export function alliancePostView({ user }) {
         <div class="form-block">
           <h2>Identity</h2>
           <div class="two-col">
-            <label class="field"><span>Alliance name</span><input name="name" required maxlength="48" /></label>
-            <label class="field"><span>Tag</span><input name="tag" required maxlength="5" /></label>
-            <label class="field"><span>Clans in alliance</span><input name="clanCount" type="number" min="1" required /></label>
-            <label class="field"><span>Approx. players</span><input name="members" type="number" min="1" required /></label>
+            <label class="field"><span>Alliance name</span><input name="name" required maxlength="48" value="${escapeHtml(draft.name || "")}" /></label>
+            <label class="field"><span>Tag</span><input name="tag" required maxlength="5" value="${escapeHtml(draft.tag || "")}" /></label>
+            <label class="field"><span>Clans in alliance</span><input name="clanCount" type="number" min="1" required value="${escapeHtml(draft.clanCount || "")}" /></label>
+            <label class="field"><span>Approx. players</span><input name="members" type="number" min="1" required value="${escapeHtml(draft.members || "")}" /></label>
           </div>
           ${imagePicker("Alliance image")}
         </div>
         <div class="form-block">
           <h2>Details</h2>
           <div class="two-col">
-            <label class="field"><span>Region</span><select name="region" required>${optionList(REGIONS, "Global")}</select></label>
-            <label class="field"><span>Language</span><select name="language" required>${optionList(LANGUAGES)}</select></label>
-            <label class="field"><span>Status</span><select name="status" required>${optionList(STATUSES)}</select></label>
-            <label class="field"><span>Discord invite</span><input name="discord" type="url" required placeholder="https://discord.gg/youralliance" /></label>
+            <label class="field"><span>Region</span><select name="region" required>${optionList(REGIONS, draft.region || "Global")}</select></label>
+            <label class="field"><span>Language</span><select name="language" required>${optionList(LANGUAGES, draft.language)}</select></label>
+            <label class="field"><span>Status</span><select name="status" required>${optionList(STATUSES, draft.status)}</select></label>
+            <label class="field"><span>Discord invite</span><input name="discord" type="url" required placeholder="https://discord.gg/youralliance" value="${escapeHtml(draft.discord || "")}" /></label>
           </div>
-          <fieldset class="fieldset"><legend>Platforms</legend><div class="checks">${checks("platforms", PLATFORMS)}</div></fieldset>
+          <fieldset class="fieldset"><legend>Platforms</legend><div class="checks">${checks("platforms", PLATFORMS, draft.platforms || [])}</div></fieldset>
         </div>
         <div class="form-block">
           <h2>The post</h2>
-          <label class="field"><span>Headline</span><input name="headline" required maxlength="90" /></label>
-          <label class="field"><span>Short summary</span><textarea name="summary" required maxlength="220" rows="3"></textarea></label>
-          <label class="field"><span>Full post</span><textarea name="about" required maxlength="1200" rows="7"></textarea><small>Line breaks are preserved.</small></label>
+          <label class="field"><span>Headline</span><input name="headline" required maxlength="90" value="${escapeHtml(draft.headline || "")}" /></label>
+          <label class="field"><span>Short summary</span><textarea name="summary" required maxlength="220" rows="3">${escapeHtml(draft.summary || "")}</textarea></label>
+          ${aboutComposer(draft)}
           <div class="two-col">
-            <label class="field"><span>What you offer</span><textarea name="offering" required rows="5"></textarea></label>
-            <label class="field"><span>Requirements</span><textarea name="requirements" required rows="5"></textarea></label>
+            <label class="field"><span>What you offer</span><textarea name="offering" required rows="5">${escapeHtml((draft.offering || []).join("\n"))}</textarea></label>
+            <label class="field"><span>Requirements</span><textarea name="requirements" required rows="5">${escapeHtml((draft.requirements || []).join("\n"))}</textarea></label>
           </div>
         </div>
         <div class="form-actions">
-          <button class="btn btn-primary" type="submit">Publish alliance</button>
+          <button class="btn btn-primary" type="submit">${editing ? "Save changes" : "Publish alliance"}</button>
           <p class="error" id="form-note" hidden></p>
         </div>
       </form>
@@ -532,8 +622,8 @@ export function accountView({ user, clans, alliances }) {
       <h1>${escapeHtml(user.username)}</h1>
       <p class="lead">${
         admin
-          ? "You can remove any listing on the board. Removals are immediate for everyone."
-          : "Your listings live on the shared board. Remove one and it disappears for everyone."
+          ? "Edit, bump, or remove any listing. Bumps move a post to the top of the board."
+          : "Edit your listing, bump it to the top of the board, or remove it."
       }</p>
     </section>
     <section class="section">
@@ -549,14 +639,20 @@ export function accountView({ user, clans, alliances }) {
 
 function listingList(items, kind, emptyText) {
   if (!items.length) return `<p class="muted">${emptyText}</p>`;
-  const attr = kind === "clan" ? "data-delete-clan" : "data-delete-alliance";
+  const editHash = kind === "clan" ? "#/post" : "#/post-alliance";
+  const bumpAttr = kind === "clan" ? "data-bump-clan" : "data-bump-alliance";
+  const deleteAttr = kind === "clan" ? "data-delete-clan" : "data-delete-alliance";
   return `<div class="list">${items
     .map(
       (item) => `
             <div class="list-row">
               ${photo(item, 44)}
               <div><strong>${escapeHtml(item.name)}</strong><p class="muted">[${escapeHtml(item.tag)}] · ${escapeHtml(item.status)}</p></div>
-              <button class="btn btn-ghost" type="button" ${attr}="${escapeHtml(item.id)}">Remove</button>
+              <div class="list-actions">
+                <a class="btn btn-ghost" href="${editHash}?id=${encodeURIComponent(item.id)}" data-link>Edit</a>
+                <button class="btn btn-ghost" type="button" ${bumpAttr}="${escapeHtml(item.id)}" ${item.canBump ? "" : "disabled"} title="${item.canBump ? "Send this post to the top of the board" : "You can bump once every 12 hours"}">Bump</button>
+                <button class="btn btn-ghost" type="button" ${deleteAttr}="${escapeHtml(item.id)}">Remove</button>
+              </div>
             </div>`
     )
     .join("")}</div>`;
@@ -579,7 +675,7 @@ export function guideView() {
         <article class="panel guide-step">
           <p class="kicker">Step 02</p>
           <h3>Publish a listing</h3>
-          <p class="muted">Add a clan or alliance, upload an image, and include a Discord invite you control.</p>
+          <p class="muted">Add a clan or alliance, upload an image or a video in the post, and include a Discord invite you control.</p>
         </article>
         <article class="panel guide-step">
           <p class="kicker">Step 03</p>
@@ -629,11 +725,11 @@ export function clanModal(clan, { admin = false } = {}) {
           <div><dt>Region</dt><dd>${escapeHtml(clan.region)}</dd></div>
           <div><dt>Language</dt><dd>${escapeHtml(clan.language)}</dd></div>
           <div><dt>Leader</dt><dd>${escapeHtml(clan.leader)}</dd></div>
-          <div><dt>Posted</dt><dd>${timeAgo(clan.createdAt)}</dd></div>
+          <div><dt>Posted</dt><dd>${timeAgo(postedStat(clan).at)}</dd></div>
         </dl>
         <div class="meter tall"><i style="width:${fillPercent(clan)}%"></i></div>
         <h3>About</h3>
-        <p class="muted post-body">${escapeHtml(clan.about)}</p>
+        ${postBodyHtml(clan.about, clan.video)}
         <div class="two-col">
           <div><h3>They offer</h3><ul>${clan.offering.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
           <div><h3>Requirements</h3><ul>${clan.requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
@@ -674,10 +770,10 @@ export function allianceModal(alliance, { admin = false } = {}) {
           <div><dt>Players</dt><dd>${alliance.members}</dd></div>
           <div><dt>Region</dt><dd>${escapeHtml(alliance.region)}</dd></div>
           <div><dt>Language</dt><dd>${escapeHtml(alliance.language)}</dd></div>
-          <div><dt>Posted</dt><dd>${timeAgo(alliance.createdAt)}</dd></div>
+          <div><dt>Posted</dt><dd>${timeAgo(postedStat(alliance).at)}</dd></div>
         </dl>
         <h3>About</h3>
-        <p class="muted post-body">${escapeHtml(alliance.about)}</p>
+        ${postBodyHtml(alliance.about, alliance.video)}
         <div class="two-col">
           <div><h3>They offer</h3><ul>${alliance.offering.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
           <div><h3>Requirements</h3><ul>${alliance.requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
@@ -702,7 +798,7 @@ export function allianceModal(alliance, { admin = false } = {}) {
   `;
 }
 
-export function previewClan(form, imageUrl = null) {
+export function previewClan(form, imageUrl = null, videoUrl = null) {
   const data = new FormData(form);
   const playstyles = data.getAll("playstyles");
   return {
@@ -710,6 +806,7 @@ export function previewClan(form, imageUrl = null) {
     name: data.get("name") || "Your clan name",
     tag: String(data.get("tag") || "TAG").toUpperCase(),
     image: imageUrl,
+    video: videoUrl,
     platform: data.get("platform") || "PC",
     tier: data.get("tier") || "Ghost",
     members: Number(data.get("members") || 1),
@@ -730,13 +827,14 @@ export function previewClan(form, imageUrl = null) {
   };
 }
 
-export function previewAlliance(form, imageUrl = null) {
+export function previewAlliance(form, imageUrl = null, videoUrl = null) {
   const data = new FormData(form);
   return {
     id: "preview",
     name: data.get("name") || "Your alliance",
     tag: String(data.get("tag") || "TAG").toUpperCase(),
     image: imageUrl,
+    video: videoUrl,
     platforms: data.getAll("platforms").length ? data.getAll("platforms") : ["PC"],
     region: data.get("region") || "Global",
     language: data.get("language") || "English",
