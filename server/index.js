@@ -73,6 +73,10 @@ function requireUser(req, res, next) {
   next();
 }
 
+function canRemove(user, listing) {
+  return Boolean(user.admin) || listing.ownerId === user.id;
+}
+
 function allowedOrigin(origin, callback) {
   if (!origin) {
     callback(null, true);
@@ -115,7 +119,7 @@ function slugify(name) {
 function lines(value) {
   return String(value || "")
     .split(/\r?\n/)
-    .map((item) => item.trim())
+    .map((item) => item.trim().replace(/^[-*•]\s+/, ""))
     .filter(Boolean);
 }
 
@@ -177,6 +181,7 @@ app.post("/api/auth/register", (req, res) => {
       id: slugify(username),
       username,
       password: hashPassword(password),
+      admin: false,
       createdAt: new Date().toISOString(),
     };
     const token = newToken();
@@ -311,7 +316,7 @@ app.delete("/api/clans/:id", requireUser, (req, res) => {
       res.status(404).json({ error: "Clan not found." });
       return db;
     }
-    if (clan.ownerId !== req.user.id) {
+    if (!canRemove(req.user, clan)) {
       res.status(403).json({ error: "You can only remove your own posts." });
       return db;
     }
@@ -414,7 +419,7 @@ app.delete("/api/alliances/:id", requireUser, (req, res) => {
       res.status(404).json({ error: "Alliance not found." });
       return db;
     }
-    if (alliance.ownerId !== req.user.id) {
+    if (!canRemove(req.user, alliance)) {
       res.status(403).json({ error: "You can only remove your own posts." });
       return db;
     }

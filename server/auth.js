@@ -23,6 +23,7 @@ export function publicUser(user) {
   return {
     id: user.id,
     username: user.username,
+    admin: Boolean(user.admin),
     createdAt: user.createdAt,
   };
 }

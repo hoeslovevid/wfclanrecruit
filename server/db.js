@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { hashPassword } from "./auth.js";
+import { hashPassword, verifyPassword } from "./auth.js";
 
 const SEED_LISTING_IDS = new Set([
   "steel-meridian-vanguard",
@@ -39,6 +39,7 @@ function emptyDb() {
             id: DEMO_USER_ID,
             username: "leader",
             password: hashPassword("recruit1"),
+            admin: false,
             createdAt: now,
           },
         ],
@@ -71,16 +72,83 @@ function sanitizeDb(db) {
   return stripDemoUser(stripSeedListings(db));
 }
 
+function adminCredentials() {
+  const username = String(process.env.ADMIN_USERNAME || "").trim();
+  const password = String(process.env.ADMIN_PASSWORD || "");
+  return { username, password };
+}
+
+function bootstrapAdmin(db) {
+  const { username, password } = adminCredentials();
+  if (!username && !password) return { db, changed: false };
+  if (!username || !password) {
+    console.warn("Set both ADMIN_USERNAME and ADMIN_PASSWORD to create the admin account.");
+    return { db, changed: false };
+  }
+  if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
+    console.warn("ADMIN_USERNAME must be 3–20 letters, numbers, or underscores.");
+    return { db, changed: false };
+  }
+  if (password.length < 6) {
+    console.warn("ADMIN_PASSWORD must be at least 6 characters.");
+    return { db, changed: false };
+  }
+
+  let changed = false;
+  const users = db.users || [];
+  let admin = users.find((user) => user.username.toLowerCase() === username.toLowerCase());
+
+  if (!admin) {
+    const takenId = users.some((user) => user.id === "user-admin");
+    admin = {
+      id: takenId ? `user-admin-${Date.now().toString(36)}` : "user-admin",
+      username,
+      password: hashPassword(password),
+      admin: true,
+      createdAt: new Date().toISOString(),
+    };
+    users.push(admin);
+    changed = true;
+    console.log(`Admin account created: ${username}`);
+  } else {
+    if (!admin.admin) {
+      admin.admin = true;
+      changed = true;
+    }
+    if (admin.username !== username) {
+      admin.username = username;
+      changed = true;
+    }
+    if (!verifyPassword(password, admin.password)) {
+      admin.password = hashPassword(password);
+      changed = true;
+      console.log(`Admin password updated for ${username}`);
+    }
+  }
+
+  for (const user of users) {
+    if (user.id !== admin.id && user.admin) {
+      user.admin = false;
+      changed = true;
+    }
+  }
+
+  db.users = users;
+  return { db, changed };
+}
+
 export function ensureStorage() {
   fs.mkdirSync(dataDir, { recursive: true });
   fs.mkdirSync(uploadDir, { recursive: true });
   if (!fs.existsSync(dbPath)) {
-    fs.writeFileSync(dbPath, JSON.stringify(emptyDb(), null, 2));
+    const { db } = bootstrapAdmin(emptyDb());
+    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
     return;
   }
   const current = JSON.parse(fs.readFileSync(dbPath, "utf8"));
-  const next = sanitizeDb(current);
-  if (next !== current) {
+  const sanitized = sanitizeDb(current);
+  const { db: next, changed } = bootstrapAdmin(sanitized);
+  if (next !== current || changed) {
     fs.writeFileSync(dbPath, JSON.stringify(next, null, 2));
   }
 }

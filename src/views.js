@@ -312,6 +312,13 @@ export function emptyState(title = "Nothing to see here", detail = "Check back l
   return `<div class="empty"><h3>${escapeHtml(title)}</h3><p class="muted">${escapeHtml(detail)}</p></div>`;
 }
 
+function parseLines(value) {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((item) => item.trim().replace(/^[-*•]\s+/, ""))
+    .filter(Boolean);
+}
+
 function checks(name, values, selected = []) {
   return values
     .map((value) => {
@@ -326,21 +333,23 @@ function imagePicker(label) {
     <div class="field">
       <span>${escapeHtml(label)}</span>
       <div class="file-picker" data-file-picker>
-        <input class="sr-only" name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" />
-        <button class="file-picker-ui" type="button" data-file-trigger>
-          <span class="file-picker-preview" data-file-preview aria-hidden="true">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-              <rect x="2.75" y="4.75" width="14.5" height="10.5" rx="2" stroke="currentColor" stroke-width="1.5"/>
-              <circle cx="7.25" cy="8.5" r="1.25" fill="currentColor"/>
-              <path d="M4.5 13.5 8 10.25l2.5 2.5 2-2 3 2.75" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </span>
-          <span class="file-picker-copy">
-            <strong data-file-label>Upload an image</strong>
-            <small data-file-hint>PNG, JPG, WEBP, GIF, or SVG. Max 2 MB.</small>
-          </span>
-          <span class="file-picker-action" data-file-action>Choose image</span>
-        </button>
+        <div class="file-picker-target">
+          <input class="file-picker-input" name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" />
+          <div class="file-picker-ui">
+            <span class="file-picker-preview" data-file-preview aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <rect x="2.75" y="4.75" width="14.5" height="10.5" rx="2" stroke="currentColor" stroke-width="1.5"/>
+                <circle cx="7.25" cy="8.5" r="1.25" fill="currentColor"/>
+                <path d="M4.5 13.5 8 10.25l2.5 2.5 2-2 3 2.75" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </span>
+            <span class="file-picker-copy">
+              <strong data-file-label>Upload an image</strong>
+              <small data-file-hint>PNG, JPG, WEBP, GIF, or SVG. Max 2 MB.</small>
+            </span>
+            <span class="file-picker-action" data-file-action>Choose image</span>
+          </div>
+        </div>
         <button class="file-picker-clear" type="button" data-file-clear hidden>Remove image</button>
       </div>
     </div>
@@ -416,10 +425,10 @@ export function postView({ user, alliances = [], draft = {} }) {
           <h2>The post</h2>
           <label class="field"><span>Headline</span><input name="headline" required maxlength="90" /></label>
           <label class="field"><span>Short summary</span><textarea name="summary" required maxlength="220" rows="3"></textarea></label>
-          <label class="field"><span>Full post</span><textarea name="about" required maxlength="1200" rows="7"></textarea></label>
+          <label class="field"><span>Full post</span><textarea name="about" required maxlength="1200" rows="7"></textarea><small>Line breaks are preserved.</small></label>
           <div class="two-col">
-            <label class="field"><span>What you offer <small>one per line</small></span><textarea name="offering" required rows="5"></textarea></label>
-            <label class="field"><span>Requirements <small>one per line</small></span><textarea name="requirements" required rows="5"></textarea></label>
+            <label class="field"><span>What you offer <small>one per line</small></span><textarea name="offering" required rows="5" placeholder="Fully researched Moon clan"></textarea></label>
+            <label class="field"><span>Requirements <small>one per line</small></span><textarea name="requirements" required rows="5" placeholder="MR 10+"></textarea></label>
           </div>
         </div>
         <div class="form-actions">
@@ -473,7 +482,7 @@ export function alliancePostView({ user }) {
           <h2>The post</h2>
           <label class="field"><span>Headline</span><input name="headline" required maxlength="90" /></label>
           <label class="field"><span>Short summary</span><textarea name="summary" required maxlength="220" rows="3"></textarea></label>
-          <label class="field"><span>Full post</span><textarea name="about" required maxlength="1200" rows="7"></textarea></label>
+          <label class="field"><span>Full post</span><textarea name="about" required maxlength="1200" rows="7"></textarea><small>Line breaks are preserved.</small></label>
           <div class="two-col">
             <label class="field"><span>What you offer</span><textarea name="offering" required rows="5"></textarea></label>
             <label class="field"><span>Requirements</span><textarea name="requirements" required rows="5"></textarea></label>
@@ -516,47 +525,41 @@ export function authView(mode, next = "/") {
 }
 
 export function accountView({ user, clans, alliances }) {
+  const admin = Boolean(user.admin);
   return `
     <section class="page-hero">
-      <p class="eyebrow">Account</p>
+      <p class="eyebrow">${admin ? "Moderator" : "Account"}</p>
       <h1>${escapeHtml(user.username)}</h1>
-      <p class="lead">Your listings live on the shared board. Remove one and it disappears for everyone.</p>
+      <p class="lead">${
+        admin
+          ? "You can remove any listing on the board. Removals are immediate for everyone."
+          : "Your listings live on the shared board. Remove one and it disappears for everyone."
+      }</p>
     </section>
     <section class="section">
-      <div class="section-head"><h2>Your clans</h2><a class="text-link" href="#/post" data-link>New clan</a></div>
-      ${
-        clans.length
-          ? `<div class="list">${clans
-              .map(
-                (clan) => `
-            <div class="list-row">
-              ${photo(clan, 44)}
-              <div><strong>${escapeHtml(clan.name)}</strong><p class="muted">[${escapeHtml(clan.tag)}] · ${escapeHtml(clan.status)}</p></div>
-              <button class="btn btn-ghost" type="button" data-delete-clan="${escapeHtml(clan.id)}">Remove</button>
-            </div>`
-              )
-              .join("")}</div>`
-          : `<p class="muted">You have not posted a clan yet.</p>`
-      }
+      <div class="section-head"><h2>${admin ? "Clan posts" : "Your clans"}</h2><a class="text-link" href="#/post" data-link>New clan</a></div>
+      ${listingList(clans, "clan", "You have not posted a clan yet.")}
     </section>
     <section class="section">
-      <div class="section-head"><h2>Your alliances</h2><a class="text-link" href="#/post-alliance" data-link>New alliance</a></div>
-      ${
-        alliances.length
-          ? `<div class="list">${alliances
-              .map(
-                (item) => `
+      <div class="section-head"><h2>${admin ? "Alliance posts" : "Your alliances"}</h2><a class="text-link" href="#/post-alliance" data-link>New alliance</a></div>
+      ${listingList(alliances, "alliance", "You have not posted an alliance yet.")}
+    </section>
+  `;
+}
+
+function listingList(items, kind, emptyText) {
+  if (!items.length) return `<p class="muted">${emptyText}</p>`;
+  const attr = kind === "clan" ? "data-delete-clan" : "data-delete-alliance";
+  return `<div class="list">${items
+    .map(
+      (item) => `
             <div class="list-row">
               ${photo(item, 44)}
               <div><strong>${escapeHtml(item.name)}</strong><p class="muted">[${escapeHtml(item.tag)}] · ${escapeHtml(item.status)}</p></div>
-              <button class="btn btn-ghost" type="button" data-delete-alliance="${escapeHtml(item.id)}">Remove</button>
+              <button class="btn btn-ghost" type="button" ${attr}="${escapeHtml(item.id)}">Remove</button>
             </div>`
-              )
-              .join("")}</div>`
-          : `<p class="muted">You have not posted an alliance yet.</p>`
-      }
-    </section>
-  `;
+    )
+    .join("")}</div>`;
 }
 
 export function guideView() {
@@ -601,7 +604,7 @@ export function guideView() {
   `;
 }
 
-export function clanModal(clan) {
+export function clanModal(clan, { admin = false } = {}) {
   return `
     <div class="backdrop">
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="clan-title">
@@ -630,18 +633,25 @@ export function clanModal(clan) {
         </dl>
         <div class="meter tall"><i style="width:${fillPercent(clan)}%"></i></div>
         <h3>About</h3>
-        <p class="muted">${escapeHtml(clan.about)}</p>
+        <p class="muted post-body">${escapeHtml(clan.about)}</p>
         <div class="two-col">
           <div><h3>They offer</h3><ul>${clan.offering.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
           <div><h3>Requirements</h3><ul>${clan.requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
         </div>
-        <a class="btn btn-discord" href="${escapeHtml(clan.discord)}" target="_blank" rel="noopener noreferrer">Join ${escapeHtml(clan.name)} on Discord</a>
+        <div class="row">
+          <a class="btn btn-discord" href="${escapeHtml(clan.discord)}" target="_blank" rel="noopener noreferrer">Join ${escapeHtml(clan.name)} on Discord</a>
+          ${
+            admin
+              ? `<button class="btn btn-ghost" type="button" data-delete-clan="${escapeHtml(clan.id)}">Remove listing</button>`
+              : ""
+          }
+        </div>
       </div>
     </div>
   `;
 }
 
-export function allianceModal(alliance) {
+export function allianceModal(alliance, { admin = false } = {}) {
   const clans = alliance.memberClans || [];
   return `
     <div class="backdrop">
@@ -667,7 +677,7 @@ export function allianceModal(alliance) {
           <div><dt>Posted</dt><dd>${timeAgo(alliance.createdAt)}</dd></div>
         </dl>
         <h3>About</h3>
-        <p class="muted">${escapeHtml(alliance.about)}</p>
+        <p class="muted post-body">${escapeHtml(alliance.about)}</p>
         <div class="two-col">
           <div><h3>They offer</h3><ul>${alliance.offering.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
           <div><h3>Requirements</h3><ul>${alliance.requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
@@ -679,7 +689,14 @@ export function allianceModal(alliance) {
                 .join("")}</div>`
             : ""
         }
-        <a class="btn btn-discord" href="${escapeHtml(alliance.discord)}" target="_blank" rel="noopener noreferrer">Join ${escapeHtml(alliance.name)} on Discord</a>
+        <div class="row">
+          <a class="btn btn-discord" href="${escapeHtml(alliance.discord)}" target="_blank" rel="noopener noreferrer">Join ${escapeHtml(alliance.name)} on Discord</a>
+          ${
+            admin
+              ? `<button class="btn btn-ghost" type="button" data-delete-alliance="${escapeHtml(alliance.id)}">Remove listing</button>`
+              : ""
+          }
+        </div>
       </div>
     </div>
   `;
@@ -707,8 +724,8 @@ export function previewClan(form, imageUrl = null) {
     headline: data.get("headline") || "Your headline appears here.",
     summary: data.get("summary") || "A short summary shows under the headline.",
     about: data.get("about") || "",
-    offering: String(data.get("offering") || "Your offering").split("\n").filter(Boolean),
-    requirements: String(data.get("requirements") || "Your requirements").split("\n").filter(Boolean),
+    offering: parseLines(data.get("offering") || "Your offering"),
+    requirements: parseLines(data.get("requirements") || "Your requirements"),
     createdAt: new Date().toISOString(),
   };
 }
@@ -730,8 +747,8 @@ export function previewAlliance(form, imageUrl = null) {
     headline: data.get("headline") || "Your headline appears here.",
     summary: data.get("summary") || "A short summary shows under the headline.",
     about: data.get("about") || "",
-    offering: String(data.get("offering") || "Your offering").split("\n").filter(Boolean),
-    requirements: String(data.get("requirements") || "Your requirements").split("\n").filter(Boolean),
+    offering: parseLines(data.get("offering") || "Your offering"),
+    requirements: parseLines(data.get("requirements") || "Your requirements"),
     memberClans: [],
     createdAt: new Date().toISOString(),
   };

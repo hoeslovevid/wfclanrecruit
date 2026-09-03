@@ -153,14 +153,14 @@ function readFilters(form) {
 function openClan(id) {
   const clan = state.clans.find((item) => item.id === id);
   if (!clan) return;
-  modalRoot.innerHTML = clanModal(clan);
+  modalRoot.innerHTML = clanModal(clan, { admin: Boolean(state.user?.admin) });
   document.body.classList.add("modal-open");
 }
 
 function openAlliance(id) {
   const alliance = state.alliances.find((item) => item.id === id);
   if (!alliance) return;
-  modalRoot.innerHTML = allianceModal(alliance);
+  modalRoot.innerHTML = allianceModal(alliance, { admin: Boolean(state.user?.admin) });
   document.body.classList.add("modal-open");
 }
 
@@ -200,7 +200,6 @@ function bindImagePreview(form, renderPreview) {
   let imageUrl = null;
   const input = form.image;
   const picker = form.querySelector("[data-file-picker]");
-  const trigger = picker?.querySelector("[data-file-trigger]");
   const label = picker?.querySelector("[data-file-label]");
   const hint = picker?.querySelector("[data-file-hint]");
   const action = picker?.querySelector("[data-file-action]");
@@ -222,7 +221,6 @@ function bindImagePreview(form, renderPreview) {
     refresh();
   }
 
-  trigger?.addEventListener("click", () => input?.click());
   clear?.addEventListener("click", () => {
     if (input) input.value = "";
     setFile(null);
@@ -420,25 +418,13 @@ async function render() {
       window.location.hash = "#/login?next=/account";
       return;
     }
-    const mineClans = state.clans.filter((item) => item.ownerId === state.user.id);
-    const mineAlliances = state.alliances.filter((item) => item.ownerId === state.user.id);
+    const mineClans = state.user.admin
+      ? state.clans
+      : state.clans.filter((item) => item.ownerId === state.user.id);
+    const mineAlliances = state.user.admin
+      ? state.alliances
+      : state.alliances.filter((item) => item.ownerId === state.user.id);
     app.innerHTML = accountView({ user: state.user, clans: mineClans, alliances: mineAlliances });
-    app.querySelectorAll("[data-delete-clan]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        if (!confirm("Remove this clan post for everyone?")) return;
-        await api.deleteClan(btn.dataset.deleteClan);
-        await refresh();
-        render();
-      });
-    });
-    app.querySelectorAll("[data-delete-alliance]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        if (!confirm("Remove this alliance post for everyone?")) return;
-        await api.deleteAlliance(btn.dataset.deleteAlliance);
-        await refresh();
-        render();
-      });
-    });
     return;
   }
 
@@ -471,6 +457,28 @@ document.addEventListener("click", async (event) => {
     await api.logout();
     await refresh();
     window.location.hash = "#/";
+    render();
+    return;
+  }
+  const deleteClan = event.target.closest("[data-delete-clan]");
+  if (deleteClan) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!confirm("Remove this clan post for everyone?")) return;
+    await api.deleteClan(deleteClan.dataset.deleteClan);
+    closeModal();
+    await refresh();
+    render();
+    return;
+  }
+  const deleteAlliance = event.target.closest("[data-delete-alliance]");
+  if (deleteAlliance) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!confirm("Remove this alliance post for everyone?")) return;
+    await api.deleteAlliance(deleteAlliance.dataset.deleteAlliance);
+    closeModal();
+    await refresh();
     render();
   }
 });
