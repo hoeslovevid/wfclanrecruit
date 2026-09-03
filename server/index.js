@@ -451,7 +451,16 @@ if (fs.existsSync(distDir)) {
   });
 }
 
-app.listen(PORT, "0.0.0.0", () => {
+const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`WF Clan Recruit on http://0.0.0.0:${PORT}`);
   console.log(`Storage: ${paths.dbPath}`);
 });
+
+function shutdown(signal) {
+  console.log(`Received ${signal}, shutting down`);
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 4000).unref();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
