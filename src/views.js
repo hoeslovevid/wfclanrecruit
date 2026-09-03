@@ -137,6 +137,7 @@ export function allianceCard(alliance) {
 export function homeView({ clans, alliances, user }) {
   const featuredClans = clans.filter((item) => item.featured).slice(0, 3);
   const featuredAlliances = alliances.filter((item) => item.featured).slice(0, 2);
+  const homeAlliances = (featuredAlliances.length ? featuredAlliances : alliances).slice(0, 2);
   const recent = clans.slice(0, 6);
   const openCount = clans.filter((item) => item.status === "Open").length;
 
@@ -158,7 +159,15 @@ export function homeView({ clans, alliances, user }) {
       </dl>
     </section>
 
-    <section class="section">
+    ${
+      !clans.length && !alliances.length
+        ? `<section class="section">${emptyState()}</section>`
+        : ""
+    }
+
+    ${
+      featuredClans.length
+        ? `<section class="section">
       <div class="section-head">
         <div>
           <p class="eyebrow">Featured clans</p>
@@ -167,9 +176,13 @@ export function homeView({ clans, alliances, user }) {
         <a class="text-link" href="#/browse" data-link>Browse all clans</a>
       </div>
       <div class="grid">${featuredClans.map((clan) => clanCard(clan)).join("")}</div>
-    </section>
+    </section>`
+        : ""
+    }
 
-    <section class="section">
+    ${
+      homeAlliances.length
+        ? `<section class="section">
       <div class="section-head">
         <div>
           <p class="eyebrow">Alliances</p>
@@ -177,8 +190,10 @@ export function homeView({ clans, alliances, user }) {
         </div>
         <a class="text-link" href="#/alliances" data-link>Browse alliances</a>
       </div>
-      <div class="grid two">${featuredAlliances.map((item) => allianceCard(item)).join("")}</div>
-    </section>
+      <div class="grid two">${homeAlliances.map((item) => allianceCard(item)).join("")}</div>
+    </section>`
+        : ""
+    }
 
     <section class="section split">
       <div class="panel">
@@ -199,7 +214,9 @@ export function homeView({ clans, alliances, user }) {
       </div>
     </section>
 
-    <section class="section">
+    ${
+      recent.length
+        ? `<section class="section">
       <div class="section-head">
         <div>
           <p class="eyebrow">Latest</p>
@@ -207,7 +224,9 @@ export function homeView({ clans, alliances, user }) {
         </div>
       </div>
       <div class="grid">${recent.map((clan) => clanCard(clan)).join("")}</div>
-    </section>
+    </section>`
+        : ""
+    }
   `;
 }
 
@@ -256,7 +275,7 @@ export function browseView(clans, filters) {
             </select>
           </label>
         </div>
-        <div id="results">${clans.length ? `<div class="grid">${clans.map((clan) => clanCard(clan)).join("")}</div>` : emptyState("No clans match those filters.")}</div>
+        <div id="results">${clans.length ? `<div class="grid">${clans.map((clan) => clanCard(clan)).join("")}</div>` : emptyState()}</div>
       </div>
     </section>
   `;
@@ -285,14 +304,14 @@ export function alliancesView(alliances, filters) {
       </aside>
       <div>
         <p class="muted">${label}</p>
-        ${alliances.length ? `<div class="grid two">${alliances.map((item) => allianceCard(item)).join("")}</div>` : emptyState("No alliances match those filters.")}
+        ${alliances.length ? `<div class="grid two">${alliances.map((item) => allianceCard(item)).join("")}</div>` : emptyState()}
       </div>
     </section>
   `;
 }
 
-function emptyState(text) {
-  return `<div class="empty"><h3>${escapeHtml(text)}</h3><p class="muted">Widen the filters or check back later.</p></div>`;
+export function emptyState(title = "Nothing to see here", detail = "Check back later, or post a listing.") {
+  return `<div class="empty"><h3>${escapeHtml(title)}</h3><p class="muted">${escapeHtml(detail)}</p></div>`;
 }
 
 function checks(name, values, selected = []) {

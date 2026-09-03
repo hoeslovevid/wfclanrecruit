@@ -686,8 +686,12 @@ code {
   font-family: var(--mono);
   font-weight: 500;
 }
-.footer a { display: block; color: var(--muted); margin-bottom: 8px; }
-.footer a:hover { color: var(--text); }
+.footer a:not(.btn) { display: block; color: var(--muted); margin-bottom: 8px; }
+.footer a:not(.btn):hover { color: var(--text); }
+.footer .btn {
+  width: max-content;
+  margin-top: 12px;
+}
 .legal {
   width: min(1120px, calc(100% - 40px));
   margin: 28px auto 0;

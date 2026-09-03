@@ -2,7 +2,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { hashPassword } from "./auth.js";
-import { SEED_ALLIANCES, SEED_CLANS } from "./seed.js";
+
+const SEED_LISTING_IDS = new Set([
+  "steel-meridian-vanguard",
+  "lotus-garden",
+  "void-walkers",
+  "cetus-collective",
+  "orokin-restoration",
+  "dry-dock-irregulars",
+  "nightwave-scribes",
+  "sanguine-court",
+  "solar-rail",
+  "quiet-hours",
+  "northern-command",
+]);
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.join(root, "..");
@@ -25,9 +38,18 @@ function emptyDb() {
       },
     ],
     sessions: [],
-    clans: SEED_CLANS.map((clan) => ({ ...clan, ownerId: "user-leader" })),
-    alliances: SEED_ALLIANCES.map((alliance) => ({ ...alliance, ownerId: "user-leader" })),
+    clans: [],
+    alliances: [],
   };
+}
+
+function stripSeedListings(db) {
+  const clans = (db.clans || []).filter((item) => !SEED_LISTING_IDS.has(item.id));
+  const alliances = (db.alliances || []).filter((item) => !SEED_LISTING_IDS.has(item.id));
+  if (clans.length === (db.clans || []).length && alliances.length === (db.alliances || []).length) {
+    return db;
+  }
+  return { ...db, clans, alliances };
 }
 
 export function ensureStorage() {
@@ -35,6 +57,12 @@ export function ensureStorage() {
   fs.mkdirSync(uploadDir, { recursive: true });
   if (!fs.existsSync(dbPath)) {
     fs.writeFileSync(dbPath, JSON.stringify(emptyDb(), null, 2));
+    return;
+  }
+  const current = JSON.parse(fs.readFileSync(dbPath, "utf8"));
+  const next = stripSeedListings(current);
+  if (next !== current) {
+    fs.writeFileSync(dbPath, JSON.stringify(next, null, 2));
   }
 }
 

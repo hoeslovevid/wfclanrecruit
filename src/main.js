@@ -10,6 +10,7 @@ import {
   browseView,
   clanCard,
   clanModal,
+  emptyState,
   guideView,
   homeView,
   navAccount,
@@ -237,7 +238,7 @@ async function render() {
       const results = app.querySelector("#results");
       results.innerHTML = list.length
         ? `<div class="grid">${list.map((clan) => clanCard(clan)).join("")}</div>`
-        : `<div class="empty"><h3>No clans match those filters.</h3></div>`;
+        : emptyState();
       bindCards(results);
     };
     app.querySelector(".browse")?.addEventListener("input", refreshList);
@@ -262,7 +263,7 @@ async function render() {
       host.innerHTML = `<p class="muted">${list.length === 1 ? "1 alliance" : `${list.length} alliances`}</p>${
         list.length
           ? `<div class="grid two">${list.map((item) => allianceCard(item)).join("")}</div>`
-          : `<div class="empty"><h3>No alliances match those filters.</h3></div>`
+          : emptyState()
       }`;
       bindCards(host);
     };
