@@ -33,6 +33,26 @@ import {
 import { aboutTooLong, normalizeAbout, plainTextFromHtml } from "../src/richtext.js";
 import { normalizeContact, wantsDiscord } from "../src/data.js";
 import {
+  FLUSH_MS,
+  addStats,
+  countView,
+  countWhisper,
+  drain,
+  looksLikeBot,
+  pendingCount,
+  recentStats,
+} from "./stats.js";
+import {
+  RECRUITER_MAX,
+  bestPresence,
+  inviteBlocker,
+  listingContacts,
+  normalizeRecruiters,
+  pendingInvitesFor,
+  recruiterEntry,
+  recruitingOn,
+} from "./recruiters.js";
+import {
   DISCORD_MIN_AGE_DAYS,
   FORUM_CHECK_COOLDOWN_MS,
   discordAgeDays,
@@ -580,12 +600,39 @@ function listingTaken(db, fields) {
 
 function decorateClan(clan, db) {
   const alliance = db.alliances.find((item) => item.id === clan.allianceId);
+  const contacts = listingContacts(clan, db.users, presenceOf);
+  // `recruiters` carries user ids and pending invites. Accepted recruiters are
+  // already public through `contacts`; a pending one has not agreed to be named
+  // yet, so the raw roster never leaves the server.
+  // `stats` is the owner's business, not a competitor's.
+  const { recruiters, stats, ...publicClan } = clan;
   return withBumpState({
-    ...clan,
+    ...publicClan,
     allianceName: alliance?.name || null,
     allianceTag: alliance?.tag || null,
     whisperName: whisperName(clan, db.users),
-    ...listingPresence(clan, db.users),
+    contacts,
+    ...bestPresence(contacts),
+  });
+}
+
+// The owner's view of the roster: pending invites included, keyed by username
+// so the owner recognises who they invited.
+// Owners (and admins) see their own numbers; nobody else does.
+function withOwnerStats(decorated, raw, user) {
+  if (!user || !canRemove(user, raw)) return decorated;
+  return { ...decorated, stats: raw.stats || null, recent: recentStats(raw.stats) };
+}
+
+function rosterFor(clan, db) {
+  return normalizeRecruiters(clan.recruiters).map((entry) => {
+    const user = (db.users || []).find((item) => item.id === entry.userId);
+    return {
+      userId: entry.userId,
+      username: user?.username || "(deleted account)",
+      forumName: user?.forumName || null,
+      status: entry.status,
+    };
   });
 }
 
@@ -607,7 +654,15 @@ app.get("/api/auth/me", (req, res) => {
   const user = currentUser(req);
   const account = publicAccount(user, { isProd });
   res.json({
-    user: account ? { ...account, presence: presenceOf(user), keepMinutes: KEEP_MINUTES } : null,
+    user: account
+      ? {
+          ...account,
+          presence: presenceOf(user),
+          keepMinutes: KEEP_MINUTES,
+          invites: pendingInvitesFor(readDb(), user.id),
+          recruitingOn: recruitingOn(readDb(), user.id),
+        }
+      : null,
     auth: {
       discord: discordConfigured(),
       minAgeDays: DISCORD_MIN_AGE_DAYS,
@@ -619,6 +674,13 @@ app.get("/api/auth/me", (req, res) => {
 // A heartbeat only writes to the in-memory map in presence.js, so this is
 // cheap enough to allow generously - the limit is here to stop a stuck client
 // from hammering it, not to police normal use.
+const statsLimiter = rateLimit({
+  name: "stats",
+  limit: 60,
+  windowMs: 10 * 60 * 1000,
+  message: "Too many requests.",
+});
+
 const presenceLimiter = rateLimit({
   name: "presence",
   limit: 120,
@@ -962,7 +1024,12 @@ app.get("/api/auth/export", requireUser, exportLimiter, (req, res) => {
       forumProfileUrl: user.forumProfileUrl || null,
       forumVerifiedAt: user.forumVerifiedAt || null,
       forumCheckedAt: user.forumCheckedAt || null,
+      presenceStatus: user.presenceStatus || null,
+      presenceUntil: user.presenceUntil || null,
     },
+    // Listings that are not yours but carry your name as a contact.
+    recruitingOn: recruitingOn(db, user.id),
+    recruiterInvites: pendingInvitesFor(db, user.id),
     clans: (db.clans || []).filter((item) => item.ownerId === user.id),
     alliances: (db.alliances || []).filter((item) => item.ownerId === user.id),
     reports: (db.reports || []).filter((item) => item.reporterId === user.id),
@@ -990,7 +1057,14 @@ app.delete("/api/auth/account", requireUser, (req, res) => {
     }
     db.clans = (db.clans || [])
       .filter((item) => item.ownerId !== userId)
-      .map((clan) => (droppedAlliances.has(clan.allianceId) ? { ...clan, allianceId: null } : clan));
+      .map((clan) => (droppedAlliances.has(clan.allianceId) ? { ...clan, allianceId: null } : clan))
+      // Deleting an account also withdraws it from every listing it recruited
+      // for, otherwise a dead user id sits on someone else's public roster.
+      .map((clan) =>
+        recruiterEntry(clan, userId)
+          ? { ...clan, recruiters: normalizeRecruiters(clan.recruiters).filter((item) => item.userId !== userId) }
+          : clan
+      );
     db.alliances = (db.alliances || []).filter((item) => item.ownerId !== userId);
     db.reports = (db.reports || []).map((item) =>
       item.reporterId === userId ? { ...item, reporterId: null } : item
@@ -1003,9 +1077,26 @@ app.delete("/api/auth/account", requireUser, (req, res) => {
   });
 });
 
-app.get("/api/clans", (_req, res) => {
+// Browse and the home page render cards; they never show the post body. Shipping
+// `about` for every listing meant every visitor downloaded every full post on
+// every page load, so list responses carry only what a card and the filters
+// read. The detail route still returns the whole record.
+const HEAVY_FIELDS = ["about", "offering", "requirements", "video"];
+
+function trimListing(item) {
+  const out = { ...item };
+  for (const field of HEAVY_FIELDS) delete out[field];
+  if (out.memberClans) out.memberClans = out.memberClans.map(trimListing);
+  return out;
+}
+
+app.get("/api/clans", (req, res) => {
   const db = readDb();
-  const clans = db.clans.map((clan) => decorateClan(clan, db)).sort(sortListings);
+  const user = currentUser(req);
+  const clans = db.clans
+    .map((clan) => withOwnerStats(decorateClan(clan, db), clan, user))
+    .sort(sortListings)
+    .map(trimListing);
   res.json({ clans });
 });
 
@@ -1016,7 +1107,15 @@ app.get("/api/clans/:id", (req, res) => {
     res.status(404).json({ error: "Clan not found." });
     return;
   }
-  res.json({ clan: decorateClan(clan, db) });
+  // Only the detail route returns the post body, so this is a read of the post
+  // rather than a card impression.
+  if (!looksLikeBot(req.headers["user-agent"])) countView(clan.id);
+  res.json({ clan: withOwnerStats(decorateClan(clan, db), clan, currentUser(req)) });
+});
+
+app.post("/api/clans/:id/whisper", statsLimiter, (req, res) => {
+  if (!looksLikeBot(req.headers["user-agent"])) countWhisper(String(req.params.id));
+  res.json({ ok: true });
 });
 
 app.post("/api/clans", requirePoster, listingLimiter, listingUpload, async (req, res) => {
@@ -1156,6 +1255,92 @@ app.post("/api/clans/:id/bump", requirePoster, async (req, res) => {
   });
 });
 
+// Recruiters are contacts, not co-owners: only the owner (or an admin) changes
+// the roster, and the invitee is the only one who can accept.
+app.get("/api/clans/:id/recruiters", requireUser, (req, res) => {
+  const db = readDb();
+  const clan = db.clans.find((item) => item.id === req.params.id);
+  if (!clan) {
+    res.status(404).json({ error: "Clan not found." });
+    return;
+  }
+  if (!canRemove(req.user, clan)) {
+    res.status(403).json({ error: "You can only see the roster of your own posts." });
+    return;
+  }
+  res.json({ roster: rosterFor(clan, db), max: RECRUITER_MAX });
+});
+
+app.post("/api/clans/:id/recruiters", requireUser, (req, res) => {
+  const username = String(req.body?.username || "").trim();
+  writeDb((db) => {
+    const clan = db.clans.find((item) => item.id === req.params.id);
+    if (!clan) {
+      res.status(404).json({ error: "Clan not found." });
+      return db;
+    }
+    if (!canRemove(req.user, clan)) {
+      res.status(403).json({ error: "You can only add recruiters to your own posts." });
+      return db;
+    }
+    const invitee = db.users.find(
+      (user) => user.username.toLowerCase() === username.toLowerCase()
+    );
+    const blocked = inviteBlocker(clan, invitee, { id: clan.ownerId });
+    if (blocked) {
+      res.status(400).json({ error: blocked });
+      return db;
+    }
+    clan.recruiters = [
+      ...normalizeRecruiters(clan.recruiters),
+      { userId: invitee.id, status: "pending", invitedAt: new Date().toISOString(), respondedAt: null },
+    ];
+    res.json({ clan: decorateClan(clan, db), roster: rosterFor(clan, db) });
+    return db;
+  });
+});
+
+app.post("/api/clans/:id/recruiters/respond", requireUser, (req, res) => {
+  const accept = req.body?.accept === true || req.body?.accept === "true";
+  writeDb((db) => {
+    const clan = db.clans.find((item) => item.id === req.params.id);
+    if (!clan) {
+      res.status(404).json({ error: "Clan not found." });
+      return db;
+    }
+    const entry = recruiterEntry(clan, req.user.id);
+    if (!entry || entry.status !== "pending") {
+      res.status(404).json({ error: "No pending invite for you on that listing." });
+      return db;
+    }
+    const rest = normalizeRecruiters(clan.recruiters).filter((item) => item.userId !== req.user.id);
+    clan.recruiters = accept
+      ? [...rest, { ...entry, status: "accepted", respondedAt: new Date().toISOString() }]
+      : rest;
+    res.json({ ok: true, accepted: accept });
+    return db;
+  });
+});
+
+// The owner removes anyone; a recruiter can always remove themselves.
+app.delete("/api/clans/:id/recruiters/:userId", requireUser, (req, res) => {
+  writeDb((db) => {
+    const clan = db.clans.find((item) => item.id === req.params.id);
+    if (!clan) {
+      res.status(404).json({ error: "Clan not found." });
+      return db;
+    }
+    const target = String(req.params.userId);
+    if (!canRemove(req.user, clan) && target !== req.user.id) {
+      res.status(403).json({ error: "You can only remove yourself from a listing." });
+      return db;
+    }
+    clan.recruiters = normalizeRecruiters(clan.recruiters).filter((item) => item.userId !== target);
+    res.json({ ok: true, roster: rosterFor(clan, db) });
+    return db;
+  });
+});
+
 app.post("/api/clans/:id/pause", requireUser, (req, res) => {
   writeDb((db) => {
     const clan = db.clans.find((item) => item.id === req.params.id);
@@ -1245,7 +1430,10 @@ app.delete("/api/clans/:id", requireUser, (req, res) => {
 
 app.get("/api/alliances", (_req, res) => {
   const db = readDb();
-  const alliances = db.alliances.map((alliance) => decorateAlliance(alliance, db)).sort(sortListings);
+  const alliances = db.alliances
+    .map((alliance) => decorateAlliance(alliance, db))
+    .sort(sortListings)
+    .map(trimListing);
   res.json({ alliances });
 });
 
@@ -1551,6 +1739,7 @@ async function attachFrontend() {
 
 let server;
 let sessionSweep;
+let statsSweep;
 let inviteSweep;
 let inviteSweepDelay;
 let inviteSweepRunning = false;
@@ -1605,6 +1794,10 @@ async function start() {
     }).catch(() => {});
   }, 60 * 60 * 1000);
   sessionSweep.unref();
+  statsSweep = setInterval(() => {
+    flushStats().catch(() => {});
+  }, FLUSH_MS);
+  statsSweep.unref();
   inviteSweepDelay = setTimeout(() => {
     recheckInvites().catch(() => {});
   }, 2 * 60 * 1000);
@@ -1624,9 +1817,32 @@ start().catch((error) => {
   process.exit(1);
 });
 
+// One write per listing that saw traffic, rather than one per visitor.
+async function flushStats() {
+  if (!pendingCount()) return;
+  const counts = drain();
+  try {
+    await writeDb((db) => {
+      for (const [id, delta] of counts) {
+        const listing = (db.clans || []).find((item) => item.id === id);
+        if (!listing) continue;
+        listing.stats = addStats(listing.stats, delta);
+      }
+      return db;
+    });
+  } catch {
+    // Put them back so a failed save does not silently lose the counts.
+    for (const [id, delta] of counts) {
+      for (let i = 0; i < delta.views; i += 1) countView(id);
+      for (let i = 0; i < delta.whispers; i += 1) countWhisper(id);
+    }
+  }
+}
+
 function shutdown(signal) {
   console.log(`Received ${signal}, shutting down`);
   if (sessionSweep) clearInterval(sessionSweep);
+  if (statsSweep) clearInterval(statsSweep);
   if (inviteSweep) clearInterval(inviteSweep);
   if (inviteSweepDelay) clearTimeout(inviteSweepDelay);
   if (!server) {
@@ -1634,7 +1850,9 @@ function shutdown(signal) {
     return;
   }
   server.close(() => {
-    closePg().finally(() => process.exit(0));
+    flushStats()
+      .catch(() => {})
+      .finally(() => closePg().finally(() => process.exit(0)));
   });
   setTimeout(() => process.exit(0), 4000).unref();
 }

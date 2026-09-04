@@ -138,28 +138,56 @@ function joinDiscord(item, label) {
 // Warframe invites are handed out in-game, so the last step of joining is a
 // /w to the leader. Build it from the owner's verified forum name (see
 // whisperName in server/listing.js) and hide it whenever Discord is hidden.
-export function whisperMessage(clan) {
+export function whisperMessage(clan, name = clan.whisperName) {
   if (!wantsWhisper(clan)) return null;
-  if (!clan.whisperName || clan.recruiting === false) return null;
-  return `/w ${clan.whisperName} Hi ${clan.whisperName} I would like to join ${clan.name} (wfclanrecruit)`;
+  if (!name || clan.recruiting === false) return null;
+  return `/w ${name} Hi ${name} I would like to join ${clan.name} (wfclanrecruit)`;
+}
+
+// Everyone online gets their own line, so a recruit can pick whoever is
+// actually in game rather than being funnelled at one person. When nobody is
+// online the owner still shows, because a whisper left unread is better than no
+// way to make contact at all.
+function whisperContacts(clan) {
+  const contacts = clan.contacts || [];
+  const online = contacts.filter((item) => item.online);
+  if (online.length) return online;
+  const owner = contacts.find((item) => item.owner);
+  return owner ? [owner] : [];
 }
 
 function whisperBox(clan) {
-  const message = whisperMessage(clan);
-  if (!message) return "";
+  if (!wantsWhisper(clan) || clan.recruiting === false) return "";
+  const rows = whisperContacts(clan)
+    .map((contact) => {
+      const message = whisperMessage(clan, contact.name);
+      if (!message) return "";
+      return `
+        <div class="whisper-row">
+          <div class="whisper-who">
+            <strong>${escapeHtml(contact.name)}</strong>
+            <span class="muted">${contact.owner ? "Leader" : "Recruiter"}</span>
+            ${presenceDot(contact)}
+          </div>
+          <code class="whisper-text">${escapeHtml(message)}</code>
+          <button class="btn btn-ghost" type="button" data-copy-listing="${escapeHtml(clan.id)}" data-copy-text="${escapeHtml(message)}">Copy whisper</button>
+        </div>`;
+    })
+    .join("");
+  if (!rows) return "";
   return `
     <div class="whisper">
-      <p class="kicker">Whisper the leader in-game</p>
-      <code class="whisper-text">${escapeHtml(message)}</code>
-      <button class="btn btn-ghost" type="button" data-copy-text="${escapeHtml(message)}">Copy whisper</button>
+      <p class="kicker">Whisper in-game</p>
+      ${rows}
     </div>
   `;
 }
 
 function whisperCardButton(clan) {
-  const message = whisperMessage(clan);
+  const first = whisperContacts(clan)[0];
+  const message = first ? whisperMessage(clan, first.name) : null;
   if (!message) return "";
-  return `<button class="btn btn-ghost btn-small" type="button" title="Copy the /w message for this clan's leader" data-copy-text="${escapeHtml(message)}">Whisper</button>`;
+  return `<button class="btn btn-ghost btn-small" type="button" title="Copy the /w message for this clan's leader" data-copy-listing="${escapeHtml(clan.id)}" data-copy-text="${escapeHtml(message)}">Whisper</button>`;
 }
 
 const PRESENCE_LABELS = {
@@ -944,6 +972,8 @@ export function accountView({ user, clans, alliances, reports = [] }) {
       <div class="section-head"><h2>${admin ? "Clan posts" : "Your clans"}</h2><a class="text-link" href="/post" data-link>New clan</a></div>
       ${listingList(clans, "clan", "You have not posted a clan yet.")}
     </section>
+    ${recruiterInvitesPanel(user)}
+    ${recruitingOnPanel(user)}
     <section class="section">
       <div class="section-head"><h2>${admin ? "Alliance posts" : "Your alliances"}</h2><a class="text-link" href="/post-alliance" data-link>New alliance</a></div>
       ${listingList(alliances, "alliance", "You have not posted an alliance yet.")}
@@ -964,6 +994,113 @@ export function accountView({ user, clans, alliances, reports = [] }) {
   `;
 }
 
+function recruiterInvitesPanel(user) {
+  const invites = user.invites || [];
+  if (!invites.length) return "";
+  return `
+    <section class="section">
+      <div class="panel">
+        <p class="kicker">Recruiter invites</p>
+        <h2>${invites.length === 1 ? "A clan asked you to help recruit" : "Clans asked you to help recruit"}</h2>
+        <p class="muted">Accepting puts your in-game name on that public listing so recruits can whisper you. You can leave at any time, and you get no edit access to the post.</p>
+        <div class="list">
+          ${invites
+            .map(
+              (invite) => `
+            <div class="list-row">
+              <div>
+                <strong>${escapeHtml(invite.name)}</strong>
+                <p class="muted">[${escapeHtml(invite.tag)}]</p>
+              </div>
+              <div class="list-actions">
+                <a class="btn btn-ghost" href="/clans/${escapeHtml(invite.id)}" data-link>Read the post</a>
+                <button class="btn btn-ghost" type="button" data-invite-accept="${escapeHtml(invite.id)}">Accept</button>
+                <button class="btn btn-ghost btn-danger" type="button" data-invite-decline="${escapeHtml(invite.id)}">Decline</button>
+              </div>
+            </div>`
+            )
+            .join("")}
+        </div>
+        <p class="muted" data-invite-note hidden></p>
+      </div>
+    </section>
+  `;
+}
+
+function recruitingOnPanel(user) {
+  const listings = user.recruitingOn || [];
+  if (!listings.length) return "";
+  return `
+    <section class="section">
+      <div class="section-head"><h2>You recruit for</h2></div>
+      <div class="list">
+        ${listings
+          .map(
+            (item) => `
+          <div class="list-row">
+            <div>
+              <strong>${escapeHtml(item.name)}</strong>
+              <p class="muted">[${escapeHtml(item.tag)}] · your name is on this post</p>
+            </div>
+            <div class="list-actions">
+              <a class="btn btn-ghost" href="/clans/${escapeHtml(item.id)}" data-link>Open</a>
+              <button class="btn btn-ghost btn-danger" type="button" data-recruiter-leave="${escapeHtml(item.id)}">Leave</button>
+            </div>
+          </div>`
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+export function rosterPanel(roster = [], max = 5) {
+  const rows = roster.length
+    ? roster
+        .map(
+          (entry) => `
+      <div class="roster-row">
+        <div>
+          <strong>${escapeHtml(entry.username)}</strong>
+          <span class="muted">${entry.forumName ? escapeHtml(entry.forumName) : "no in-game name"}</span>
+        </div>
+        <span class="pill ${entry.status === "accepted" ? "is-open" : "is-selective"}">${
+          entry.status === "accepted" ? "Recruiting" : "Invite pending"
+        }</span>
+        <button class="btn btn-ghost btn-small" type="button" data-roster-remove="${escapeHtml(entry.userId)}">Remove</button>
+      </div>`
+        )
+        .join("")
+    : `<p class="muted">No recruiters yet. Invite up to ${max} verified players to share the whispers.</p>`;
+  return `
+    <div class="roster">
+      ${rows}
+      <form class="row roster-add">
+        <label class="field"><span class="sr-only">Username</span><input name="username" placeholder="Their username here" maxlength="20" required /></label>
+        <button class="btn btn-ghost" type="submit" ${roster.length >= max ? "disabled" : ""}>Invite</button>
+      </form>
+      <p class="muted" data-roster-note hidden></p>
+    </div>
+  `;
+}
+
+// What a leader actually wants to know before bumping: is anyone reading this,
+// and is anyone acting on it.
+function listingStats(item) {
+  if (!item.recent) return "";
+  const { views, whispers } = item.recent;
+  if (!views && !whispers && !item.stats?.views) {
+    return `<p class="muted listing-stats">No views yet. New posts take a day or two to get read.</p>`;
+  }
+  const total = item.stats?.views || 0;
+  return `<p class="muted listing-stats">
+    <strong>${views}</strong> view${views === 1 ? "" : "s"} and
+    <strong>${whispers}</strong> whisper${whispers === 1 ? "" : "s"} copied in the last 7 days${
+      total ? ` · ${total} views all time` : ""
+    }
+  </p>`;
+}
+
 function listingList(items, kind, emptyText) {
   if (!items.length) return `<p class="muted">${emptyText}</p>`;
   const editPath = kind === "clan" ? "/post" : "/post-alliance";
@@ -980,6 +1117,7 @@ function listingList(items, kind, emptyText) {
               <div>
                 <strong>${escapeHtml(item.name)}</strong>
                 <p class="muted">[${escapeHtml(item.tag)}] · ${escapeHtml(item.status)}${badges ? ` ${badges}` : ""}</p>
+                ${listingStats(item)}
               </div>
               <div class="list-actions">
                 <a class="btn btn-ghost" href="${openPath}/${encodeURIComponent(item.id)}" data-link>Open</a>
@@ -990,6 +1128,14 @@ function listingList(items, kind, emptyText) {
                 <button class="btn btn-ghost" type="button" ${bumpAttr}="${escapeHtml(item.id)}" ${item.canBump ? "" : "disabled"} title="${item.canBump ? "Send this post to the top of the board" : "You can bump once every 12 hours"}">Bump</button>
                 <button class="btn btn-ghost" type="button" ${deleteAttr}="${escapeHtml(item.id)}">Remove</button>
               </div>
+              ${
+                kind === "clan"
+                  ? `<details class="roster-box" data-roster-for="${escapeHtml(item.id)}">
+                <summary>Recruiters</summary>
+                <div data-roster-slot><p class="muted">Loading…</p></div>
+              </details>`
+                  : ""
+              }
             </div>`;
     })
     .join("")}</div>`;

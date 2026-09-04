@@ -19,6 +19,7 @@ import {
   previewAlliance,
   previewClan,
   presenceSummary,
+  rosterPanel,
 } from "./views.js";
 import { privacyView } from "./privacy.js";
 import { aboutTooLong, isSafeHref, plainTextFromHtml, sanitizePostHtml, toEditorHtml } from "./richtext.js";
@@ -277,6 +278,8 @@ function bindCopyText(root = app) {
       try {
         await navigator.clipboard.writeText(button.dataset.copyText);
         button.textContent = "Copied";
+        // Tell the leader someone acted on their post. Best effort only.
+        if (button.dataset.copyListing) api.countWhisper(button.dataset.copyListing).catch(() => {});
       } catch {
         button.textContent = "Copy failed";
       }
@@ -318,6 +321,99 @@ function bindListingPage() {
       showNote(note, error.message);
     }
   });
+}
+
+// Rosters carry pending invites, so they are owner-only and fetched when the
+// owner actually opens the section rather than shipped with every listing.
+// List responses drop the post body, so anything that needs the whole record -
+// the detail page, the edit form - asks for it and caches what comes back.
+async function fullListing(kind, id) {
+  const list = kind === "clan" ? state.clans : state.alliances;
+  const cached = list.find((item) => item.id === id && item.about !== undefined);
+  if (cached) return cached;
+  try {
+    const res = kind === "clan" ? await api.clan(id) : await api.alliance(id);
+    const item = kind === "clan" ? res.clan : res.alliance;
+    const at = list.findIndex((entry) => entry.id === id);
+    if (at >= 0) list[at] = item;
+    else list.push(item);
+    return item;
+  } catch {
+    return null;
+  }
+}
+
+function bindRecruiters() {
+  app.querySelectorAll("[data-roster-for]").forEach((box) => {
+    const id = box.dataset.rosterFor;
+    const slot = box.querySelector("[data-roster-slot]");
+    const paint = (roster, max) => {
+      slot.innerHTML = rosterPanel(roster, max);
+      slot.querySelector(".roster-add")?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const input = event.currentTarget.username;
+        const note = slot.querySelector("[data-roster-note]");
+        try {
+          const { roster: next } = await api.inviteRecruiter(id, input.value.trim());
+          paint(next, max);
+          showNote(slot.querySelector("[data-roster-note]"), "Invite sent. They have to accept before their name shows.", "muted");
+        } catch (error) {
+          showNote(note, error.message);
+        }
+      });
+      slot.querySelectorAll("[data-roster-remove]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          try {
+            const { roster: next } = await api.removeRecruiter(id, button.dataset.rosterRemove);
+            paint(next, max);
+          } catch (error) {
+            showNote(slot.querySelector("[data-roster-note]"), error.message);
+          }
+        });
+      });
+    };
+    box.addEventListener(
+      "toggle",
+      async () => {
+        if (!box.open) return;
+        try {
+          const { roster, max } = await api.roster(id);
+          paint(roster, max);
+        } catch (error) {
+          slot.innerHTML = `<p class="muted">${error.message}</p>`;
+        }
+      },
+      { once: true }
+    );
+  });
+
+  const note = app.querySelector("[data-invite-note]");
+  const respond = async (id, accept) => {
+    try {
+      await api.respondToInvite(id, accept);
+      await refresh();
+      await render();
+    } catch (error) {
+      showNote(note, error.message);
+    }
+  };
+  app.querySelectorAll("[data-invite-accept]").forEach((button) =>
+    button.addEventListener("click", () => respond(button.dataset.inviteAccept, true))
+  );
+  app.querySelectorAll("[data-invite-decline]").forEach((button) =>
+    button.addEventListener("click", () => respond(button.dataset.inviteDecline, false))
+  );
+  app.querySelectorAll("[data-recruiter-leave]").forEach((button) =>
+    button.addEventListener("click", async () => {
+      try {
+        await api.removeRecruiter(button.dataset.recruiterLeave, state.user.id);
+        await refresh();
+        await render();
+      } catch (error) {
+        showNote(note, error.message);
+      }
+    })
+  );
 }
 
 function bindForumForm() {
@@ -738,7 +834,10 @@ async function render() {
   }
 
   if (path === "/post") {
-    const draft = params.id ? state.clans.find((item) => item.id === params.id) : null;
+    // The edit form must never prefill from a trimmed list entry: submitting it
+    // would save an empty post body over the real one. Always load the full
+    // record before filling the form.
+    const draft = params.id ? await fullListing("clan", params.id) : null;
     if (params.id && !draft) {
       app.innerHTML = `<section class="auth-card"><h1>Listing not found</h1><p class="muted">That clan post is gone or the link is wrong.</p></section>`;
       return;
@@ -803,7 +902,7 @@ async function render() {
   }
 
   if (path === "/post-alliance") {
-    const draft = params.id ? state.alliances.find((item) => item.id === params.id) : null;
+    const draft = params.id ? await fullListing("alliance", params.id) : null;
     if (params.id && !draft) {
       app.innerHTML = `<section class="auth-card"><h1>Listing not found</h1><p class="muted">That alliance post is gone or the link is wrong.</p></section>`;
       return;
@@ -906,18 +1005,15 @@ async function render() {
     }
     app.innerHTML = accountView({ user: state.user, clans: mineClans, alliances: mineAlliances, reports });
     bindForumForm();
+    bindRecruiters();
     return;
   }
 
   if (clanMatch) {
-    let clan = state.clans.find((item) => item.id === clanMatch[1]);
+    const clan = await fullListing("clan", clanMatch[1]);
     if (!clan) {
-      try {
-        clan = (await api.clan(clanMatch[1])).clan;
-      } catch {
-        app.innerHTML = `<section class="auth-card"><h1>Listing not found</h1><p class="muted">That clan post is gone or the link is wrong.</p></section>`;
-        return;
-      }
+      app.innerHTML = `<section class="auth-card"><h1>Listing not found</h1><p class="muted">That clan post is gone or the link is wrong.</p></section>`;
+      return;
     }
     document.title = `${clan.name} — WF Clan Recruit`;
     app.innerHTML = clanPage(clan, { admin: Boolean(state.user?.admin) });
@@ -926,14 +1022,10 @@ async function render() {
   }
 
   if (allianceMatch) {
-    let alliance = state.alliances.find((item) => item.id === allianceMatch[1]);
+    const alliance = await fullListing("alliance", allianceMatch[1]);
     if (!alliance) {
-      try {
-        alliance = (await api.alliance(allianceMatch[1])).alliance;
-      } catch {
-        app.innerHTML = `<section class="auth-card"><h1>Listing not found</h1><p class="muted">That alliance post is gone or the link is wrong.</p></section>`;
-        return;
-      }
+      app.innerHTML = `<section class="auth-card"><h1>Listing not found</h1><p class="muted">That alliance post is gone or the link is wrong.</p></section>`;
+      return;
     }
     document.title = `${alliance.name} — WF Clan Recruit`;
     app.innerHTML = alliancePage(alliance, { admin: Boolean(state.user?.admin) });

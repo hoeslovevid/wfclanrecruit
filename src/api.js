@@ -36,6 +36,14 @@ export const api = {
     request(`/api/clans/${id}/pause`, { method: "POST", body: JSON.stringify({ paused }) }),
   reportClan: (id, body) => request(`/api/clans/${id}/report`, { method: "POST", body: JSON.stringify(body) }),
   deleteClan: (id) => request(`/api/clans/${id}`, { method: "DELETE" }),
+  countWhisper: (id) => request(`/api/clans/${id}/whisper`, { method: "POST", body: "{}" }),
+  roster: (id) => request(`/api/clans/${id}/recruiters`),
+  inviteRecruiter: (id, username) =>
+    request(`/api/clans/${id}/recruiters`, { method: "POST", body: JSON.stringify({ username }) }),
+  removeRecruiter: (id, userId) =>
+    request(`/api/clans/${id}/recruiters/${encodeURIComponent(userId)}`, { method: "DELETE" }),
+  respondToInvite: (id, accept) =>
+    request(`/api/clans/${id}/recruiters/respond`, { method: "POST", body: JSON.stringify({ accept }) }),
   alliances: () => request("/api/alliances"),
   alliance: (id) => request(`/api/alliances/${id}`),
   createAlliance: (formData) => request("/api/alliances", { method: "POST", body: formData }),

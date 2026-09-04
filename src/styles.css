@@ -1307,6 +1307,50 @@ code {
   background: var(--ghost);
 }
 .whisper .kicker { margin-bottom: 10px; }
+.whisper-row + .whisper-row {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.whisper-who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.whisper-who .presence { margin-top: 0; }
+
+.listing-stats {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+.listing-stats strong { color: var(--text); }
+
+.roster-box { margin-top: 10px; }
+.roster-box summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+.roster-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.roster-row > div:first-child { flex: 1; }
+.roster-row .muted { display: block; font-size: 12px; }
+.roster-add {
+  margin-top: 12px;
+  align-items: flex-end;
+  gap: 8px;
+}
+.roster-add .field { flex: 1; margin: 0; }
+
 .whisper-text {
   display: block;
   margin-bottom: 12px;
