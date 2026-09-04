@@ -23,6 +23,7 @@ import {
 } from "./views.js";
 import { privacyView } from "./privacy.js";
 import { aboutTooLong, isSafeHref, plainTextFromHtml, sanitizePostHtml, toEditorHtml } from "./richtext.js";
+import { parseYouTubeId } from "./video.js";
 
 const app = document.querySelector("#app");
 const nav = document.querySelector("#site-nav");
@@ -461,7 +462,6 @@ function showNote(el, message, kind = "error") {
 }
 
 const IMAGE_MAX = 2 * 1024 * 1024;
-const VIDEO_MAX = 25 * 1024 * 1024;
 
 function bindImagePicker(form, initialUrl, onUrl) {
   let imageUrl = initialUrl;
@@ -514,81 +514,41 @@ function bindImagePicker(form, initialUrl, onUrl) {
   });
 }
 
-function bindVideoPicker(form, initialUrl, onUrl) {
-  let videoUrl = initialUrl;
+// The video is a YouTube id now, not a file, so this binds a text box rather
+// than a picker: parse on every keystroke, show the poster frame as proof the
+// link resolved, and place the [video] marker the moment one does.
+function bindVideoInput(form, initialId, onId) {
   const input = form.video;
-  const picker = form.querySelector('[data-file-picker="video"]');
-  const removeField = form.removeVideo;
-  const label = picker?.querySelector("[data-file-label]");
-  const hint = picker?.querySelector("[data-file-hint]");
-  const action = picker?.querySelector("[data-file-action]");
-  const preview = picker?.querySelector("[data-file-preview]");
-  const clear = picker?.querySelector("[data-file-clear]");
+  const wrap = form.querySelector("[data-video-input]");
+  const thumb = wrap?.querySelector("[data-video-thumb]");
+  const image = wrap?.querySelector("[data-video-thumb-img]");
+  const error = wrap?.querySelector("[data-video-error]");
+  let current = parseYouTubeId(initialId);
 
-  function setPreviewThumb(url) {
-    if (!preview) return;
-    preview.querySelector("video")?.remove();
-    preview.style.backgroundImage = "";
-    if (!url) return;
-    const thumb = document.createElement("video");
-    thumb.src = url;
-    thumb.muted = true;
-    thumb.playsInline = true;
-    thumb.preload = "metadata";
-    preview.appendChild(thumb);
-  }
-
-  function setFile(file, { keepExisting = false } = {}) {
-    if (videoUrl && videoUrl.startsWith("blob:")) URL.revokeObjectURL(videoUrl);
-    if (file) {
-      videoUrl = URL.createObjectURL(file);
-      if (removeField) removeField.value = "";
-    } else if (keepExisting) {
-      videoUrl = initialUrl;
-      if (removeField) removeField.value = "";
-    } else {
-      videoUrl = null;
-      if (removeField) removeField.value = initialUrl ? "1" : "";
+  function show(id, message) {
+    if (thumb) thumb.hidden = !id;
+    if (image) image.src = id ? `https://i.ytimg.com/vi/${id}/mqdefault.jpg` : "";
+    if (error) {
+      error.hidden = !message;
+      error.textContent = message || "";
     }
-    picker?.classList.toggle("has-file", Boolean(videoUrl));
-    if (label) label.textContent = file ? file.name : videoUrl ? "Current video" : "Upload a video";
-    if (hint) hint.hidden = Boolean(videoUrl);
-    if (action) action.textContent = videoUrl ? "Replace" : "Choose video";
-    if (clear) clear.hidden = !videoUrl;
-    setPreviewThumb(videoUrl);
-    onUrl(videoUrl);
+    wrap?.classList.toggle("has-video", Boolean(id));
+    wrap?.classList.toggle("has-error", Boolean(message));
   }
 
-  if (initialUrl) setFile(null, { keepExisting: true });
+  function sync() {
+    const raw = String(input?.value || "").trim();
+    const id = parseYouTubeId(raw);
+    show(id, raw && !id ? "That is not a YouTube link." : "");
+    if (id && id !== current) ensureVideoMarker(form.querySelector("[data-rich-editor]"));
+    current = id;
+    onId(id);
+  }
 
-  clear?.addEventListener("click", () => {
-    if (input) input.value = "";
-    setFile(null);
-  });
-  input?.addEventListener("change", () => {
-    const file = input.files?.[0] || null;
-    setFile(file);
-    if (file) ensureVideoMarker(form.querySelector("[data-rich-editor]"));
-  });
-
-  ["dragenter", "dragover"].forEach((type) => {
-    picker?.addEventListener(type, (event) => {
-      event.preventDefault();
-      picker.classList.add("is-dragover");
-    });
-  });
-  picker?.addEventListener("dragleave", () => picker.classList.remove("is-dragover"));
-  picker?.addEventListener("drop", (event) => {
-    event.preventDefault();
-    picker.classList.remove("is-dragover");
-    const file = event.dataTransfer?.files?.[0];
-    if (!file || !input) return;
-    const transfer = new DataTransfer();
-    transfer.items.add(file);
-    input.files = transfer.files;
-    setFile(file);
-    ensureVideoMarker(form.querySelector("[data-rich-editor]"));
-  });
+  show(current, "");
+  onId(current);
+  input?.addEventListener("input", sync);
+  input?.addEventListener("change", sync);
 }
 
 function insertVideoAtEditor(editor) {
@@ -708,16 +668,16 @@ function bindRichText(form, onChange) {
   });
 }
 
-function bindListingComposer(form, { imageUrl = null, videoUrl = null, onChange }) {
-  const media = { image: imageUrl, video: videoUrl };
+function bindListingComposer(form, { imageUrl = null, videoId = null, onChange }) {
+  const media = { image: imageUrl, video: videoId };
   const refresh = () => onChange(media);
   bindRichText(form, refresh);
   bindImagePicker(form, imageUrl, (url) => {
     media.image = url;
     refresh();
   });
-  bindVideoPicker(form, videoUrl, (url) => {
-    media.video = url;
+  bindVideoInput(form, videoId, (id) => {
+    media.video = id;
     refresh();
   });
   form.addEventListener("input", refresh);
@@ -733,8 +693,9 @@ function mediaTooLarge(form) {
   if (form.image?.files?.[0] && form.image.files[0].size > IMAGE_MAX) {
     return "Image must be 2 MB or smaller.";
   }
-  if (form.video?.files?.[0] && form.video.files[0].size > VIDEO_MAX) {
-    return "Video must be 25 MB or smaller.";
+  const video = String(form.video?.value || "").trim();
+  if (video && !parseYouTubeId(video)) {
+    return "Paste a YouTube link, or leave the video box empty.";
   }
   return null;
 }
@@ -874,7 +835,7 @@ async function render() {
     const mr = app.querySelector("#post-mr");
     bindListingComposer(form, {
       imageUrl: draft?.image || null,
-      videoUrl: draft?.video || null,
+      videoId: draft?.video || null,
       onChange: (media) => {
         if (mr) mr.textContent = form.mrRequired.value;
         if (form.tag) form.tag.value = form.tag.value.toUpperCase();
@@ -932,7 +893,7 @@ async function render() {
     const note = app.querySelector("#form-note");
     bindListingComposer(form, {
       imageUrl: draft?.image || null,
-      videoUrl: draft?.video || null,
+      videoId: draft?.video || null,
       onChange: (media) => {
         if (form.tag) form.tag.value = form.tag.value.toUpperCase();
         preview.innerHTML = `${allianceCard(previewAlliance(form, media.image, media.video))}<div class="preview-about"><p class="kicker">Post body</p>${postBodyHtml(form.about.value, media.video, { placeholder: true })}</div>`;

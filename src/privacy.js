@@ -19,7 +19,7 @@ export function privacyView() {
           <li>You can browse the board without an account. We do not require cookies to read listings.</li>
           <li>We do not run ads, analytics pixels, or social tracking scripts.</li>
           <li>If you sign in, we store account, Discord, and (if you verify) Warframe Forum details so you can post.</li>
-          <li>Listings you publish are public, including images, video, Discord invites, and whatever you write in the post. Each listing has a shareable URL.</li>
+          <li>Listings you publish are public, including images, any YouTube video you link, Discord invites, and whatever you write in the post. Each listing has a shareable URL.</li>
           <li>You can report a dead or dishonest listing. Reports are not public; only the site operator can read them.</li>
           <li>You can download your data, remove listings, sign out, or delete your account from the ${jump("opt-out", "opt-out section")} or your <a href="/account" data-link>account page</a>.</li>
         </ul>
@@ -67,7 +67,7 @@ export function privacyView() {
         <ul class="policy-bullets">
           <li>Discord servers you join from a listing. Those communities set their own rules and collect their own data.</li>
           <li>Warframe, Steam, PlayStation, Xbox, Nintendo, or forums.warframe.com, except for the verification check described below.</li>
-          <li>Other websites linked from a listing, including video hosts if someone pastes an off-site URL into a post.</li>
+          <li>Other websites linked from a listing, and YouTube, which serves any video a listing embeds.</li>
           <li>Your internet provider, browser, or device, which may keep their own logs.</li>
         </ul>
         <p>By using the site you acknowledge this policy. You do not have to create an account to read it or to browse listings.</p>
@@ -123,7 +123,7 @@ export function privacyView() {
           <li>Platform, region, language, status, member counts, MR, clan tier, founded year</li>
           <li>Playstyles you pick, including Warframe-specific tags such as Archon, Eidolon, or Cross-save</li>
           <li>Leader name, Discord invite URL, optional alliance link</li>
-          <li>Uploaded image (up to 2 MB) and optional video (up to 25 MB)</li>
+          <li>Uploaded image (up to 2 MB) and an optional YouTube link, of which we store only the video id</li>
           <li>Created time, last bump time, paused flag, invite check result, and the owner id of the account that posted it</li>
         </ul>
         <p>Do not put private phone numbers, home addresses, government IDs, or passwords in a listing. Recruits and search engines can see public posts.</p>
@@ -160,7 +160,7 @@ export function privacyView() {
               <tr><th>Purpose</th><th>Data involved</th></tr>
             </thead>
             <tbody>
-              <tr><td>Show the public recruitment board</td><td>Listing fields, images, video</td></tr>
+              <tr><td>Show the public recruitment board</td><td>Listing fields, images, YouTube video ids</td></tr>
               <tr><td>Let you sign in and stay signed in</td><td>Discord profile, session cookie, password hash for local/admin login</td></tr>
               <tr><td>Stop throwaway Discord accounts from flooding posts</td><td>Discord id (account age), verified-email check in production</td></tr>
               <tr><td>Tie a poster to a Warframe Forum identity</td><td>Forum URL, verification code, verified flag</td></tr>
@@ -231,7 +231,7 @@ export function privacyView() {
       <article class="panel policy-section" id="public">
         <p class="kicker">09</p>
         <h2>What is public</h2>
-        <p>Treat every listing as public. That includes Discord invite links, leader names, screenshots, video, and the full post. Listing URLs also expose an Open Graph title, description, and image so Discord and similar apps can show a card. Other visitors, scrapers, and archives may copy public pages. Removing a listing from this site does not erase copies someone else already saved.</p>
+        <p>Treat every listing as public. That includes Discord invite links, leader names, screenshots, linked video, and the full post. Listing URLs also expose an Open Graph title, description, and image so Discord and similar apps can show a card. Other visitors, scrapers, and archives may copy public pages. Removing a listing from this site does not erase copies someone else already saved.</p>
         <p>Forum verification requires you to put a short code on your Warframe Forum About Me. That code is public on Digital Extremes’ forums until you delete it. After you verify here, you should remove the code from About Me if you do not want it sitting on the forum.</p>
         <p>A clan leader can invite you to be a recruiter on their listing. Nothing is published until you accept: while an invite is pending, only you and that listing's owner can see it. Once you accept, your in-game name and online status appear on their public post so recruits can whisper you, and you can leave from your account page at any time. Recruiters cannot edit, bump, pause, or remove the listing.</p>
         <p>While you have the site open, your listing can show an online dot so recruits can tell whether it is worth whispering you. New accounts start as Online; pick Invisible in the status menu to turn it off, and nothing about your presence is published. The status is self-declared, including “Online in game” — we cannot see what you are doing in Warframe.</p>
@@ -252,6 +252,7 @@ export function privacyView() {
               <tr><td>Discord</td><td>Sign-in and invite checks</td><td>That you authorized this app; Discord already has your Discord account. Invite lookups send the invite code</td></tr>
               <tr><td>Jina AI reader (<code>r.jina.ai</code>)</td><td>Read a public About Me page when Cloudflare blocks our server</td><td>The public forum profile URL you submitted, at the moment you click to check</td></tr>
               <tr><td>Google Fonts</td><td>Load IBM Plex</td><td>Your IP and browser when the font CSS and files load</td></tr>
+              <tr><td>YouTube (Google)</td><td>Play a video a listing embeds</td><td>Your IP and browser when the player loads on a listing page. We embed through <code>youtube-nocookie.com</code>, so YouTube does not set its usual tracking cookies unless you press play</td></tr>
               <tr><td>Warframe Forums / Digital Extremes</td><td>You publish the code on About Me; we only read that public tab</td><td>Whatever you put on your forum profile</td></tr>
               <tr><td>Other visitors</td><td>The board is public</td><td>Listing content and uploads</td></tr>
               <tr><td>Authorities or a successor</td><td>Only if legally required, or if the project is handed to a new operator who continues the same board</td><td>Relevant records</td></tr>

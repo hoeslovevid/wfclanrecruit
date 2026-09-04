@@ -13,6 +13,7 @@ import {
   wantsWhisper,
 } from "./data.js";
 import { sanitizePostHtml, splitVideoHtml, toEditorHtml } from "./richtext.js";
+import { youTubeEmbedUrl } from "./video.js";
 
 export function escapeHtml(value) {
   return String(value ?? "")
@@ -67,19 +68,17 @@ function hueFrom(seed) {
   return Math.abs(hash) % 360;
 }
 
-export function isSafeMediaUrl(url) {
-  return Boolean(url) && (url.startsWith("/uploads/") || url.startsWith("blob:"));
-}
-
-export function postBodyHtml(about, videoUrl, { placeholder = false } = {}) {
+export function postBodyHtml(about, video, { placeholder = false } = {}) {
   const html = sanitizePostHtml(toEditorHtml(about));
   const { before, after, hasMarker } = splitVideoHtml(html);
-  const safe = isSafeMediaUrl(videoUrl) ? videoUrl : null;
-  const showSlot = placeholder && (Boolean(safe) || hasMarker);
+  // youTubeEmbedUrl returns null for anything that is not an eleven-character
+  // id, so a hand-edited or pre-switch value can never reach the src.
+  const src = youTubeEmbedUrl(video);
+  const showSlot = placeholder && (Boolean(src) || hasMarker);
   const player = showSlot
     ? `<div class="post-video-slot">Video appears here</div>`
-    : safe
-      ? `<video class="post-video" controls playsinline preload="metadata" data-stop src="${escapeHtml(safe)}"></video>`
+    : src
+      ? `<div class="post-video" data-stop><iframe src="${escapeHtml(src)}" title="Clan video" loading="lazy" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture"></iframe></div>`
       : "";
 
   if (!player) {
@@ -590,29 +589,24 @@ function imagePicker(label) {
   `;
 }
 
-function videoPicker() {
+function videoPicker(draft = {}) {
   return `
     <div class="field">
-      <span>Video in post</span>
-      <div class="file-picker" data-file-picker="video">
-        <input type="hidden" name="removeVideo" value="" />
-        <div class="file-picker-target">
-          <input class="file-picker-input" name="video" type="file" accept="video/mp4,video/webm,.mp4,.webm" />
-          <div class="file-picker-ui">
-            <span class="file-picker-preview" data-file-preview aria-hidden="true">
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                <rect x="2.75" y="4.75" width="14.5" height="10.5" rx="2" stroke="currentColor" stroke-width="1.5"/>
-                <path d="M8.25 8.1v4.8L13.1 10.5 8.25 8.1Z" fill="currentColor"/>
-              </svg>
-            </span>
-            <span class="file-picker-copy">
-              <strong data-file-label>Upload a video</strong>
-              <small data-file-hint>MP4 or WEBM. Max 25 MB.</small>
-            </span>
-            <span class="file-picker-action" data-file-action>Choose video</span>
-          </div>
+      <span>YouTube video <small class="field-optional">optional</small></span>
+      <div class="video-input" data-video-input>
+        <input
+          name="video"
+          type="text"
+          inputmode="url"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="https://youtube.com/watch?v=..."
+          value="${escapeHtml(draft.video || "")}"
+        />
+        <div class="video-thumb" data-video-thumb hidden>
+          <img alt="" data-video-thumb-img />
         </div>
-        <button class="file-picker-clear" type="button" data-file-clear hidden>Remove video</button>
+        <p class="video-error" data-video-error role="alert" hidden></p>
       </div>
     </div>
   `;
@@ -635,7 +629,7 @@ function aboutComposer(draft = {}) {
         <textarea name="about" hidden>${escapeHtml(toEditorHtml(draft.about || ""))}</textarea>
       </div>
     </div>
-    ${videoPicker()}
+    ${videoPicker(draft)}
     <small class="field-help">Select text to format. Click in the post, then Video to place the clip. Insert again to move it.</small>
   `;
 }
@@ -1327,7 +1321,7 @@ export function alliancePage(alliance, { admin = false } = {}) {
   `;
 }
 
-export function previewClan(form, imageUrl = null, videoUrl = null) {
+export function previewClan(form, imageUrl = null, videoId = null) {
   const data = new FormData(form);
   const playstyles = data.getAll("playstyles");
   return {
@@ -1335,7 +1329,7 @@ export function previewClan(form, imageUrl = null, videoUrl = null) {
     name: data.get("name") || "Your clan name",
     tag: String(data.get("tag") || "TAG").toUpperCase(),
     image: imageUrl,
-    video: videoUrl,
+    video: videoId,
     platform: data.get("platform") || "PC",
     tier: data.get("tier") || "Ghost",
     members: Number(data.get("members") || 1),
@@ -1357,14 +1351,14 @@ export function previewClan(form, imageUrl = null, videoUrl = null) {
   };
 }
 
-export function previewAlliance(form, imageUrl = null, videoUrl = null) {
+export function previewAlliance(form, imageUrl = null, videoId = null) {
   const data = new FormData(form);
   return {
     id: "preview",
     name: data.get("name") || "Your alliance",
     tag: String(data.get("tag") || "TAG").toUpperCase(),
     image: imageUrl,
-    video: videoUrl,
+    video: videoId,
     platforms: data.getAll("platforms").length ? data.getAll("platforms") : ["PC"],
     region: data.get("region") || "Global",
     language: data.get("language") || "English",

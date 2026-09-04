@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { hashPassword, newToken, verifyPassword } from "./auth.js";
 import { initStorage, paths, postgresEnabled, readDb, storageLabel, writeDb, closePg } from "./db.js";
 import { rateLimit } from "./ratelimit.js";
+import { dropLegacyVideos, parseYouTubeId } from "../src/video.js";
 import {
   HEARTBEAT_MS,
   KEEP_MINUTES,
@@ -90,25 +91,15 @@ const TIER_CAPS = {
 };
 
 const IMAGE_MAX = 2 * 1024 * 1024;
-const VIDEO_MAX = 25 * 1024 * 1024;
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
-const VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
 const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
-const VIDEO_EXTS = new Set([".mp4", ".webm", ".m4v", ".mov"]);
 const EXT_BY_TYPE = {
   "image/png": ".png",
   "image/jpeg": ".jpg",
   "image/webp": ".webp",
   "image/gif": ".gif",
-  "video/mp4": ".mp4",
-  "video/webm": ".webm",
-  "video/quicktime": ".mov",
 };
 
-const MAX_BY_FIELD = { image: IMAGE_MAX, video: VIDEO_MAX };
-
-// multer only supports one global fileSize limit, so count bytes per field and
-// abort the stream as soon as a field passes its own cap.
 const diskStorage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, paths.uploadDir),
   filename: (_req, file, cb) => {
@@ -121,12 +112,11 @@ const diskStorage = multer.diskStorage({
 
 const cappedStorage = {
   _handleFile(req, file, cb) {
-    const cap = MAX_BY_FIELD[file.fieldname] ?? IMAGE_MAX;
     let bytes = 0;
     const counter = new Transform({
       transform(chunk, _enc, next) {
         bytes += chunk.length;
-        if (bytes > cap) {
+        if (bytes > IMAGE_MAX) {
           next(Object.assign(new Error("File too large."), { code: "LIMIT_FILE_SIZE", field: file.fieldname }));
           return;
         }
@@ -147,7 +137,7 @@ const cappedStorage = {
 
 const upload = multer({
   storage: cappedStorage,
-  limits: { fileSize: VIDEO_MAX, files: 2 },
+  limits: { fileSize: IMAGE_MAX, files: 1 },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname || "").toLowerCase();
     if (file.fieldname === "image") {
@@ -155,19 +145,11 @@ const upload = multer({
       cb(ok ? null : new Error("Image must be PNG, JPG, WEBP, or GIF."), ok);
       return;
     }
-    if (file.fieldname === "video") {
-      const ok = VIDEO_TYPES.has(file.mimetype) && VIDEO_EXTS.has(ext);
-      cb(ok ? null : new Error("Video must be MP4 or WEBM."), ok);
-      return;
-    }
     cb(new Error("Unexpected file."), false);
   },
 });
 
-const listingUpload = upload.fields([
-  { name: "image", maxCount: 1 },
-  { name: "video", maxCount: 1 },
-]);
+const listingUpload = upload.fields([{ name: "image", maxCount: 1 }]);
 
 const app = express();
 app.set("trust proxy", 1);
@@ -363,32 +345,24 @@ function nextImage(existing, file) {
   return savedUpload(file);
 }
 
-function nextVideo(existing, file, remove) {
-  if (file) {
-    removeStoredFile(existing);
-    return savedUpload(file);
-  }
-  if (String(remove || "") === "1") {
-    removeStoredFile(existing);
-    return null;
-  }
-  return existing ?? null;
-}
-
 function assertListingFiles(req, res) {
   const image = listingFile(req, "image");
-  const video = listingFile(req, "video");
   if (image && image.size > IMAGE_MAX) {
     discardUploads(req);
     res.status(400).json({ error: "Image must be 2 MB or smaller." });
     return false;
   }
-  if (video && video.size > VIDEO_MAX) {
-    discardUploads(req);
-    res.status(400).json({ error: "Video must be 25 MB or smaller." });
-    return false;
-  }
   return true;
+}
+
+// A blank box means "no video"; anything else must reduce to a YouTube id, so a
+// typo is reported now rather than rendering an empty frame on the public post.
+function parseListingVideo(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return { video: null };
+  const id = parseYouTubeId(raw);
+  if (!id) return { error: "Paste a YouTube link, or leave the video box empty." };
+  return { video: id };
 }
 
 function parseClanBody(body, user) {
@@ -425,6 +399,8 @@ function parseClanBody(body, user) {
   if (!Number.isFinite(members) || members < 1 || members > TIER_CAPS[tier]) {
     return { error: `${tier} clans cap at ${TIER_CAPS[tier]} members.` };
   }
+  const video = parseListingVideo(body.video);
+  if (video.error) return { error: video.error };
 
   return {
     fields: {
@@ -444,6 +420,7 @@ function parseClanBody(body, user) {
       paused: String(body.paused || "") === "1" || body.paused === true || body.paused === "true",
       founded: String(body.founded || new Date().getFullYear()),
       allianceId,
+      video: video.video,
       headline: String(body.headline).slice(0, 90),
       summary: String(body.summary).slice(0, 220),
       about,
@@ -476,6 +453,8 @@ function parseAllianceBody(body) {
   if (!Number.isFinite(clanCount) || clanCount < 1) {
     return { error: "Enter how many clans are in the alliance." };
   }
+  const video = parseListingVideo(body.video);
+  if (video.error) return { error: video.error };
 
   return {
     fields: {
@@ -490,6 +469,7 @@ function parseAllianceBody(body) {
       discord: String(body.discord),
       paused: String(body.paused || "") === "1" || body.paused === true || body.paused === "true",
       rosterIds: asArray(body.rosterIds),
+      video: video.video,
       headline: String(body.headline).slice(0, 90),
       summary: String(body.summary).slice(0, 220),
       about,
@@ -1053,7 +1033,6 @@ app.delete("/api/auth/account", requireUser, (req, res) => {
     );
     for (const listing of [...(db.clans || []), ...(db.alliances || [])].filter((item) => item.ownerId === userId)) {
       removeStoredFile(listing.image);
-      removeStoredFile(listing.video);
     }
     db.clans = (db.clans || [])
       .filter((item) => item.ownerId !== userId)
@@ -1156,7 +1135,6 @@ app.post("/api/clans", requirePoster, listingLimiter, listingUpload, async (req,
       id: slugify(invited.name),
       ...invited,
       image: savedUpload(listingFile(req, "image")),
-      video: savedUpload(listingFile(req, "video")),
       featured: false,
       ownerId: req.user.id,
       createdAt: now,
@@ -1208,7 +1186,6 @@ app.put("/api/clans/:id", requirePoster, listingUpload, async (req, res) => {
     }
     Object.assign(clan, invited, {
       image: nextImage(clan.image, listingFile(req, "image")),
-      video: nextVideo(clan.video, listingFile(req, "video"), req.body.removeVideo),
     });
     res.json({ clan: decorateClan(clan, db) });
     return db;
@@ -1415,7 +1392,6 @@ app.delete("/api/clans/:id", requireUser, (req, res) => {
       return db;
     }
     removeStoredFile(clan.image);
-    removeStoredFile(clan.video);
     const now = new Date().toISOString();
     db.reports = (db.reports || []).map((item) =>
       item.listingId === clan.id && item.status === "open"
@@ -1483,7 +1459,6 @@ app.post("/api/alliances", requirePoster, listingLimiter, listingUpload, async (
       id: slugify(invited.name),
       ...invited,
       image: savedUpload(listingFile(req, "image")),
-      video: savedUpload(listingFile(req, "video")),
       featured: false,
       ownerId: req.user.id,
       createdAt: now,
@@ -1532,7 +1507,6 @@ app.put("/api/alliances/:id", requirePoster, listingUpload, async (req, res) => 
     }
     Object.assign(alliance, invited, {
       image: nextImage(alliance.image, listingFile(req, "image")),
-      video: nextVideo(alliance.video, listingFile(req, "video"), req.body.removeVideo),
     });
     applyAllianceRoster(db, alliance.id, alliance.ownerId, rosterIds);
     res.json({ alliance: decorateAlliance(alliance, db) });
@@ -1631,7 +1605,6 @@ app.delete("/api/alliances/:id", requireUser, (req, res) => {
       return db;
     }
     removeStoredFile(alliance.image);
-    removeStoredFile(alliance.video);
     const now = new Date().toISOString();
     db.reports = (db.reports || []).map((item) =>
       item.listingId === alliance.id && item.status === "open"
@@ -1771,8 +1744,26 @@ async function recheckInvites() {
   }
 }
 
+// Listings written before the YouTube switch still point at an uploaded MP4
+// that nothing can play. Clear those fields once and reclaim the volume.
+async function clearUploadedVideos() {
+  let files = [];
+  await writeDb((db) => {
+    files = dropLegacyVideos([...(db.clans || []), ...(db.alliances || [])]);
+    return db;
+  });
+  for (const file of files) removeStoredFile(file);
+  for (const name of fs.existsSync(paths.uploadDir) ? fs.readdirSync(paths.uploadDir) : []) {
+    if (/\.(mp4|webm|m4v|mov)$/i.test(name)) {
+      fs.rmSync(path.join(paths.uploadDir, name), { force: true });
+    }
+  }
+  if (files.length) console.log(`Cleared ${files.length} uploaded video(s) from listings.`);
+}
+
 async function start() {
   await initStorage();
+  await clearUploadedVideos();
   const frontend = await attachFrontend();
   server = app.listen(PORT, "0.0.0.0");
   await new Promise((resolve, reject) => {
