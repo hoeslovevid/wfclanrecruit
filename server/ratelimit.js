@@ -11,7 +11,18 @@ const sweep = setInterval(() => {
 }, SWEEP_MS);
 sweep.unref();
 
+// req.ip is not the caller behind Railway's edge: "trust proxy" is 1, so
+// Express resolves it to the edge node, and those rotate per request
+// (152.233.40.2 then .1 for two back-to-back calls), which put every request
+// in its own bucket and stopped the limiter from ever counting.
+//
+// Railway overwrites x-real-ip and x-forwarded-for on the way in - a request
+// sending its own values gets them discarded - so x-real-ip is the caller's
+// true address and is not client-controllable. Fall back to req.ip where the
+// header is absent, such as local dev, rather than to a spoofable header.
 export function clientIp(req) {
+  const realIp = String(req.headers["x-real-ip"] || "").trim();
+  if (realIp) return realIp;
   return req.ip || req.socket?.remoteAddress || "unknown";
 }
 
