@@ -18,6 +18,8 @@ export const api = {
   register: (username, password) =>
     request("/api/auth/register", { method: "POST", body: JSON.stringify({ username, password }) }),
   logout: () => request("/api/auth/logout", { method: "POST", body: "{}" }),
+  exportAccount: () => request("/api/auth/export"),
+  deleteAccount: () => request("/api/auth/account", { method: "DELETE" }),
   forumStart: (profileUrl) =>
     request("/api/auth/forum/start", { method: "POST", body: JSON.stringify({ profileUrl }) }),
   forumCheck: (profileUrl) =>

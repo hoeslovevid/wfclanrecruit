@@ -440,15 +440,16 @@ app.get("/api/auth/me", (req, res) => {
 });
 
 app.get("/api/auth/discord", (req, res) => {
+  const mode = req.query.mode === "register" ? "register" : "login";
   if (!discordConfigured()) {
-    res.status(503).json({ error: "Discord sign-in is not configured." });
+    res.redirect(`${publicOrigin(req)}/#/${mode}?error=discord-config`);
     return;
   }
   const state = newToken();
   const next = safeNextPath(req.query.next);
   res.cookie(
     OAUTH_COOKIE,
-    encodeOauth({ state, next }),
+    encodeOauth({ state, next, mode }),
     { ...cookieOptions(), maxAge: 10 * 60 * 1000 }
   );
   const params = new URLSearchParams({
@@ -463,19 +464,20 @@ app.get("/api/auth/discord", (req, res) => {
 
 app.get("/api/auth/discord/callback", async (req, res) => {
   const origin = publicOrigin(req);
-  const fail = (code) => {
-    res.clearCookie(OAUTH_COOKIE, cookieOptions());
-    res.redirect(`${origin}/#/login?error=${encodeURIComponent(code)}`);
-  };
-  if (!discordConfigured()) {
-    fail("discord-config");
-    return;
-  }
   let stored = {};
   try {
     stored = decodeOauth(req.cookies[OAUTH_COOKIE]);
   } catch {
     stored = {};
+  }
+  const storedMode = stored.mode === "register" ? "register" : "login";
+  const fail = (code) => {
+    res.clearCookie(OAUTH_COOKIE, cookieOptions());
+    res.redirect(`${origin}/#/${storedMode}?error=${encodeURIComponent(code)}`);
+  };
+  if (!discordConfigured()) {
+    fail("discord-config");
+    return;
   }
   if (!req.query.code || !req.query.state || req.query.state !== stored.state) {
     fail("discord-state");
@@ -709,6 +711,65 @@ app.post("/api/auth/logout", (req, res) => {
   }).then(() => {
     res.clearCookie(COOKIE, cookieOptions());
     res.json({ ok: true });
+  });
+});
+
+app.get("/api/auth/export", requireUser, (req, res) => {
+  const db = readDb();
+  const user = db.users.find((item) => item.id === req.user.id);
+  if (!user) {
+    res.status(404).json({ error: "Account not found." });
+    return;
+  }
+  res.json({
+    exportedAt: new Date().toISOString(),
+    account: {
+      id: user.id,
+      username: user.username,
+      createdAt: user.createdAt,
+      admin: Boolean(user.admin),
+      discordId: user.discordId || null,
+      discordUsername: user.discordUsername || null,
+      discordEmail: user.discordEmail || null,
+      forumVerified: Boolean(user.forumVerified),
+      forumName: user.forumName || null,
+      forumProfileUrl: user.forumProfileUrl || null,
+      forumVerifiedAt: user.forumVerifiedAt || null,
+      forumCheckedAt: user.forumCheckedAt || null,
+    },
+    clans: (db.clans || []).filter((item) => item.ownerId === user.id),
+    alliances: (db.alliances || []).filter((item) => item.ownerId === user.id),
+  });
+});
+
+app.delete("/api/auth/account", requireUser, (req, res) => {
+  if (req.user.admin) {
+    res.status(403).json({ error: "Admin accounts cannot be deleted from this page." });
+    return;
+  }
+  writeDb((db) => {
+    const userId = req.user.id;
+    const user = db.users.find((item) => item.id === userId);
+    if (!user) {
+      res.status(404).json({ error: "Account not found." });
+      return db;
+    }
+    const droppedAlliances = new Set(
+      (db.alliances || []).filter((item) => item.ownerId === userId).map((item) => item.id)
+    );
+    for (const listing of [...(db.clans || []), ...(db.alliances || [])].filter((item) => item.ownerId === userId)) {
+      removeStoredFile(listing.image);
+      removeStoredFile(listing.video);
+    }
+    db.clans = (db.clans || [])
+      .filter((item) => item.ownerId !== userId)
+      .map((clan) => (droppedAlliances.has(clan.allianceId) ? { ...clan, allianceId: null } : clan));
+    db.alliances = (db.alliances || []).filter((item) => item.ownerId !== userId);
+    db.sessions = (db.sessions || []).filter((item) => item.userId !== userId);
+    db.users = (db.users || []).filter((item) => item.id !== userId);
+    res.clearCookie(COOKIE, cookieOptions());
+    res.json({ ok: true });
+    return db;
   });
 });
 

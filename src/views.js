@@ -172,7 +172,7 @@ export function allianceCard(alliance) {
   `;
 }
 
-export function homeView({ clans, alliances, user }) {
+export function homeView({ clans, alliances, user, auth = {} }) {
   const featuredClans = clans.filter((item) => item.featured).slice(0, 3);
   const featuredAlliances = alliances.filter((item) => item.featured).slice(0, 2);
   const homeAlliances = (featuredAlliances.length ? featuredAlliances : alliances).slice(0, 2);
@@ -245,8 +245,14 @@ export function homeView({ clans, alliances, user }) {
       <div class="panel">
         <p class="eyebrow">For leaders</p>
         <h2>Post once. Keep it current.</h2>
-        <p class="muted">Sign in with Discord, verify your Warframe Forum profile, then publish. Everyone who visits this site sees the same board.</p>
-        <a class="btn btn-ghost" href="${user ? "#/post" : "#/login"}" data-link>${user ? "Post a listing" : "Sign in to post"}</a>
+        <p class="muted">Create an account with one Discord click. That is your sign-in — no second Discord login. Then verify your Warframe Forum profile and publish.</p>
+        ${
+          user
+            ? `<a class="btn btn-ghost" href="#/post" data-link>Post a listing</a>`
+            : auth.discord
+              ? discordCreateButton("/account")
+              : `<a class="btn btn-ghost" href="#/register" data-link>Create an account</a>`
+        }
       </div>
     </section>
 
@@ -449,8 +455,14 @@ function demoLoginHint() {
   return `<p class="muted">Local demo: <code>leader</code> / <code>recruit1</code></p>`;
 }
 
-function discordButton(nextHash) {
-  return `<a class="btn btn-discord" href="/api/auth/discord?next=${encodeURIComponent(nextHash)}">Continue with Discord</a>`;
+function discordButton(nextHash, { label = "Continue with Discord", mode = "login" } = {}) {
+  const params = new URLSearchParams({ next: nextHash });
+  if (mode === "register") params.set("mode", "register");
+  return `<a class="btn btn-discord" href="/api/auth/discord?${params}">${escapeHtml(label)}</a>`;
+}
+
+function discordCreateButton(nextHash = "/account") {
+  return discordButton(nextHash, { label: "Create account with Discord", mode: "register" });
 }
 
 function forumVerifyPanel(user) {
@@ -487,20 +499,21 @@ function authGate(nextHash, auth = {}) {
   return `
     <section class="auth-card">
       <p class="eyebrow">Account required</p>
-      <h1>Sign in to publish</h1>
-      <p class="lead">Anyone can browse. Posting takes Discord and a verified Warframe Forum account so bots cannot flood the board.</p>
+      <h1>Create an account to publish</h1>
+      <p class="lead">Anyone can browse. Click Create account with Discord — that creates the account and is your Discord sign-in. Then verify a Warframe Forum profile to post.</p>
       <div class="row">
-        ${auth.discord ? discordButton(nextHash) : ""}
-        <a class="btn ${auth.discord ? "btn-ghost" : "btn-primary"}" href="#/login?next=${encodeURIComponent(nextHash)}" data-link>${auth.discord ? "Other sign in" : "Sign in"}</a>
+        ${auth.discord ? discordCreateButton(nextHash) : ""}
+        <a class="btn ${auth.discord ? "btn-ghost" : "btn-primary"}" href="#/login?next=${encodeURIComponent(nextHash)}" data-link>Sign in</a>
       </div>
+      ${auth.discord ? `<p class="muted">That Discord click creates the account and signs you in. You will not need a second Discord login.</p>` : ""}
       ${demoLoginHint()}
     </section>
   `;
 }
 
-export function publishGateView(user, nextHash = "/post") {
-  if (!user) return authGate(nextHash);
-  if (user.publishBlock === "discord") return authGate(nextHash);
+export function publishGateView(user, nextHash = "/post", auth = {}) {
+  if (!user) return authGate(nextHash, auth);
+  if (user.publishBlock === "discord") return authGate(nextHash, auth);
   if (user.publishBlock === "age") {
     return `
       <section class="auth-card">
@@ -530,7 +543,7 @@ export function publishGateView(user, nextHash = "/post") {
 export function postView({ user, alliances = [], draft = {}, auth = {} }) {
   const next = draft.id ? `/post?id=${draft.id}` : "/post";
   if (!user) return authGate(next, auth);
-  if (!user.canPublish) return publishGateView(user, next);
+  if (!user.canPublish) return publishGateView(user, next, auth);
   const editing = Boolean(draft.id);
   return `
     <section class="page-hero">
@@ -601,7 +614,7 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
 export function alliancePostView({ user, draft = {}, auth = {} }) {
   const next = draft.id ? `/post-alliance?id=${draft.id}` : "/post-alliance";
   if (!user) return authGate(next, auth);
-  if (!user.canPublish) return publishGateView(user, next);
+  if (!user.canPublish) return publishGateView(user, next, auth);
   const editing = Boolean(draft.id);
   return `
     <section class="page-hero">
@@ -661,7 +674,7 @@ export function alliancePostView({ user, draft = {}, auth = {} }) {
 export function authView(mode, next = "/", { error = "", discord = true, passwordRegister = false } = {}) {
   const isLogin = mode === "login";
   const errors = {
-    "discord-age": `Discord accounts must be at least 7 days old to sign in and post.`,
+    "discord-age": `Discord accounts must be at least 7 days old to create an account and post.`,
     "discord-email": "Use a Discord account with a verified email.",
     "discord-denied": "Discord sign-in was cancelled.",
     "discord-state": "Discord sign-in expired. Try again.",
@@ -672,13 +685,27 @@ export function authView(mode, next = "/", { error = "", discord = true, passwor
     "discord-error": "Discord sign-in failed. Try again.",
   };
   const message = errors[error] || "";
+  const nextQuery = `next=${encodeURIComponent(next)}`;
   return `
     <section class="auth-card">
       <p class="eyebrow">${isLogin ? "Welcome back" : "New account"}</p>
       <h1>${isLogin ? "Sign in to post" : "Create an account"}</h1>
-      <p class="lead">Browse without an account. To publish or bump, sign in with Discord, then verify a Warframe Forum profile.</p>
+      <p class="lead">${
+        isLogin
+          ? "Use Discord to sign back in. If you created your account with Discord, that already counts as Discord auth — next you verify Warframe Forums to post."
+          : "Click the Discord button. Discord creates your account and signs you in, so you can skip a separate Discord login. To publish, verify a Warframe Forum profile."
+      }</p>
       ${message ? `<p class="error">${escapeHtml(message)}</p>` : ""}
-      ${discord ? `<div class="row">${discordButton(next)}</div>` : `<p class="muted">Discord is not configured. ${import.meta.env.DEV ? "Use the local username form below." : "Ask the site admin to set DISCORD_CLIENT_ID."}</p>`}
+      ${
+        discord
+          ? `<div class="row">${isLogin ? discordButton(next) : discordCreateButton(next)}</div>`
+          : `<p class="muted">Discord is not configured. ${import.meta.env.DEV ? "Use the local username form below." : "Ask the site admin to set DISCORD_CLIENT_ID."}</p>`
+      }
+      ${
+        isLogin
+          ? `<p class="muted">New here? <a href="#/register?${nextQuery}" data-link>Create an account with Discord</a></p>`
+          : `<p class="muted">Already have an account? <a href="#/login?${nextQuery}" data-link>Sign in with Discord</a>.</p>`
+      }
       ${
         isLogin || passwordRegister
           ? `<details class="auth-advanced">
@@ -690,7 +717,7 @@ export function authView(mode, next = "/", { error = "", discord = true, passwor
           <button class="btn btn-primary" type="submit">${isLogin ? "Sign in" : "Create account"}</button>
         </form>
       </details>`
-          : `<p class="muted">Already have Discord? <a href="#/login?next=${encodeURIComponent(next)}" data-link>Sign in</a></p>`
+          : ""
       }
       ${demoLoginHint()}
     </section>
@@ -714,17 +741,17 @@ export function accountView({ user, clans, alliances }) {
         <p class="kicker">Posting access</p>
         <h2>${user.canPublish ? "You can publish" : "Finish verification to post"}</h2>
         <ul class="verify-status">
-          <li>${user.discordId ? `Discord linked${user.discordUsername ? ` (${escapeHtml(user.discordUsername)})` : ""}` : "Discord not linked"}</li>
+          <li>${user.discordId ? `Discord connected${user.discordUsername ? ` (${escapeHtml(user.discordUsername)})` : ""} — this is your sign-in` : "Discord not connected"}</li>
           <li>${user.forumVerified ? `Forum verified${user.forumName ? ` (${escapeHtml(user.forumName)})` : ""}` : "Warframe Forum not verified"}</li>
         </ul>
         ${
           user.canPublish
             ? `<p class="muted">You can edit, bump, and publish. New listings are limited to one every 15 minutes. Bumps are once every 12 hours.</p>`
             : user.publishBlock === "forum"
-              ? forumVerifyPanel(user)
+              ? `<p class="muted">Discord is already done. Verify your Warframe Forum profile to publish.</p>${forumVerifyPanel(user)}`
               : user.publishBlock === "age"
                 ? `<p class="muted">Discord accounts must be at least ${user.minAgeDays || 7} days old to post. Yours is ${user.discordAgeDays ?? 0} days old.</p>`
-                : `<p class="muted">Sign in with Discord to publish. Browsing stays public.</p><div class="row">${discordButton("/account")}</div>`
+                : `<p class="muted">Connect Discord once. That creates the account and skips a second Discord login.</p><div class="row">${discordCreateButton("/account")}</div>`
         }
       </div>
     </section>
@@ -735,6 +762,18 @@ export function accountView({ user, clans, alliances }) {
     <section class="section">
       <div class="section-head"><h2>${admin ? "Alliance posts" : "Your alliances"}</h2><a class="text-link" href="#/post-alliance" data-link>New alliance</a></div>
       ${listingList(alliances, "alliance", "You have not posted an alliance yet.")}
+    </section>
+    <section class="section">
+      <div class="panel">
+        <p class="kicker">Privacy</p>
+        <h2>Your data on this site</h2>
+        <p class="muted">Listings you publish are public. Discord email and session tokens are not shown on the board. Read the <a href="#/privacy" data-link>privacy policy</a> for the full list, including cookies, the forum reader, and third parties.</p>
+        <div class="row">
+          <button class="btn btn-ghost" type="button" data-export-account>Download my data</button>
+          ${admin ? "" : `<button class="btn btn-ghost btn-danger" type="button" data-delete-account>Delete my account</button>`}
+        </div>
+        ${admin ? `<p class="muted">Admin accounts cannot be deleted from this page so the board cannot be locked out.</p>` : ""}
+      </div>
     </section>
   `;
 }
@@ -771,8 +810,8 @@ export function guideView() {
       <div class="grid three">
         <article class="panel guide-step">
           <p class="kicker">Step 01</p>
-          <h3>Sign in with Discord</h3>
-          <p class="muted">Leaders and recruits sign in with Discord. Anyone can still browse without an account.</p>
+          <h3>Create an account with Discord</h3>
+          <p class="muted">One Discord button creates the account and signs you in. You do not do a second Discord login. Anyone can still browse without an account.</p>
         </article>
         <article class="panel guide-step">
           <p class="kicker">Step 02</p>
@@ -789,11 +828,12 @@ export function guideView() {
         <p class="kicker">Rules</p>
         <h3>Keep listings honest</h3>
         <ul class="guide-rules">
-          <li>Sign in with Discord. Accounts must be at least 7 days old.</li>
+          <li>Create an account with the Discord button. That click is your Discord auth.</li>
           <li>Verify a Warframe Forum profile with a one-time code, like Warframe Market.</li>
           <li>Use a real Discord invite. People will click it.</li>
           <li>Be exact about MR, trials, and behavior rules.</li>
           <li>You can remove your own posts from the account page.</li>
+          <li>The <a href="#/privacy" data-link>privacy policy</a> lists what we store and how to download or delete it.</li>
         </ul>
       </article>
       <div class="row guide-actions">
@@ -956,7 +996,7 @@ export function previewAlliance(form, imageUrl = null, videoUrl = null) {
   };
 }
 
-export function navAccount(user) {
+export function navAccount(user, { discord = false } = {}) {
   if (user) {
     return `
       <a class="btn btn-ghost" href="#/account" data-link>${escapeHtml(user.username)}</a>
@@ -965,6 +1005,6 @@ export function navAccount(user) {
   }
   return `
     <a class="btn btn-ghost" href="#/login" data-link>Sign in</a>
-    <a class="btn btn-primary" href="#/login" data-link>Post with Discord</a>
+    ${discord ? discordCreateButton("/account") : `<a class="btn btn-primary" href="#/register" data-link>Create account</a>`}
   `;
 }

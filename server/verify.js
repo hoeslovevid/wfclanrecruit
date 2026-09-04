@@ -55,7 +55,7 @@ export function aboutMeUrl(profileUrl) {
 
 export function publishGate(user, { isProd }) {
   if (!user) {
-    return { ok: false, reason: "auth", message: "Sign in with Discord to publish." };
+    return { ok: false, reason: "auth", message: "Create an account with Discord to publish." };
   }
   if (user.admin) return { ok: true, reason: null, message: null };
 
@@ -63,7 +63,7 @@ export function publishGate(user, { isProd }) {
   if (skipExternal) return { ok: true, reason: null, message: null };
 
   if (!user.discordId) {
-    return { ok: false, reason: "discord", message: "Sign in with Discord before you publish." };
+    return { ok: false, reason: "discord", message: "Create an account with Discord before you publish." };
   }
   const age = discordAgeDays(user.discordId);
   if (age < DISCORD_MIN_AGE_DAYS) {

@@ -43,6 +43,7 @@
         <a href="#/alliances" data-link data-route="/alliances">Alliances</a>
         <a href="#/post" data-link data-route="/post">Post</a>
         <a href="#/guide" data-link data-route="/guide">How it works</a>
+        <a href="#/privacy" data-link data-route="/privacy">Privacy</a>
       </nav>
 
       <div class="nav-actions">
@@ -69,6 +70,7 @@
         <a href="#/alliances" data-link>Alliances</a>
         <a href="#/post" data-link>Post</a>
         <a href="#/guide" data-link>How it works</a>
+        <a href="#/privacy" data-link>Privacy</a>
       </nav>
       <label class="theme-switch drawer-theme" title="Switch color theme">
         <span class="sr-only">Light mode</span>
@@ -96,14 +98,16 @@
           <a href="#/browse" data-link>Clans</a>
           <a href="#/alliances" data-link>Alliances</a>
           <a href="#/post" data-link>Post</a>
+          <a href="#/guide" data-link>How it works</a>
+          <a href="#/privacy" data-link>Privacy</a>
         </div>
         <div>
           <h3>Leaders</h3>
-          <p class="muted">Sign in with Discord, verify a Warframe Forum profile, and publish a listing everyone can see.</p>
-          <a class="btn btn-primary" href="#/login" data-link>Sign in to post</a>
+          <p class="muted">One Discord click creates the account and signs you in. Then verify a Warframe Forum profile to publish.</p>
+          <a class="btn btn-discord" href="/api/auth/discord?mode=register&next=/account">Create account with Discord</a>
         </div>
       </div>
-      <p class="legal">© 2026 WF Clan Recruit</p>
+      <p class="legal">© 2026 WF Clan Recruit · <a href="#/privacy" data-link>Privacy</a></p>
     </footer>
 
     <div id="modal-root"></div>

@@ -19,6 +19,7 @@ import {
   previewAlliance,
   previewClan,
 } from "./views.js";
+import { privacyView } from "./privacy.js";
 import { aboutTooLong, isSafeHref, plainTextFromHtml, sanitizePostHtml, toEditorHtml } from "./richtext.js";
 
 const app = document.querySelector("#app");
@@ -70,7 +71,7 @@ function closeDrawer() {
 }
 
 function renderNav() {
-  const html = navAccount(state.user);
+  const html = navAccount(state.user, { discord: Boolean(state.auth.discord) });
   if (accountSlot) accountSlot.innerHTML = html;
   if (drawerAccount) drawerAccount.innerHTML = html;
 }
@@ -526,6 +527,16 @@ async function render() {
   closeModal();
   setActiveNav(path);
   window.scrollTo({ top: 0, behavior: "instant" });
+  document.title =
+    path === "/privacy"
+      ? "Privacy Policy — WF Clan Recruit"
+      : path === "/guide"
+        ? "How it works — WF Clan Recruit"
+        : path === "/register"
+          ? "Create an account — WF Clan Recruit"
+          : path === "/login"
+            ? "Sign in — WF Clan Recruit"
+            : "WF Clan Recruit — Warframe Clans & Alliances";
 
   if (path === "/browse") {
     const filters = {
@@ -745,6 +756,11 @@ async function render() {
     return;
   }
 
+  if (path === "/privacy") {
+    app.innerHTML = privacyView();
+    return;
+  }
+
   app.innerHTML = homeView(state);
   app.querySelector("[data-hero-search]")?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -756,6 +772,12 @@ async function render() {
 
 document.addEventListener("click", async (event) => {
   if (event.target.closest("[data-link]")) closeDrawer();
+  const jump = event.target.closest("[data-jump]");
+  if (jump) {
+    event.preventDefault();
+    document.getElementById(jump.dataset.jump)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
   const nestedClan = event.target.closest(".modal [data-open-clan]");
   if (nestedClan) {
     event.stopPropagation();
@@ -770,6 +792,35 @@ document.addEventListener("click", async (event) => {
     await refresh();
     window.location.hash = "#/";
     render();
+    return;
+  }
+  if (event.target.closest("[data-export-account]")) {
+    event.preventDefault();
+    try {
+      const data = await api.exportAccount();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "wf-clan-recruit-data.json";
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
+  if (event.target.closest("[data-delete-account]")) {
+    event.preventDefault();
+    if (!confirm("Delete your account, listings, and uploads from this site? This cannot be undone.")) return;
+    try {
+      await api.deleteAccount();
+      await refresh();
+      window.location.hash = "#/";
+      render();
+    } catch (error) {
+      alert(error.message);
+    }
     return;
   }
   const deleteClan = event.target.closest("[data-delete-clan]");
