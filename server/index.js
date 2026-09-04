@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { hashPassword, newToken, verifyPassword } from "./auth.js";
 import { initStorage, paths, postgresEnabled, readDb, storageLabel, writeDb, closePg } from "./db.js";
 import { rateLimit } from "./ratelimit.js";
-import { inspectDiscordInvite } from "./invite.js";
+import { inspectDiscordInvite, listingsNeedingInviteCheck, applyInviteCheck, INVITE_RECHECK_GAP_MS } from "./invite.js";
 import {
   REPORT_REASONS,
   activityAt as listingActivity,
@@ -34,6 +34,14 @@ import {
   readForumProfile,
   uniqueDiscordUsername,
 } from "./verify.js";
+import {
+  applySocialMeta,
+  defaultSocial,
+  listingFromPath,
+  listingSocial,
+  robotsTxt,
+  sitemapXml,
+} from "./meta.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const COOKIE = "wfr_session";
@@ -703,7 +711,7 @@ app.get("/api/auth/discord/callback", async (req, res) => {
     }
     res.clearCookie(OAUTH_COOKIE, cookieOptions());
     setSession(res, sessionToken);
-    res.redirect(`${origin}/#${next}`);
+    res.redirect(`${origin}${next.startsWith("/") ? next : `/${next}`}`);
   } catch {
     fail("discord-error");
   }
@@ -1373,6 +1381,17 @@ app.delete("/api/alliances/:id", requireUser, (req, res) => {
   });
 });
 
+app.get("/robots.txt", (req, res) => {
+  res.type("text/plain").send(robotsTxt(publicOrigin(req)));
+});
+
+app.get("/sitemap.xml", (req, res) => {
+  const db = readDb();
+  res.type("application/xml").send(
+    sitemapXml(publicOrigin(req), { clans: db.clans || [], alliances: db.alliances || [] })
+  );
+});
+
 app.use((error, _req, res, _next) => {
   if (error.code === "LIMIT_FILE_SIZE") {
     res.status(400).json({ error: "Video must be 25 MB or smaller. Images must be 2 MB." });
@@ -1382,6 +1401,26 @@ app.use((error, _req, res, _next) => {
 });
 
 const distDir = path.join(root, "..", "dist");
+const indexPath = path.join(root, "..", "index.html");
+
+async function sendListingPage(req, res, next, vite) {
+  const match = listingFromPath(req.path);
+  if (!match) {
+    next();
+    return;
+  }
+  const origin = publicOrigin(req);
+  const db = readDb();
+  const listing =
+    match.kind === "clan"
+      ? (db.clans || []).find((item) => item.id === match.id)
+      : (db.alliances || []).find((item) => item.id === match.id);
+  const source = isProd ? path.join(distDir, "index.html") : indexPath;
+  let html = fs.readFileSync(source, "utf8");
+  html = applySocialMeta(html, listing ? listingSocial(origin, listing, match.kind) : defaultSocial(origin));
+  if (vite) html = await vite.transformIndexHtml(req.originalUrl, html);
+  res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).end(html);
+}
 
 async function attachFrontend() {
   if (!isProd) {
@@ -1393,6 +1432,13 @@ async function attachFrontend() {
         proxy: {},
       },
       appType: "spa",
+    });
+    app.use((req, res, next) => {
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        next();
+        return;
+      }
+      sendListingPage(req, res, next, vite).catch(next);
     });
     app.use(vite.middlewares);
     return "live";
@@ -1412,13 +1458,51 @@ async function attachFrontend() {
       next();
       return;
     }
-    res.sendFile(path.join(distDir, "index.html"));
+    if (listingFromPath(req.path)) {
+      sendListingPage(req, res, next, null).catch(next);
+      return;
+    }
+    const html = applySocialMeta(
+      fs.readFileSync(path.join(distDir, "index.html"), "utf8"),
+      defaultSocial(publicOrigin(req))
+    );
+    res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).end(html);
   });
   return "build";
 }
 
 let server;
 let sessionSweep;
+let inviteSweep;
+let inviteSweepDelay;
+let inviteSweepRunning = false;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function recheckInvites() {
+  if (inviteSweepRunning) return;
+  inviteSweepRunning = true;
+  try {
+    const batch = listingsNeedingInviteCheck(readDb());
+    for (const item of batch) {
+      const result = await inspectDiscordInvite(item.discord, { required: false });
+      await writeDb((db) => {
+        const listing =
+          (db.clans || []).find((row) => row.id === item.id) ||
+          (db.alliances || []).find((row) => row.id === item.id);
+        if (listing) applyInviteCheck(listing, result);
+        return db;
+      });
+      await sleep(INVITE_RECHECK_GAP_MS);
+    }
+  } catch {
+    /* Discord outages should not take the board down. */
+  } finally {
+    inviteSweepRunning = false;
+  }
+}
 
 async function start() {
   await initStorage();
@@ -1434,7 +1518,6 @@ async function start() {
   if (!discordConfigured()) {
     console.warn("DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET are unset. Discord sign-in is off.");
   }
-  // #8/#12: keep expired sessions from piling up between restarts.
   sessionSweep = setInterval(() => {
     writeDb((db) => {
       const now = Date.now();
@@ -1444,6 +1527,14 @@ async function start() {
     }).catch(() => {});
   }, 60 * 60 * 1000);
   sessionSweep.unref();
+  inviteSweepDelay = setTimeout(() => {
+    recheckInvites().catch(() => {});
+  }, 2 * 60 * 1000);
+  inviteSweepDelay.unref();
+  inviteSweep = setInterval(() => {
+    recheckInvites().catch(() => {});
+  }, 6 * 60 * 60 * 1000);
+  inviteSweep.unref();
 }
 
 start().catch((error) => {
@@ -1458,6 +1549,8 @@ start().catch((error) => {
 function shutdown(signal) {
   console.log(`Received ${signal}, shutting down`);
   if (sessionSweep) clearInterval(sessionSweep);
+  if (inviteSweep) clearInterval(inviteSweep);
+  if (inviteSweepDelay) clearTimeout(inviteSweepDelay);
   if (!server) {
     process.exit(0);
     return;

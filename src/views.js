@@ -366,6 +366,7 @@ export function browseView(clans, filters) {
           <label class="field"><span>Tier</span><select name="tier"><option value="">Any</option>${optionList(TIERS, filters.tier)}</select></label>
           <label class="field"><span>Playstyle</span><select name="playstyle"><option value="">Any</option>${optionList(PLAYSTYLES, filters.playstyle)}</select></label>
           <label class="field"><span>Region</span><select name="region"><option value="">Any</option>${optionList(REGIONS, filters.region)}</select></label>
+          <label class="field"><span>Language</span><select name="language"><option value="">Any</option>${optionList(LANGUAGES, filters.language)}</select></label>
           <label class="field"><span>Status</span><select name="status"><option value="">Any</option>${optionList(STATUSES, filters.status)}</select></label>
           <label class="field"><span>Your MR <em id="mr-readout">${filters.mr || 0}</em></span><input type="range" name="mr" min="0" max="36" value="${escapeHtml(filters.mr || "0")}" /></label>
         </form>
@@ -406,6 +407,7 @@ export function alliancesView(alliances, filters) {
           <label class="field"><span>Keyword</span><input type="search" name="q" value="${escapeHtml(filters.q)}" /></label>
           <label class="field"><span>Platform</span><select name="platform"><option value="">Any</option>${optionList(PLATFORMS, filters.platform)}</select></label>
           <label class="field"><span>Region</span><select name="region"><option value="">Any</option>${optionList(REGIONS, filters.region)}</select></label>
+          <label class="field"><span>Language</span><select name="language"><option value="">Any</option>${optionList(LANGUAGES, filters.language)}</select></label>
           <label class="field"><span>Status</span><select name="status"><option value="">Any</option>${optionList(STATUSES, filters.status)}</select></label>
         </form>
       </aside>
@@ -431,7 +433,7 @@ function parseLines(value) {
 function checks(name, values, selected = []) {
   return values
     .map((value) => {
-      const id = `${name}-${value.toLowerCase().replace(/\s+/g, "-")}`;
+      const id = `${name}-${value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
       return `<label class="check" for="${id}"><input id="${id}" type="checkbox" name="${name}" value="${escapeHtml(value)}" ${selected.includes(value) ? "checked" : ""} /><span>${escapeHtml(value)}</span></label>`;
     })
     .join("");

@@ -135,6 +135,7 @@ function applyClanFilters(clans, filters) {
     if (filters.tier && clan.tier !== filters.tier) return false;
     if (filters.playstyle && !clan.playstyles.includes(filters.playstyle)) return false;
     if (filters.region && clan.region !== filters.region) return false;
+    if (filters.language && clan.language !== filters.language) return false;
     if (filters.status && clan.status !== filters.status) return false;
     if (mr > 0 && clan.mrRequired > mr) return false;
     return true;
@@ -165,6 +166,7 @@ function applyAllianceFilters(alliances, filters) {
       if (q && !hay.includes(q)) return false;
       if (filters.platform && !alliancePlatformMatches(item.platforms, filters.platform)) return false;
       if (filters.region && item.region !== filters.region) return false;
+      if (filters.language && item.language !== filters.language) return false;
       if (filters.status && item.status !== filters.status) return false;
       return true;
     })
@@ -182,6 +184,7 @@ function readFilters(form) {
     tier: String(data.get("tier") || ""),
     playstyle: String(data.get("playstyle") || ""),
     region: String(data.get("region") || ""),
+    language: String(data.get("language") || ""),
     status: String(data.get("status") || ""),
     mr: String(data.get("mr") || "0"),
     sort: String(data.get("sort") || "newest"),
@@ -583,9 +586,10 @@ async function render() {
       q: params.q || "",
       platform: params.platform || "",
       tier: "",
-      playstyle: "",
-      region: "",
-      status: "",
+      playstyle: params.playstyle || "",
+      region: params.region || "",
+      language: params.language || "",
+      status: params.status || "",
       mr: "0",
       sort: "newest",
     };
@@ -617,7 +621,13 @@ async function render() {
   }
 
   if (path === "/alliances") {
-    const filters = { q: "", platform: "", region: "", status: "" };
+    const filters = {
+      q: params.q || "",
+      platform: params.platform || "",
+      region: params.region || "",
+      language: params.language || "",
+      status: params.status || "",
+    };
     app.innerHTML = alliancesView(applyAllianceFilters(state.alliances, filters), filters);
     const form = app.querySelector("#filter-form");
     const refreshList = () => {

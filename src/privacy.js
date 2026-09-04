@@ -76,7 +76,7 @@ export function privacyView() {
       <article class="panel policy-section" id="browse">
         <p class="kicker">03</p>
         <h2>Browsing without an account</h2>
-        <p>Anyone can open the home, clan, alliance, guide, and privacy pages without signing in. In that mode we do not create a user record for you.</p>
+        <p>Anyone can open the home, clan, alliance, guide, privacy, sitemap, and robots pages without signing in. In that mode we do not create a user record for you.</p>
         <p>Your browser will still make ordinary web requests to load the page, styles, logo, fonts, and listing data. The hosting provider can see technical request data such as IP address, date, URL, and browser type. We do not write those values into our application database, and we do not use them to build a marketing profile.</p>
         <p>Optional on-device data while browsing:</p>
         <ul class="policy-bullets">
@@ -118,7 +118,8 @@ export function privacyView() {
         <p>Clan and alliance posts are meant to be public. We store whatever you submit, including:</p>
         <ul class="policy-bullets">
           <li>Name, tag, headline, summary, and full post body (including formatting and any links you insert)</li>
-          <li>Platform, region, language, status, member counts, MR, playstyles, clan tier, founded year</li>
+          <li>Platform, region, language, status, member counts, MR, clan tier, founded year</li>
+          <li>Playstyles you pick, including Warframe-specific tags such as Archon, Eidolon, or Cross-save</li>
           <li>Leader name, Discord invite URL, optional alliance link</li>
           <li>Uploaded image (up to 2 MB) and optional video (up to 25 MB)</li>
           <li>Created time, last bump time, paused flag, invite check result, and the owner id of the account that posted it</li>
@@ -130,7 +131,7 @@ export function privacyView() {
 
         <h3>Technical data we do not store in the app database</h3>
         <ul class="policy-bullets">
-          <li>We do not store IP addresses, GPS, payment cards, or device advertising IDs in the application database (Postgres when <code>DATABASE_URL</code> is set, otherwise a local <code>db.json</code> file).</li>
+          <li>We do not store IP addresses, GPS, payment cards, or device advertising IDs in the application database. Production uses Postgres tables (users, sessions, clans, alliances, reports) when <code>DATABASE_URL</code> is set. Local development can use a <code>db.json</code> file instead.</li>
           <li>We do not keep Discord OAuth access or refresh tokens after sign-in finishes.</li>
           <li>We do not store the HTML of your Warframe Forum profile after the verification check. We only keep whether the code matched, plus the profile URL and name.</li>
           <li>The host (Railway) and any reverse proxy may still log IPs and user agents for security and uptime. Those logs are not a feature of this app and are not used to target ads.</li>
@@ -142,7 +143,7 @@ export function privacyView() {
         <h2>How we collect it</h2>
         <ul class="policy-bullets">
           <li><strong>Directly from you.</strong> Forms, file uploads, Discord OAuth consent, forum profile URL, and buttons such as bump, pause, report, edit, sign out, export, or delete.</li>
-          <li><strong>From Discord.</strong> If you choose Continue with Discord, Discord sends us an OAuth code. We exchange it for a short-lived token and read <code>/users/@me</code> with scopes <code>identify</code> and <code>email</code>. We then drop the Discord token. When you publish or bump a listing we also ask Discord whether the invite code is still valid; Discord sees that invite code.</li>
+          <li><strong>From Discord.</strong> If you choose Continue with Discord, Discord sends us an OAuth code. We exchange it for a short-lived token and read <code>/users/@me</code> with scopes <code>identify</code> and <code>email</code>. We then drop the Discord token. When you publish or bump a listing, and on a periodic re-check, we ask Discord whether the invite code is still valid; Discord sees that invite code.</li>
           <li><strong>From Warframe Forums, through a reader.</strong> Direct fetches from our server are blocked by Cloudflare. When you confirm verification, we ask a browser-based reader to load your public About Me tab and check for your one-time code. That request includes the public profile URL you gave us.</li>
           <li><strong>Automatically.</strong> Session cookies after sign-in; theme in local storage if you toggle it; standard HTTPS request metadata at the host.</li>
         </ul>
@@ -163,6 +164,7 @@ export function privacyView() {
               <tr><td>Tie a poster to a Warframe Forum identity</td><td>Forum URL, verification code, verified flag</td></tr>
               <tr><td>Let you edit, bump, pause, or remove your posts</td><td>Owner id, session, listing records</td></tr>
               <tr><td>Keep names and tags unique, hide stale or paused Discord buttons</td><td>Listing name, tag, bump time, paused flag, invite check</td></tr>
+              <tr><td>Show a preview when a listing URL is pasted in Discord or similar</td><td>Public title, headline, summary, and listing image</td></tr>
               <tr><td>Handle “report this listing”</td><td>Report reason, optional details, reporter id if signed in</td></tr>
               <tr><td>Enforce cooldowns (new listing 15 minutes, bump 12 hours, forum check a few seconds)</td><td>Timestamps on listings and the last forum check</td></tr>
               <tr><td>Moderation by the operator</td><td>Admin account can edit or remove any listing</td></tr>
@@ -227,7 +229,7 @@ export function privacyView() {
       <article class="panel policy-section" id="public">
         <p class="kicker">09</p>
         <h2>What is public</h2>
-        <p>Treat every listing as public. That includes Discord invite links, leader names, screenshots, video, and the full post. Other visitors, scrapers, and archives may copy public pages. Removing a listing from this site does not erase copies someone else already saved.</p>
+        <p>Treat every listing as public. That includes Discord invite links, leader names, screenshots, video, and the full post. Listing URLs also expose an Open Graph title, description, and image so Discord and similar apps can show a card. Other visitors, scrapers, and archives may copy public pages. Removing a listing from this site does not erase copies someone else already saved.</p>
         <p>Forum verification requires you to put a short code on your Warframe Forum About Me. That code is public on Digital Extremes’ forums until you delete it. After you verify here, you should remove the code from About Me if you do not want it sitting on the forum.</p>
         <p>Your Discord email, Discord id, password hash, and session tokens are not shown on listing cards.</p>
       </article>
@@ -355,7 +357,7 @@ export function privacyView() {
           <li>Discord snowflake id used to estimate account age (default 7 days)</li>
           <li>Discord <code>verified</code> email required in production</li>
           <li>Forum About Me must contain your current code</li>
-          <li>Discord invite lookup (reject invalid or expired invites)</li>
+          <li>Discord invite lookup (reject invalid or expired invites on publish, bump, and a periodic re-check)</li>
           <li>Unique clan/alliance name and tag</li>
           <li>Stale listings (21 days without a bump hide Join Discord)</li>
           <li>Listing, bump, report, and forum-check rate limits</li>
