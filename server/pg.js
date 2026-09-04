@@ -285,6 +285,8 @@ async function migrateFromAppState() {
 }
 
 export async function loadState() {
+  // Whatever we thought we had written no longer describes this process's view.
+  digests = null;
   const [users, sessions, clans, alliances, reports] = await Promise.all([
     pool.query("SELECT * FROM users"),
     pool.query("SELECT token, user_id, expires FROM sessions"),
@@ -337,8 +339,74 @@ function uniqueByLower(list, key) {
   return [...seen.values()];
 }
 
+// Writing every row on every save was the biggest scaling problem in here: a
+// bump, a sign-in or a status change rewrote every user, session, listing and
+// report inside one transaction, behind a global lock. Keep a digest of what
+// was last written and send only the rows that actually changed.
+//
+// `digests` is the committed snapshot and is only adopted after COMMIT, so a
+// failed save cannot leave us believing we wrote something we did not. It
+// starts null - after a load, or after any error - and a null snapshot means
+// the next save writes everything, which is the old behaviour and always safe.
+let digests = null;
+let pending = null;
+
+function emptySnapshot() {
+  return {
+    users: new Map(),
+    sessions: new Map(),
+    clans: new Map(),
+    alliances: new Map(),
+    reports: new Map(),
+  };
+}
+
+async function upsert(client, table, id, sql, params) {
+  const digest = JSON.stringify(params);
+  pending[table].set(id, digest);
+  if (digests && digests[table].get(id) === digest) return false;
+  await client.query(sql, params);
+  return true;
+}
+
+// Deleting rows that are gone from memory. Once a snapshot exists this is
+// exact: the ids we wrote last time, minus the ids we have now.
+async function reconcile(client, table, column, ids) {
+  if (digests) {
+    const gone = [...digests[table].keys()].filter((id) => !pending[table].has(id));
+    assertSaneDelete(table, gone.length);
+    if (gone.length) {
+      await client.query(`DELETE FROM ${table} WHERE ${column} = ANY($1::text[])`, [gone]);
+    }
+    return;
+  }
+  await deleteMissing(client, table, column, ids);
+}
+
+// An empty id list used to mean "delete the whole table", so a cache that came
+// back empty for any reason took the data with it. Emptying a table is still
+// legitimate - deleting your last listing, or an account that owned them all -
+// but only ever a handful of rows at a time, because every mutation saves
+// immediately. A large unexplained wipe is a bug, so fail loudly instead:
+// writeDb catches this and resyncs the cache from Postgres.
+const WIPE_LIMIT = 25;
+const PROTECTED = new Set(["users", "clans", "alliances"]);
+
+// Sessions and reports churn on their own - sessions expire in batches - so
+// only the irreplaceable tables are guarded.
+export function assertSaneDelete(table, count) {
+  if (!PROTECTED.has(table) || count <= WIPE_LIMIT) return;
+  throw new Error(
+    `Refusing to delete ${count} rows from ${table} in one save: the in-memory state lost them.`
+  );
+}
+
 async function deleteMissing(client, table, column, ids) {
   if (!ids.length) {
+    if (PROTECTED.has(table)) {
+      const { rows } = await client.query(`SELECT count(*)::int AS total FROM ${table}`);
+      assertSaneDelete(table, rows[0]?.total || 0);
+    }
     await client.query(`DELETE FROM ${table}`);
     return;
   }
@@ -354,11 +422,12 @@ async function persistTables(db) {
   const alliances = uniqueBy(db.alliances, "id");
   const reports = uniqueBy(db.reports, "id");
   const client = await pool.connect();
+  pending = emptySnapshot();
   try {
     await client.query("BEGIN");
 
     for (const user of users) {
-      await client.query(
+      await upsert(client, "users", user.id,
         `INSERT INTO users (
           id, username, password, admin, created_at, discord_id, discord_username, discord_email,
           forum_verified, forum_name, forum_profile_url, forum_token, forum_verified_at, forum_checked_at, data
@@ -397,16 +466,16 @@ async function persistTables(db) {
         ]
       );
     }
-    await deleteMissing(client, "users", "id", users.map((item) => item.id));
+    await reconcile(client, "users", "id", users.map((item) => item.id));
 
     for (const session of sessions) {
-      await client.query(
+      await upsert(client, "sessions", session.token,
         `INSERT INTO sessions (token, user_id, expires) VALUES ($1,$2,$3)
          ON CONFLICT (token) DO UPDATE SET user_id = EXCLUDED.user_id, expires = EXCLUDED.expires`,
         [session.token, session.userId, Number(session.expires) || 0]
       );
     }
-    await deleteMissing(
+    await reconcile(
       client,
       "sessions",
       "token",
@@ -414,7 +483,7 @@ async function persistTables(db) {
     );
 
     for (const clan of clans) {
-      await client.query(
+      await upsert(client, "clans", clan.id,
         `INSERT INTO clans (
           id, owner_id, name, tag, language, platform, region, status, discord, paused,
           invite_ok, invite_checked_at, featured, alliance_id, created_at, bumped_at, data
@@ -457,10 +526,10 @@ async function persistTables(db) {
         ]
       );
     }
-    await deleteMissing(client, "clans", "id", clans.map((item) => item.id));
+    await reconcile(client, "clans", "id", clans.map((item) => item.id));
 
     for (const alliance of alliances) {
-      await client.query(
+      await upsert(client, "alliances", alliance.id,
         `INSERT INTO alliances (
           id, owner_id, name, tag, language, platforms, region, status, discord, paused,
           invite_ok, invite_checked_at, featured, created_at, bumped_at, data
@@ -501,7 +570,7 @@ async function persistTables(db) {
         ]
       );
     }
-    await deleteMissing(
+    await reconcile(
       client,
       "alliances",
       "id",
@@ -509,7 +578,7 @@ async function persistTables(db) {
     );
 
     for (const report of reports) {
-      await client.query(
+      await upsert(client, "reports", report.id,
         `INSERT INTO reports (
           id, kind, listing_id, listing_name, reason, details, reporter_id, created_at, status, resolved_at
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
@@ -537,13 +606,17 @@ async function persistTables(db) {
         ]
       );
     }
-    await deleteMissing(client, "reports", "id", reports.map((item) => item.id));
+    await reconcile(client, "reports", "id", reports.map((item) => item.id));
 
     await client.query("COMMIT");
+    digests = pending;
   } catch (error) {
     await client.query("ROLLBACK");
+    // Forget what we thought was written; the next save reconciles in full.
+    digests = null;
     throw error;
   } finally {
+    pending = null;
     client.release();
   }
 }
