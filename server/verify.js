@@ -152,7 +152,7 @@ async function fetchDirectProfile(url) {
     });
     const html = await res.text();
     if (!res.ok || isBlockedPage(res.status, html)) return null;
-    return { html, source: res.url || url };
+    return { html, source: res.url || url, title: "" };
   } catch {
     return null;
   }
@@ -176,21 +176,25 @@ async function fetchProfileViaReader(url) {
   }
   let text = raw;
   let source = url;
+  let title = "";
   try {
     const payload = JSON.parse(raw);
     const data = payload.data || payload;
     text = data.text || data.content || data.html || "";
     source = data.url || source;
+    title = data.title || "";
   } catch {
     const match = raw.match(/^URL Source:\s*(\S+)/m);
     if (match) source = match[1];
+    const heading = raw.match(/^Title:\s*(.+)$/m);
+    if (heading) title = heading[1].trim();
     const idx = raw.indexOf("Markdown Content:");
     text = idx >= 0 ? raw.slice(idx) : raw;
   }
   if (!text || isBlockedPage(200, text)) {
     throw new Error("Warframe Forums blocked the profile check. Try again in a moment.");
   }
-  return { html: text, source };
+  return { html: text, source, title };
 }
 
 export async function readForumProfile(profileUrl) {
@@ -207,7 +211,8 @@ export async function readForumProfile(profileUrl) {
     page = await fetchProfileViaReader(target);
   }
   const canonical = assertSameProfile(url, page.source);
-  const owner = profileOwnerFrom(page.html);
+  // Some profiles render without an H1, so the body alone yields no name.
+  const owner = profileOwnerFrom(page.html) || ownerFromTitle(page.title);
   if (!owner) {
     throw new Error("Could not read that forum profile. Check the URL and try again.");
   }
@@ -221,15 +226,35 @@ export async function readForumProfile(profileUrl) {
 
 // The profile page carries other people's display names (Recent Profile
 // Visitors, followers). Someone could rename themselves to their own token,
-// visit a victim's profile and then "verify" as that victim. Cut the page at
-// the first such section and drop link/image labels, which is where those
-// names appear, so only the owner's own prose is searched.
+// visit a victim's profile and then "verify" as that victim. So search only
+// the owner's own About Me panel, and drop link/image labels within it, since
+// that is where foreign names appear.
 const FOREIGN_SECTION = /(recent profile visitors|profile visitors|followers|following|friends)/i;
+const ABOUT_ME_HEADING = /^#{1,6}[ \t]*about me[ \t]*$|<h[1-6][^>]*>\s*about me\s*<\/h[1-6]>/im;
+const NEXT_HEADING = /^#{1,6}[ \t]+\S|<h[1-6][^>]*>/m;
+
+// The visitors sidebar linearizes ABOVE the About Me tab panel, so truncating
+// at the first foreign section drops About Me entirely. Bound the section from
+// its own heading instead.
+function aboutMeSection(source) {
+  const heading = source.match(ABOUT_ME_HEADING);
+  if (!heading) return null;
+  const body = source.slice(heading.index + heading[0].length);
+  const bounds = [body.search(NEXT_HEADING), body.search(FOREIGN_SECTION)].filter(
+    (idx) => idx >= 0
+  );
+  return bounds.length ? body.slice(0, Math.min(...bounds)) : body;
+}
 
 export function verifiableRegion(text) {
-  let region = String(text || "");
-  const cut = region.search(FOREIGN_SECTION);
-  if (cut > 0) region = region.slice(0, cut);
+  const source = String(text || "");
+  let region = aboutMeSection(source);
+  if (region === null) {
+    // No About Me panel rendered. Keep the old truncation so foreign display
+    // names still cannot be matched.
+    const cut = source.search(FOREIGN_SECTION);
+    region = cut > 0 ? source.slice(0, cut) : source;
+  }
   return region
     .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
     .replace(/\[[^\]]*\]\([^)]*\)/g, " ")
@@ -248,6 +273,24 @@ export function profileOwnerFrom(text) {
   const title = source.match(/<title>([^<]*)<\/title>/i);
   if (title) return title[1].split(/\s+-\s+/)[0].trim();
   return "";
+}
+
+// The forum display name doubles as the Tenno's in-game name: it is what other
+// players type after /w, so it is stored exactly as the profile renders it -
+// dashes, brackets and all. It is deliberately NOT an identity key. Accounts
+// are keyed on discordId (and id = user-discord-<id>), and username carries the
+// unique index, so two players sharing a forum name never collide and persist()
+// can never drop one of them.
+export const INGAME_NAME_MAX = 32;
+
+export function ingameName(owner) {
+  return String(owner || "").trim().slice(0, INGAME_NAME_MAX) || null;
+}
+
+export function ownerFromTitle(title) {
+  return String(title || "")
+    .replace(/\s+-\s+Warframe Forums\s*$/i, "")
+    .trim();
 }
 
 function comparable(value) {

@@ -225,7 +225,36 @@ export async function connectPg() {
     CREATE INDEX IF NOT EXISTS reports_status ON reports (status);
   `);
   await migrateFromAppState();
+  await hardenDiscordIdentity();
   return pool;
+}
+
+// One account per Discord identity is enforced in the OAuth callback, but only
+// in application code. Promote it to a database guarantee - with a partial
+// index, since local accounts carry a NULL discord_id. If existing rows already
+// violate it the index cannot be built; log the offenders and carry on rather
+// than failing the healthcheck and rolling back the deploy.
+async function hardenDiscordIdentity() {
+  const { rows } = await pool.query(`
+    SELECT discord_id, COUNT(*)::int AS accounts, ARRAY_AGG(id ORDER BY created_at) AS ids
+    FROM users
+    WHERE discord_id IS NOT NULL
+    GROUP BY discord_id
+    HAVING COUNT(*) > 1
+  `);
+  if (rows.length) {
+    console.warn(
+      `users.discord_id left non-unique: ${rows.length} Discord id(s) map to more than one account. ` +
+        "Merge them, then redeploy to add the constraint."
+    );
+    for (const row of rows) {
+      console.warn(`  discord_id ${row.discord_id} -> ${row.accounts} accounts: ${row.ids.join(", ")}`);
+    }
+    return;
+  }
+  await pool.query(
+    "CREATE UNIQUE INDEX IF NOT EXISTS users_discord_id_unique ON users (discord_id) WHERE discord_id IS NOT NULL"
+  );
 }
 
 async function migrateFromAppState() {

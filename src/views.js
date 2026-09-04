@@ -629,7 +629,7 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
           <div class="two-col">
             <label class="field"><span>Clan name</span><input name="name" required maxlength="48" value="${escapeHtml(draft.name || "")}" /></label>
             <label class="field"><span>Tag</span><input name="tag" required maxlength="5" value="${escapeHtml(draft.tag || "")}" /></label>
-            <label class="field"><span>In-game leader</span><input name="leader" required maxlength="32" value="${escapeHtml(draft.leader || user.username)}" /></label>
+            <label class="field"><span>In-game leader</span><input name="leader" required maxlength="32" value="${escapeHtml(draft.leader || user.forumName || user.username)}" /></label>
             <label class="field"><span>Founded</span><input name="founded" maxlength="8" value="${escapeHtml(draft.founded || "")}" placeholder="2019" /></label>
           </div>
           <p class="muted">Name and tag must be unique on the board. You can post more than one clan.</p>

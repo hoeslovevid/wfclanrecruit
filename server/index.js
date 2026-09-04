@@ -27,6 +27,7 @@ import {
   listingCreateWait,
   newForumToken,
   normalizeForumUrl,
+  ingameName,
   forumNameFromUrl,
   profileHasToken,
   publicAccount,
@@ -398,7 +399,7 @@ function parseClanBody(body, user) {
       region: String(body.region || "Global"),
       language: String(body.language || "English"),
       status: String(body.status || "Open"),
-      leader: String(body.leader || user.username).slice(0, 32),
+      leader: String(body.leader || user.forumName || user.username).slice(0, 32),
       discord: String(body.discord),
       paused: String(body.paused || "") === "1" || body.paused === true || body.paused === "true",
       founded: String(body.founded || new Date().getFullYear()),
@@ -784,7 +785,11 @@ app.post("/api/auth/forum/check", requireUser, forumCheckLimiter, async (req, re
       }
       user.forumVerified = true;
       user.forumProfileUrl = profile.url;
-      user.forumName = profile.owner;
+      // The forum display name is the in-game name: shown across the site and
+      // copied into whisper text. It is NOT the account key - username carries
+      // a unique index and identity rests on discordId, so two Tenno with the
+      // same forum name can both hold accounts.
+      user.forumName = ingameName(profile.owner);
       user.forumVerifiedAt = new Date().toISOString();
       res.json({ user: publicAccount(user, { isProd }) });
       return db;
