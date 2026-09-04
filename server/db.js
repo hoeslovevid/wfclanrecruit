@@ -219,12 +219,13 @@ export function readDb() {
 let queue = Promise.resolve();
 
 export function writeDb(mutator) {
-  const run = () => {
+  const run = async () => {
     const db = readDb();
     try {
       const next = mutator(db) ?? db;
       if (!Array.isArray(next.reports)) next.reports = [];
       writeDbFile(next);
+      await persist(next);
       return next;
     } catch (error) {
       cache = null;
@@ -232,11 +233,8 @@ export function writeDb(mutator) {
     }
   };
   const result = queue.then(run, run);
-  queue = result.then((db) => persist(db)).catch(() => {});
-  return result.then(async (db) => {
-    await persist(db);
-    return db;
-  });
+  queue = result.catch(() => {});
+  return result;
 }
 
 export function storageLabel() {

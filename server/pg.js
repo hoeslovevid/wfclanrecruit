@@ -289,22 +289,66 @@ export async function loadState() {
   };
 }
 
-export async function saveState(db) {
+function uniqueBy(list, key) {
+  const seen = new Map();
+  for (const item of list || []) {
+    if (!item || item[key] == null || item[key] === "") continue;
+    seen.set(String(item[key]), item);
+  }
+  return [...seen.values()];
+}
+
+function uniqueByLower(list, key) {
+  const seen = new Map();
+  for (const item of list || []) {
+    const value = item?.[key];
+    if (value == null || value === "") continue;
+    seen.set(String(value).toLowerCase(), item);
+  }
+  return [...seen.values()];
+}
+
+async function deleteMissing(client, table, column, ids) {
+  if (!ids.length) {
+    await client.query(`DELETE FROM ${table}`);
+    return;
+  }
+  await client.query(`DELETE FROM ${table} WHERE NOT (${column} = ANY($1::text[]))`, [ids]);
+}
+
+let saveLock = Promise.resolve();
+
+async function persistTables(db) {
+  const users = uniqueByLower(uniqueBy(db.users, "id"), "username");
+  const sessions = uniqueBy(db.sessions, "token");
+  const clans = uniqueBy(db.clans, "id");
+  const alliances = uniqueBy(db.alliances, "id");
+  const reports = uniqueBy(db.reports, "id");
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query("DELETE FROM reports");
-    await client.query("DELETE FROM sessions");
-    await client.query("DELETE FROM clans");
-    await client.query("DELETE FROM alliances");
-    await client.query("DELETE FROM users");
 
-    for (const user of db.users || []) {
+    for (const user of users) {
       await client.query(
         `INSERT INTO users (
           id, username, password, admin, created_at, discord_id, discord_username, discord_email,
           forum_verified, forum_name, forum_profile_url, forum_token, forum_verified_at, forum_checked_at, data
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb)`,
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb)
+        ON CONFLICT (id) DO UPDATE SET
+          username = EXCLUDED.username,
+          password = EXCLUDED.password,
+          admin = EXCLUDED.admin,
+          created_at = EXCLUDED.created_at,
+          discord_id = EXCLUDED.discord_id,
+          discord_username = EXCLUDED.discord_username,
+          discord_email = EXCLUDED.discord_email,
+          forum_verified = EXCLUDED.forum_verified,
+          forum_name = EXCLUDED.forum_name,
+          forum_profile_url = EXCLUDED.forum_profile_url,
+          forum_token = EXCLUDED.forum_token,
+          forum_verified_at = EXCLUDED.forum_verified_at,
+          forum_checked_at = EXCLUDED.forum_checked_at,
+          data = EXCLUDED.data`,
         [
           user.id,
           user.username,
@@ -324,21 +368,45 @@ export async function saveState(db) {
         ]
       );
     }
+    await deleteMissing(client, "users", "id", users.map((item) => item.id));
 
-    for (const session of db.sessions || []) {
-      await client.query("INSERT INTO sessions (token, user_id, expires) VALUES ($1,$2,$3)", [
-        session.token,
-        session.userId,
-        Number(session.expires) || 0,
-      ]);
+    for (const session of sessions) {
+      await client.query(
+        `INSERT INTO sessions (token, user_id, expires) VALUES ($1,$2,$3)
+         ON CONFLICT (token) DO UPDATE SET user_id = EXCLUDED.user_id, expires = EXCLUDED.expires`,
+        [session.token, session.userId, Number(session.expires) || 0]
+      );
     }
+    await deleteMissing(
+      client,
+      "sessions",
+      "token",
+      sessions.map((item) => item.token)
+    );
 
-    for (const clan of db.clans || []) {
+    for (const clan of clans) {
       await client.query(
         `INSERT INTO clans (
           id, owner_id, name, tag, language, platform, region, status, discord, paused,
           invite_ok, invite_checked_at, featured, alliance_id, created_at, bumped_at, data
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb)`,
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb)
+        ON CONFLICT (id) DO UPDATE SET
+          owner_id = EXCLUDED.owner_id,
+          name = EXCLUDED.name,
+          tag = EXCLUDED.tag,
+          language = EXCLUDED.language,
+          platform = EXCLUDED.platform,
+          region = EXCLUDED.region,
+          status = EXCLUDED.status,
+          discord = EXCLUDED.discord,
+          paused = EXCLUDED.paused,
+          invite_ok = EXCLUDED.invite_ok,
+          invite_checked_at = EXCLUDED.invite_checked_at,
+          featured = EXCLUDED.featured,
+          alliance_id = EXCLUDED.alliance_id,
+          created_at = EXCLUDED.created_at,
+          bumped_at = EXCLUDED.bumped_at,
+          data = EXCLUDED.data`,
         [
           clan.id,
           clan.ownerId || null,
@@ -360,13 +428,30 @@ export async function saveState(db) {
         ]
       );
     }
+    await deleteMissing(client, "clans", "id", clans.map((item) => item.id));
 
-    for (const alliance of db.alliances || []) {
+    for (const alliance of alliances) {
       await client.query(
         `INSERT INTO alliances (
           id, owner_id, name, tag, language, platforms, region, status, discord, paused,
           invite_ok, invite_checked_at, featured, created_at, bumped_at, data
-        ) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb)`,
+        ) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb)
+        ON CONFLICT (id) DO UPDATE SET
+          owner_id = EXCLUDED.owner_id,
+          name = EXCLUDED.name,
+          tag = EXCLUDED.tag,
+          language = EXCLUDED.language,
+          platforms = EXCLUDED.platforms,
+          region = EXCLUDED.region,
+          status = EXCLUDED.status,
+          discord = EXCLUDED.discord,
+          paused = EXCLUDED.paused,
+          invite_ok = EXCLUDED.invite_ok,
+          invite_checked_at = EXCLUDED.invite_checked_at,
+          featured = EXCLUDED.featured,
+          created_at = EXCLUDED.created_at,
+          bumped_at = EXCLUDED.bumped_at,
+          data = EXCLUDED.data`,
         [
           alliance.id,
           alliance.ownerId || null,
@@ -387,12 +472,28 @@ export async function saveState(db) {
         ]
       );
     }
+    await deleteMissing(
+      client,
+      "alliances",
+      "id",
+      alliances.map((item) => item.id)
+    );
 
-    for (const report of db.reports || []) {
+    for (const report of reports) {
       await client.query(
         `INSERT INTO reports (
           id, kind, listing_id, listing_name, reason, details, reporter_id, created_at, status, resolved_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        ON CONFLICT (id) DO UPDATE SET
+          kind = EXCLUDED.kind,
+          listing_id = EXCLUDED.listing_id,
+          listing_name = EXCLUDED.listing_name,
+          reason = EXCLUDED.reason,
+          details = EXCLUDED.details,
+          reporter_id = EXCLUDED.reporter_id,
+          created_at = EXCLUDED.created_at,
+          status = EXCLUDED.status,
+          resolved_at = EXCLUDED.resolved_at`,
         [
           report.id,
           report.kind,
@@ -407,6 +508,7 @@ export async function saveState(db) {
         ]
       );
     }
+    await deleteMissing(client, "reports", "id", reports.map((item) => item.id));
 
     await client.query("COMMIT");
   } catch (error) {
@@ -415,6 +517,12 @@ export async function saveState(db) {
   } finally {
     client.release();
   }
+}
+
+export function saveState(db) {
+  const next = saveLock.then(() => persistTables(db), () => persistTables(db));
+  saveLock = next.catch(() => {});
+  return next;
 }
 
 export async function closePg() {
