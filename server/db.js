@@ -25,6 +25,7 @@ const uploadDir = volume ? path.join(volume, "uploads") : path.join(projectRoot,
 const dbPath = path.join(dataDir, "db.json");
 
 let storageReady = false;
+let cache = null;
 
 export const paths = { dataDir, uploadDir, dbPath };
 
@@ -134,6 +135,7 @@ function writeDbFile(db) {
   const tmp = `${dbPath}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
   fs.renameSync(tmp, dbPath);
+  cache = db;
 }
 
 // #8/#12: expired sessions used to accumulate forever, contradicting the
@@ -174,7 +176,8 @@ export async function initStorage() {
 
 export function readDb() {
   ensureStorage();
-  return JSON.parse(fs.readFileSync(dbPath, "utf8"));
+  if (!cache) cache = JSON.parse(fs.readFileSync(dbPath, "utf8"));
+  return cache;
 }
 
 let queue = Promise.resolve();
@@ -182,9 +185,16 @@ let queue = Promise.resolve();
 export function writeDb(mutator) {
   const run = () => {
     const db = readDb();
-    const next = mutator(db) ?? db;
-    writeDbFile(next);
-    return next;
+    try {
+      const next = mutator(db) ?? db;
+      writeDbFile(next);
+      return next;
+    } catch (error) {
+      // the mutator may have partially mutated the cached object before
+      // throwing, so force the next read to come from disk
+      cache = null;
+      throw error;
+    }
   };
   // #6: the chain used to be `queue.then(run)`, so a single rejection made
   // every later write reject forever. Swallow the prior result either way.
