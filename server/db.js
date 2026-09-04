@@ -148,6 +148,26 @@ async function persist(db) {
   if (usingPostgres) await saveState(db);
 }
 
+// A failed write may leave the cached object half-mutated, and a failed
+// persist leaves it ahead of what Postgres holds. On the file path the next
+// read re-parses db.json, but readDb() has no reload path for Postgres:
+// clearing the cache there made every later request - reads included - throw
+// "Database is not ready." until the process restarted, so one bad write took
+// the whole site down. Resync from Postgres instead. This runs inside the
+// write queue, so a slow reload cannot overwrite a newer write.
+async function resyncCache() {
+  if (!usingPostgres) {
+    cache = null;
+    return;
+  }
+  try {
+    const state = await loadState();
+    if (state) cache = { ...emptyDb(), ...state };
+  } catch {
+    /* keep what we have rather than bricking reads; a later write retries */
+  }
+}
+
 // #8/#12: expired sessions used to accumulate forever, contradicting the
 // 30-day retention the privacy policy states.
 function pruneSessions(db) {
@@ -228,7 +248,7 @@ export function writeDb(mutator) {
       await persist(next);
       return next;
     } catch (error) {
-      cache = null;
+      await resyncCache();
       throw error;
     }
   };
