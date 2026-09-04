@@ -749,6 +749,17 @@ async function render() {
     }
     app.innerHTML = postView({ user: state.user, alliances: state.alliances, draft: draft || {}, auth: state.auth });
     const form = app.querySelector("#post-form");
+    // A whisper-only listing needs no invite, so stop the browser demanding one.
+    const contact = form?.querySelector("[data-contact]");
+    const syncContact = () => {
+      const discord = form.querySelector("[name='discord']");
+      const hint = form.querySelector("[data-discord-hint]");
+      const needed = contact.value !== "whisper";
+      discord.required = needed;
+      if (hint) hint.textContent = needed ? "permanent invite, we check it" : "not shown on this listing";
+    };
+    contact?.addEventListener("change", syncContact);
+    if (contact) syncContact();
     if (!form) {
       bindForumForm();
       return;

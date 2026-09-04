@@ -31,6 +31,7 @@ import {
   withListingState,
 } from "./listing.js";
 import { aboutTooLong, normalizeAbout, plainTextFromHtml } from "../src/richtext.js";
+import { normalizeContact, wantsDiscord } from "../src/data.js";
 import {
   DISCORD_MIN_AGE_DAYS,
   FORUM_CHECK_COOLDOWN_MS,
@@ -389,8 +390,14 @@ function parseClanBody(body, user) {
   if (playstyles.length === 0) {
     return { error: "Pick at least one playstyle." };
   }
-  if (!validateDiscord(body.discord)) {
+  const contact = normalizeContact(body.contact);
+  if (wantsDiscord({ contact }) && !validateDiscord(body.discord)) {
     return { error: "Use a discord.gg or discord.com/invite link." };
+  }
+  // A whisper-only listing whose owner has no verified forum name would show no
+  // way to reach anyone at all.
+  if (!wantsDiscord({ contact }) && !user.forumName) {
+    return { error: "Verify your Warframe Forum profile before you post a whisper-only listing." };
   }
   if (!TIER_CAPS[tier]) {
     return { error: "Choose a valid clan tier." };
@@ -412,7 +419,8 @@ function parseClanBody(body, user) {
       language: String(body.language || "English"),
       status: String(body.status || "Open"),
       leader: String(body.leader || user.forumName || user.username).slice(0, 32),
-      discord: String(body.discord),
+      contact,
+      discord: wantsDiscord({ contact }) ? String(body.discord) : "",
       paused: String(body.paused || "") === "1" || body.paused === true || body.paused === "true",
       founded: String(body.founded || new Date().getFullYear()),
       allianceId,
@@ -549,6 +557,8 @@ function validateDiscord(url) {
 }
 
 async function attachInvite(fields) {
+  // A whisper-only listing carries no invite, so there is nothing to check.
+  if (!fields.discord) return fields;
   const invite = await inspectDiscordInvite(fields.discord);
   if (!invite.ok) return { error: invite.error };
   return {
@@ -1121,7 +1131,9 @@ app.post("/api/clans/:id/bump", requirePoster, async (req, res) => {
     res.status(429).json({ error: wait });
     return;
   }
-  const invite = await inspectDiscordInvite(current.discord, { required: false });
+  const invite = current.discord
+    ? await inspectDiscordInvite(current.discord, { required: false })
+    : { ok: true, skipped: true };
   writeDb((db) => {
     const clan = db.clans.find((item) => item.id === req.params.id);
     if (!clan) {
@@ -1355,7 +1367,9 @@ app.post("/api/alliances/:id/bump", requirePoster, async (req, res) => {
     res.status(429).json({ error: wait });
     return;
   }
-  const invite = await inspectDiscordInvite(current.discord, { required: false });
+  const invite = current.discord
+    ? await inspectDiscordInvite(current.discord, { required: false })
+    : { ok: true, skipped: true };
   writeDb((db) => {
     const alliance = db.alliances.find((item) => item.id === req.params.id);
     if (!alliance) {

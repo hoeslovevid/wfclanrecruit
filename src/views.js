@@ -1,4 +1,6 @@
 import {
+  CONTACT_LABELS,
+  CONTACT_MODES,
   LANGUAGES,
   PLAYSTYLES,
   PLATFORMS,
@@ -6,6 +8,9 @@ import {
   STATUSES,
   TIER_CAPS,
   TIERS,
+  normalizeContact,
+  wantsDiscord,
+  wantsWhisper,
 } from "./data.js";
 import { sanitizePostHtml, splitVideoHtml, toEditorHtml } from "./richtext.js";
 
@@ -122,6 +127,8 @@ function recruitingNote(item) {
 }
 
 function joinDiscord(item, label) {
+  // A whisper-only listing has no invite to offer, and says so by omission.
+  if (!wantsDiscord(item)) return "";
   if (item.recruiting === false) {
     return `<p class="muted join-note">${escapeHtml(recruitingNote(item))}</p>`;
   }
@@ -132,6 +139,7 @@ function joinDiscord(item, label) {
 // /w to the leader. Build it from the owner's verified forum name (see
 // whisperName in server/listing.js) and hide it whenever Discord is hidden.
 export function whisperMessage(clan) {
+  if (!wantsWhisper(clan)) return null;
   if (!clan.whisperName || clan.recruiting === false) return null;
   return `/w ${clan.whisperName} Hi ${clan.whisperName} I would like to join ${clan.name} (wfclanrecruit)`;
 }
@@ -162,21 +170,17 @@ const PRESENCE_LABELS = {
 
 // Self-declared, like warframe.market's: Warframe has no public presence API,
 // so the label says what the leader chose, never what the game reports.
-// `silent` is for the nav, where the visible label sits right beside the dot -
-// repeating it in an sr-only span would read the status out twice, and "Leader"
-// is wrong when the status being shown is your own.
-export function presenceDot(item, { withLabel = false, silent = false } = {}) {
+// Plain text beside a coloured dot, not a pill: the pill slot belongs to the
+// recruiting status (Open / Selective / Trial Required). Offline renders
+// nothing at all - it is the resting state of nearly every listing.
+// `silent` is for the nav, where a visible label already sits beside the dot.
+export function presenceDot(item, { silent = false } = {}) {
   if (!item.online) return "";
   const status = item.presenceStatus === "ingame" ? "ingame" : "online";
-  const label = status === "ingame" ? "Leader online in game" : "Leader online";
-  const text = withLabel
-    ? escapeHtml(label)
-    : silent
-      ? ""
-      : `<span class="sr-only">${escapeHtml(label)}</span>`;
-  return `<span class="presence is-${status}"${
-    silent ? "" : ` title="${escapeHtml(label)}"`
-  }><i aria-hidden="true"></i>${text}</span>`;
+  const label = status === "ingame" ? "Online in game" : "Online";
+  return `<span class="presence is-${status}"><i aria-hidden="true"></i>${
+    silent ? "" : escapeHtml(label)
+  }</span>`;
 }
 
 export function presenceSummary(status) {
@@ -250,8 +254,9 @@ export function clanCard(clan) {
         ${photo(clan)}
         <div>
           <p class="kicker">[${escapeHtml(clan.tag)}]${clan.allianceName ? ` · ${escapeHtml(clan.allianceName)}` : ""}</p>
-          <h3>${escapeHtml(clan.name)} ${presenceDot(clan)}</h3>
+          <h3>${escapeHtml(clan.name)}</h3>
           <p class="muted">${escapeHtml(clan.platform)} · ${escapeHtml(clan.tier)} · ${escapeHtml(clan.region)}</p>
+          ${presenceDot(clan)}
         </div>
         <div class="card-pills">
           <span class="pill ${statusClass(clan.status)}">${escapeHtml(clan.status)}</span>
@@ -735,7 +740,15 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
             <label class="field"><span>Status</span><select name="status" required>${optionList(STATUSES, draft.status)}</select></label>
             <label class="field"><span>Members</span><input name="members" type="number" min="1" max="1000" required value="${escapeHtml(draft.members || "")}" /></label>
             <label class="field"><span>Minimum MR <em id="post-mr">${draft.mrRequired ?? 0}</em></span><input type="range" name="mrRequired" min="0" max="36" value="${escapeHtml(draft.mrRequired ?? 0)}" /></label>
-            <label class="field"><span>Discord invite <small>permanent invite, we check it</small></span><input name="discord" type="url" required placeholder="https://discord.gg/yourclan" value="${escapeHtml(draft.discord || "")}" /></label>
+            <label class="field"><span>How recruits reach you</span><select name="contact" data-contact>${CONTACT_MODES.map(
+              (mode) =>
+                `<option value="${mode}" ${normalizeContact(draft.contact) === mode ? "selected" : ""}>${escapeHtml(
+                  CONTACT_LABELS[mode]
+                )}</option>`
+            ).join("")}</select></label>
+            <label class="field"><span>Discord invite <small data-discord-hint>permanent invite, we check it</small></span><input name="discord" type="url" ${
+              wantsDiscord(draft) ? "required" : ""
+            } placeholder="https://discord.gg/yourclan" value="${escapeHtml(draft.discord || "")}" /></label>
             <label class="field">
               <span>Alliance</span>
               <select name="allianceId">
@@ -1090,7 +1103,7 @@ export function clanPage(clan, { admin = false } = {}) {
         <div><dt>MR</dt><dd>${clan.mrRequired === 0 ? "Any" : `${clan.mrRequired}+`}</dd></div>
         <div><dt>Region</dt><dd>${escapeHtml(clan.region)}</dd></div>
         <div><dt>Language</dt><dd>${escapeHtml(clan.language)}</dd></div>
-        <div><dt>Leader</dt><dd>${escapeHtml(clan.leader)} ${presenceDot(clan, { withLabel: true })}</dd></div>
+        <div><dt>Leader</dt><dd>${escapeHtml(clan.leader)} ${presenceDot(clan)}</dd></div>
         <div><dt>${postedStat(clan).label}</dt><dd>${timeAgo(postedStat(clan).at)}</dd></div>
       </dl>
       <div class="meter tall"><i style="width:${fillPercent(clan)}%"></i></div>
@@ -1180,6 +1193,7 @@ export function previewClan(form, imageUrl = null, videoUrl = null) {
     language: data.get("language") || "English",
     status: data.get("status") || "Open",
     leader: data.get("leader") || "Leader",
+    contact: data.get("contact") || "both",
     discord: data.get("discord") || "https://discord.gg/warframe",
     allianceName: null,
     headline: data.get("headline") || "Your headline appears here.",

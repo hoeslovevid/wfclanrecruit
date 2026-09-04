@@ -557,6 +557,7 @@ h2 { font-size: clamp(26px, 3vw, 36px); }
   font-size: 11px;
   font-weight: 700;
   border: 1px solid currentColor;
+  white-space: nowrap;
 }
 .pill.is-open { color: var(--ok); }
 .pill.is-selective { color: var(--warn); }
@@ -1250,20 +1251,22 @@ code {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  margin-top: 4px;
   font-size: 12px;
-  color: var(--muted);
+  font-weight: 650;
+  color: var(--ok);
   vertical-align: middle;
 }
+.presence.is-ingame { color: #8b5cf6; }
 .presence i {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--online, #22c55e);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--online, #22c55e) 22%, transparent);
+  /* warframe.market separates plain online from in-game; keep the same split so
+     the colour, not just the words, tells them apart. */
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 22%, transparent);
 }
-/* warframe.market separates plain online from in-game; keep the same split so
-   the colour, not just the tooltip, tells them apart. */
-.presence.is-ingame i { --online: #8b5cf6; }
 
 .presence-menu { position: relative; }
 .presence-menu > summary {
