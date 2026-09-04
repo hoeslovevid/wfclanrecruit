@@ -3,13 +3,13 @@ import { api } from "./api.js";
 import {
   accountView,
   allianceCard,
-  allianceModal,
+  alliancePage,
   alliancePostView,
   alliancesView,
   authView,
   browseView,
   clanCard,
-  clanModal,
+  clanPage,
   emptyState,
   guideView,
   homeView,
@@ -23,7 +23,6 @@ import { privacyView } from "./privacy.js";
 import { aboutTooLong, isSafeHref, plainTextFromHtml, sanitizePostHtml, toEditorHtml } from "./richtext.js";
 
 const app = document.querySelector("#app");
-const modalRoot = document.querySelector("#modal-root");
 const nav = document.querySelector("#site-nav");
 const drawer = document.querySelector("#mobile-drawer");
 const toggle = document.querySelector(".nav-toggle");
@@ -51,16 +50,42 @@ const state = {
 };
 
 function parseRoute() {
-  const hash = window.location.hash.replace(/^#/, "") || "/";
+  const raw = window.location.pathname.replace(/\/+$/, "") || "/";
+  const params = Object.fromEntries(new URLSearchParams(window.location.search));
+  return { path: raw, params };
+}
+
+function go(path) {
+  const next = path.startsWith("/") ? path : `/${path}`;
+  if (`${window.location.pathname}${window.location.search}` === next) {
+    render().catch(() => {});
+    return;
+  }
+  history.pushState({}, "", next);
+  render().catch((error) => {
+    app.innerHTML = `<section class="auth-card"><h1>Could not load</h1><p class="muted">${error.message}</p></section>`;
+  });
+}
+
+function migrateHash() {
+  const hash = window.location.hash.replace(/^#/, "");
+  if (!hash || hash === "/") {
+    if (window.location.hash) history.replaceState({}, "", window.location.pathname + window.location.search || "/");
+    return;
+  }
   const [path, query = ""] = hash.split("?");
-  const params = Object.fromEntries(new URLSearchParams(query));
-  return { path, params };
+  history.replaceState({}, "", `${path.startsWith("/") ? path : `/${path}`}${query ? `?${query}` : ""}`);
 }
 
 function setActiveNav(path) {
   document.querySelectorAll("[data-route]").forEach((link) => {
     const match = link.dataset.route;
-    link.classList.toggle("is-active", match === path || (match === "/post" && path === "/post-alliance"));
+    const active =
+      match === path ||
+      (match === "/post" && path === "/post-alliance") ||
+      (match === "/browse" && path.startsWith("/clans/")) ||
+      (match === "/alliances" && path.startsWith("/alliances/"));
+    link.classList.toggle("is-active", active);
   });
 }
 
@@ -122,23 +147,31 @@ function applyClanFilters(clans, filters) {
   } else if (filters.sort === "mr") {
     list.sort((a, b) => a.mrRequired - b.mrRequired);
   } else {
-    list.sort((a, b) => new Date(b.bumpedAt || b.createdAt) - new Date(a.bumpedAt || a.createdAt));
+    list.sort((a, b) => {
+      if (a.recruiting !== b.recruiting) return a.recruiting ? -1 : 1;
+      return new Date(b.bumpedAt || b.createdAt) - new Date(a.bumpedAt || a.createdAt);
+    });
   }
   return list;
 }
 
 function applyAllianceFilters(alliances, filters) {
   const q = filters.q.toLowerCase();
-  return alliances.filter((item) => {
-    const hay = [item.name, item.tag, item.headline, item.summary, (item.platforms || []).join(" ")]
-      .join(" ")
-      .toLowerCase();
-    if (q && !hay.includes(q)) return false;
-    if (filters.platform && !alliancePlatformMatches(item.platforms, filters.platform)) return false;
-    if (filters.region && item.region !== filters.region) return false;
-    if (filters.status && item.status !== filters.status) return false;
-    return true;
-  });
+  return alliances
+    .filter((item) => {
+      const hay = [item.name, item.tag, item.headline, item.summary, (item.platforms || []).join(" ")]
+        .join(" ")
+        .toLowerCase();
+      if (q && !hay.includes(q)) return false;
+      if (filters.platform && !alliancePlatformMatches(item.platforms, filters.platform)) return false;
+      if (filters.region && item.region !== filters.region) return false;
+      if (filters.status && item.status !== filters.status) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      if (a.recruiting !== b.recruiting) return a.recruiting ? -1 : 1;
+      return new Date(b.bumpedAt || b.createdAt) - new Date(a.bumpedAt || a.createdAt);
+    });
 }
 
 function readFilters(form) {
@@ -155,43 +188,47 @@ function readFilters(form) {
   };
 }
 
-function openClan(id) {
-  const clan = state.clans.find((item) => item.id === id);
-  if (!clan) return;
-  modalRoot.innerHTML = clanModal(clan, { admin: Boolean(state.user?.admin) });
-  document.body.classList.add("modal-open");
-}
-
-function openAlliance(id) {
-  const alliance = state.alliances.find((item) => item.id === id);
-  if (!alliance) return;
-  modalRoot.innerHTML = allianceModal(alliance, { admin: Boolean(state.user?.admin) });
-  document.body.classList.add("modal-open");
-}
-
-function closeModal() {
-  modalRoot.innerHTML = "";
-  document.body.classList.remove("modal-open");
-}
-
 function bindCards(root = app) {
-  root.querySelectorAll("[data-open-clan]").forEach((el) => {
+  root.querySelectorAll("[data-href]").forEach((el) => {
     el.addEventListener("click", (event) => {
-      if (event.target.closest("[data-stop]")) return;
-      openClan(el.dataset.openClan);
+      if (event.target.closest("[data-stop], a, button")) return;
+      go(el.dataset.href);
     });
     el.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") openClan(el.dataset.openClan);
+      if (event.key === "Enter") go(el.dataset.href);
     });
   });
-  root.querySelectorAll("[data-open-alliance]").forEach((el) => {
-    el.addEventListener("click", (event) => {
-      if (event.target.closest("[data-stop]")) return;
-      openAlliance(el.dataset.openAlliance);
-    });
-    el.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") openAlliance(el.dataset.openAlliance);
-    });
+}
+
+function bindListingPage() {
+  app.querySelector("[data-copy-url]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      button.textContent = "Copied";
+    } catch {
+      button.textContent = "Copy failed";
+    }
+  });
+  const form = app.querySelector(".report-form");
+  if (!form) return;
+  const note = form.querySelector("[data-report-note]");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const kind = form.dataset.reportKind;
+    const id = form.dataset.reportId;
+    const payload = {
+      reason: form.reason.value,
+      details: form.details.value.trim(),
+    };
+    try {
+      if (kind === "alliance") await api.reportAlliance(id, payload);
+      else await api.reportClan(id, payload);
+      showNote(note, "Report sent. Thanks.", "muted");
+      form.querySelector("button[type='submit']").disabled = true;
+    } catch (error) {
+      showNote(note, error.message);
+    }
   });
 }
 
@@ -513,20 +550,23 @@ function mediaTooLarge(form) {
   return null;
 }
 
-function packForm(form, listField) {
+function packForm(form, ...listFields) {
   const fd = new FormData(form);
-  const values = fd.getAll(listField);
-  fd.delete(listField);
-  fd.set(listField, JSON.stringify(values));
+  for (const listField of listFields) {
+    const values = fd.getAll(listField);
+    fd.delete(listField);
+    fd.set(listField, JSON.stringify(values));
+  }
   return fd;
 }
 
 async function render() {
   const { path, params } = parseRoute();
   closeDrawer();
-  closeModal();
   setActiveNav(path);
   window.scrollTo({ top: 0, behavior: "instant" });
+  const clanMatch = path.match(/^\/clans\/([^/]+)$/);
+  const allianceMatch = path.match(/^\/alliances\/([^/]+)$/);
   document.title =
     path === "/privacy"
       ? "Privacy Policy — WF Clan Recruit"
@@ -647,8 +687,7 @@ async function render() {
           ? await api.updateClan(draft.id, payload)
           : await api.createClan(payload);
         await refresh();
-        window.location.hash = "#/browse";
-        window.setTimeout(() => openClan(result.clan.id), 80);
+        go(`/clans/${result.clan.id}`);
       } catch (error) {
         showNote(note, error.message);
       }
@@ -666,7 +705,12 @@ async function render() {
       app.innerHTML = `<section class="auth-card"><h1>Not allowed</h1><p class="muted">You can only edit your own posts.</p></section>`;
       return;
     }
-    app.innerHTML = alliancePostView({ user: state.user, draft: draft || {}, auth: state.auth });
+    app.innerHTML = alliancePostView({
+      user: state.user,
+      draft: draft || {},
+      auth: state.auth,
+      clans: state.clans,
+    });
     const form = app.querySelector("#alliance-form");
     if (!form) {
       bindForumForm();
@@ -695,13 +739,12 @@ async function render() {
         return;
       }
       try {
-        const payload = packForm(form, "platforms");
+        const payload = packForm(form, "platforms", "rosterIds");
         const result = draft
           ? await api.updateAlliance(draft.id, payload)
           : await api.createAlliance(payload);
         await refresh();
-        window.location.hash = "#/alliances";
-        window.setTimeout(() => openAlliance(result.alliance.id), 80);
+        go(`/alliances/${result.alliance.id}`);
       } catch (error) {
         showNote(note, error.message);
       }
@@ -727,7 +770,7 @@ async function render() {
         if (path === "/login") await api.login(username, password);
         else await api.register(username, password);
         await refresh();
-        window.location.hash = `#${next}`;
+        go(next.startsWith("/") ? next : `/${next}`);
       } catch (error) {
         showNote(note, error.message);
       }
@@ -737,7 +780,7 @@ async function render() {
 
   if (path === "/account") {
     if (!state.user) {
-      window.location.hash = "#/login?next=/account";
+      go("/login?next=/account");
       return;
     }
     const mineClans = state.user.admin
@@ -746,8 +789,48 @@ async function render() {
     const mineAlliances = state.user.admin
       ? state.alliances
       : state.alliances.filter((item) => item.ownerId === state.user.id);
-    app.innerHTML = accountView({ user: state.user, clans: mineClans, alliances: mineAlliances });
+    let reports = [];
+    if (state.user.admin) {
+      try {
+        reports = (await api.reports()).reports || [];
+      } catch {
+        reports = [];
+      }
+    }
+    app.innerHTML = accountView({ user: state.user, clans: mineClans, alliances: mineAlliances, reports });
     bindForumForm();
+    return;
+  }
+
+  if (clanMatch) {
+    let clan = state.clans.find((item) => item.id === clanMatch[1]);
+    if (!clan) {
+      try {
+        clan = (await api.clan(clanMatch[1])).clan;
+      } catch {
+        app.innerHTML = `<section class="auth-card"><h1>Listing not found</h1><p class="muted">That clan post is gone or the link is wrong.</p></section>`;
+        return;
+      }
+    }
+    document.title = `${clan.name} — WF Clan Recruit`;
+    app.innerHTML = clanPage(clan, { admin: Boolean(state.user?.admin) });
+    bindListingPage();
+    return;
+  }
+
+  if (allianceMatch) {
+    let alliance = state.alliances.find((item) => item.id === allianceMatch[1]);
+    if (!alliance) {
+      try {
+        alliance = (await api.alliance(allianceMatch[1])).alliance;
+      } catch {
+        app.innerHTML = `<section class="auth-card"><h1>Listing not found</h1><p class="muted">That alliance post is gone or the link is wrong.</p></section>`;
+        return;
+      }
+    }
+    document.title = `${alliance.name} — WF Clan Recruit`;
+    app.innerHTML = alliancePage(alliance, { admin: Boolean(state.user?.admin) });
+    bindListingPage();
     return;
   }
 
@@ -765,12 +848,22 @@ async function render() {
   app.querySelector("[data-hero-search]")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const q = new FormData(event.currentTarget).get("q");
-    window.location.hash = `#/browse?q=${encodeURIComponent(String(q || ""))}`;
+    go(`/browse?q=${encodeURIComponent(String(q || ""))}`);
   });
   bindCards();
 }
 
 document.addEventListener("click", async (event) => {
+  const link = event.target.closest("a[data-link]");
+  if (link && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+    const url = new URL(link.href, window.location.origin);
+    if (url.origin === window.location.origin) {
+      event.preventDefault();
+      closeDrawer();
+      go(`${url.pathname}${url.search}`);
+      return;
+    }
+  }
   if (event.target.closest("[data-link]")) closeDrawer();
   const jump = event.target.closest("[data-jump]");
   if (jump) {
@@ -778,20 +871,10 @@ document.addEventListener("click", async (event) => {
     document.getElementById(jump.dataset.jump)?.scrollIntoView({ behavior: "smooth", block: "start" });
     return;
   }
-  const nestedClan = event.target.closest(".modal [data-open-clan]");
-  if (nestedClan) {
-    event.stopPropagation();
-    openClan(nestedClan.dataset.openClan);
-    return;
-  }
-  if (event.target.classList.contains("backdrop") || event.target.closest("[data-close-modal]")) {
-    closeModal();
-  }
   if (event.target.closest("[data-logout]")) {
     await api.logout();
     await refresh();
-    window.location.hash = "#/";
-    render();
+    go("/");
     return;
   }
   if (event.target.closest("[data-export-account]")) {
@@ -800,10 +883,10 @@ document.addEventListener("click", async (event) => {
       const data = await api.exportAccount();
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "wf-clan-recruit-data.json";
-      link.click();
+      const linkEl = document.createElement("a");
+      linkEl.href = url;
+      linkEl.download = "wf-clan-recruit-data.json";
+      linkEl.click();
       URL.revokeObjectURL(url);
     } catch (error) {
       alert(error.message);
@@ -816,7 +899,42 @@ document.addEventListener("click", async (event) => {
     try {
       await api.deleteAccount();
       await refresh();
-      window.location.hash = "#/";
+      go("/");
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
+  const pauseClan = event.target.closest("[data-pause-clan]");
+  if (pauseClan) {
+    event.preventDefault();
+    try {
+      await api.pauseClan(pauseClan.dataset.pauseClan, pauseClan.dataset.paused === "1");
+      await refresh();
+      render();
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
+  const pauseAlliance = event.target.closest("[data-pause-alliance]");
+  if (pauseAlliance) {
+    event.preventDefault();
+    try {
+      await api.pauseAlliance(pauseAlliance.dataset.pauseAlliance, pauseAlliance.dataset.paused === "1");
+      await refresh();
+      render();
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
+  const resolveReport = event.target.closest("[data-resolve-report]");
+  if (resolveReport) {
+    event.preventDefault();
+    try {
+      await api.resolveReport(resolveReport.dataset.resolveReport, resolveReport.dataset.status);
+      await refresh();
       render();
     } catch (error) {
       alert(error.message);
@@ -829,9 +947,9 @@ document.addEventListener("click", async (event) => {
     event.stopPropagation();
     if (!confirm("Remove this clan post for everyone?")) return;
     await api.deleteClan(deleteClan.dataset.deleteClan);
-    closeModal();
     await refresh();
-    render();
+    if (window.location.pathname.startsWith("/clans/")) go("/browse");
+    else render();
     return;
   }
   const deleteAlliance = event.target.closest("[data-delete-alliance]");
@@ -840,9 +958,9 @@ document.addEventListener("click", async (event) => {
     event.stopPropagation();
     if (!confirm("Remove this alliance post for everyone?")) return;
     await api.deleteAlliance(deleteAlliance.dataset.deleteAlliance);
-    closeModal();
     await refresh();
-    render();
+    if (window.location.pathname.startsWith("/alliances/")) go("/alliances");
+    else render();
     return;
   }
   const bumpClan = event.target.closest("[data-bump-clan]");
@@ -870,10 +988,6 @@ document.addEventListener("click", async (event) => {
   }
 });
 
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") closeModal();
-});
-
 toggle.addEventListener("click", () => {
   const open = drawer.hidden;
   drawer.hidden = !open;
@@ -881,7 +995,7 @@ toggle.addEventListener("click", () => {
   document.body.classList.toggle("drawer-open", open);
 });
 
-window.addEventListener("hashchange", () => {
+window.addEventListener("popstate", () => {
   render().catch((error) => {
     app.innerHTML = `<section class="auth-card"><h1>Could not load</h1><p class="muted">${error.message}</p></section>`;
   });
@@ -892,11 +1006,9 @@ window.addEventListener("scroll", () => {
   nav.classList.toggle("is-scrolled", window.scrollY > 8);
 });
 
+migrateHash();
 refresh()
-  .then(() => {
-    if (!window.location.hash) window.location.hash = "#/";
-    else return render();
-  })
+  .then(() => render())
   .catch((error) => {
     app.innerHTML = `<section class="auth-card"><h1>Server offline</h1><p class="muted">Start the app with <code>npm run dev</code>. ${error.message}</p></section>`;
   });

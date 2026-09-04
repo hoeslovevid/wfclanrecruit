@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { hashPassword, verifyPassword } from "./auth.js";
+import { closePg, connectPg, loadState, postgresEnabled, saveState } from "./pg.js";
 
 const SEED_LISTING_IDS = new Set([
   "steel-meridian-vanguard",
@@ -26,6 +27,7 @@ const dbPath = path.join(dataDir, "db.json");
 
 let storageReady = false;
 let cache = null;
+let usingPostgres = false;
 
 export const paths = { dataDir, uploadDir, dbPath };
 
@@ -38,6 +40,7 @@ function emptyDb() {
     sessions: [],
     clans: [],
     alliances: [],
+    reports: [],
   };
 }
 
@@ -132,10 +135,17 @@ async function bootstrapAdmin(db) {
 // #4: a torn write on restart used to leave db.json unparseable and lose
 // everything. Write to a temp file and rename, which is atomic on POSIX.
 function writeDbFile(db) {
-  const tmp = `${dbPath}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
-  fs.renameSync(tmp, dbPath);
-  cache = db;
+  const next = { reports: [], ...db };
+  if (!usingPostgres) {
+    const tmp = `${dbPath}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(next, null, 2));
+    fs.renameSync(tmp, dbPath);
+  }
+  cache = next;
+}
+
+async function persist(db) {
+  if (usingPostgres) await saveState(db);
 }
 
 // #8/#12: expired sessions used to accumulate forever, contradicting the
@@ -151,15 +161,36 @@ export function ensureStorage() {
   if (storageReady) return;
   fs.mkdirSync(dataDir, { recursive: true });
   fs.mkdirSync(uploadDir, { recursive: true });
-  if (!fs.existsSync(dbPath)) writeDbFile(emptyDb());
+  if (!usingPostgres && !fs.existsSync(dbPath)) writeDbFile(emptyDb());
   storageReady = true;
 }
 
-// #3: this used to run inside readDb(), so every request paid a synchronous
-// scrypt in bootstrapAdmin (~21ms of blocked event loop). It is boot-only now.
 export async function initStorage() {
-  ensureStorage();
-  const current = JSON.parse(fs.readFileSync(dbPath, "utf8"));
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.mkdirSync(uploadDir, { recursive: true });
+  usingPostgres = postgresEnabled();
+  if (usingPostgres) {
+    await connectPg();
+    const existing = await loadState();
+    if (existing && ((existing.users || []).length || (existing.clans || []).length || (existing.alliances || []).length || (existing.reports || []).length)) {
+      cache = { ...emptyDb(), ...existing };
+    } else if (fs.existsSync(dbPath)) {
+      cache = { ...emptyDb(), ...JSON.parse(fs.readFileSync(dbPath, "utf8")) };
+      await saveState(cache);
+      console.log("Imported db.json into Postgres.");
+    } else {
+      cache = emptyDb();
+      await saveState(cache);
+    }
+    storageReady = true;
+  } else {
+    if (!fs.existsSync(dbPath)) writeDbFile(emptyDb());
+    cache = JSON.parse(fs.readFileSync(dbPath, "utf8"));
+    if (!Array.isArray(cache.reports)) cache.reports = [];
+    storageReady = true;
+  }
+
+  const current = cache;
   const sanitized = pruneSessions(sanitizeDb(current));
   if (!isProd && !sanitized.users.some((user) => user.id === DEMO_USER_ID)) {
     sanitized.users.push({
@@ -172,11 +203,16 @@ export async function initStorage() {
   }
   const { db: next } = await bootstrapAdmin(sanitized);
   writeDbFile(next);
+  await persist(next);
 }
 
 export function readDb() {
   ensureStorage();
-  if (!cache) cache = JSON.parse(fs.readFileSync(dbPath, "utf8"));
+  if (!cache) {
+    if (usingPostgres) throw new Error("Database is not ready.");
+    cache = JSON.parse(fs.readFileSync(dbPath, "utf8"));
+  }
+  if (!Array.isArray(cache.reports)) cache.reports = [];
   return cache;
 }
 
@@ -187,18 +223,24 @@ export function writeDb(mutator) {
     const db = readDb();
     try {
       const next = mutator(db) ?? db;
+      if (!Array.isArray(next.reports)) next.reports = [];
       writeDbFile(next);
       return next;
     } catch (error) {
-      // the mutator may have partially mutated the cached object before
-      // throwing, so force the next read to come from disk
       cache = null;
       throw error;
     }
   };
-  // #6: the chain used to be `queue.then(run)`, so a single rejection made
-  // every later write reject forever. Swallow the prior result either way.
   const result = queue.then(run, run);
-  queue = result.catch(() => {});
-  return result;
+  queue = result.then((db) => persist(db)).catch(() => {});
+  return result.then(async (db) => {
+    await persist(db);
+    return db;
+  });
 }
+
+export function storageLabel() {
+  return usingPostgres ? "Postgres" : paths.dbPath;
+}
+
+export { closePg, postgresEnabled };

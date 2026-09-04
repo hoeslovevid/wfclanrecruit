@@ -1,5 +1,5 @@
 function jump(id, label) {
-  return `<a href="#/privacy" data-jump="${id}">${label}</a>`;
+  return `<a href="/privacy" data-jump="${id}">${label}</a>`;
 }
 
 export function privacyView() {
@@ -8,7 +8,7 @@ export function privacyView() {
       <p class="eyebrow">Legal</p>
       <h1>Privacy Policy</h1>
       <p class="lead">This page explains what WF Clan Recruit collects, why, who sees it, how long it stays, and how you can opt out. It describes this website as it works today, not a generic template.</p>
-      <p class="muted">Last updated 3 September 2026. This site is independent and is not affiliated with Digital Extremes, Warframe, Discord, or Google.</p>
+      <p class="muted">Last updated 4 September 2026. This site is independent and is not affiliated with Digital Extremes, Warframe, Discord, or Google.</p>
     </section>
 
     <section class="policy-page">
@@ -19,8 +19,9 @@ export function privacyView() {
           <li>You can browse the board without an account. We do not require cookies to read listings.</li>
           <li>We do not run ads, analytics pixels, or social tracking scripts.</li>
           <li>If you sign in, we store account, Discord, and (if you verify) Warframe Forum details so you can post.</li>
-          <li>Listings you publish are public, including images, video, Discord invites, and whatever you write in the post.</li>
-          <li>You can download your data, remove listings, sign out, or delete your account from the ${jump("opt-out", "opt-out section")} or your <a href="#/account" data-link>account page</a>.</li>
+          <li>Listings you publish are public, including images, video, Discord invites, and whatever you write in the post. Each listing has a shareable URL.</li>
+          <li>You can report a dead or dishonest listing. Reports are not public; only the site operator can read them.</li>
+          <li>You can download your data, remove listings, sign out, or delete your account from the ${jump("opt-out", "opt-out section")} or your <a href="/account" data-link>account page</a>.</li>
         </ul>
       </article>
 
@@ -120,13 +121,16 @@ export function privacyView() {
           <li>Platform, region, language, status, member counts, MR, playstyles, clan tier, founded year</li>
           <li>Leader name, Discord invite URL, optional alliance link</li>
           <li>Uploaded image (up to 2 MB) and optional video (up to 25 MB)</li>
-          <li>Created time, last bump time, and the owner id of the account that posted it</li>
+          <li>Created time, last bump time, paused flag, invite check result, and the owner id of the account that posted it</li>
         </ul>
         <p>Do not put private phone numbers, home addresses, government IDs, or passwords in a listing. Recruits and search engines can see public posts.</p>
 
+        <h3>Reports</h3>
+        <p>Anyone can send a listing report (dead invite, inactive, fake, stolen name, or other). We store the reason, optional details, listing id and name, time, status, and the reporter’s account id if they were signed in. Reports are not shown on the public board.</p>
+
         <h3>Technical data we do not store in the app database</h3>
         <ul class="policy-bullets">
-          <li>We do not store IP addresses, GPS, payment cards, or device advertising IDs in <code>db.json</code>.</li>
+          <li>We do not store IP addresses, GPS, payment cards, or device advertising IDs in the application database (Postgres when <code>DATABASE_URL</code> is set, otherwise a local <code>db.json</code> file).</li>
           <li>We do not keep Discord OAuth access or refresh tokens after sign-in finishes.</li>
           <li>We do not store the HTML of your Warframe Forum profile after the verification check. We only keep whether the code matched, plus the profile URL and name.</li>
           <li>The host (Railway) and any reverse proxy may still log IPs and user agents for security and uptime. Those logs are not a feature of this app and are not used to target ads.</li>
@@ -137,8 +141,8 @@ export function privacyView() {
         <p class="kicker">05</p>
         <h2>How we collect it</h2>
         <ul class="policy-bullets">
-          <li><strong>Directly from you.</strong> Forms, file uploads, Discord OAuth consent, forum profile URL, and buttons such as bump, edit, sign out, export, or delete.</li>
-          <li><strong>From Discord.</strong> If you choose Continue with Discord, Discord sends us an OAuth code. We exchange it for a short-lived token and read <code>/users/@me</code> with scopes <code>identify</code> and <code>email</code>. We then drop the Discord token.</li>
+          <li><strong>Directly from you.</strong> Forms, file uploads, Discord OAuth consent, forum profile URL, and buttons such as bump, pause, report, edit, sign out, export, or delete.</li>
+          <li><strong>From Discord.</strong> If you choose Continue with Discord, Discord sends us an OAuth code. We exchange it for a short-lived token and read <code>/users/@me</code> with scopes <code>identify</code> and <code>email</code>. We then drop the Discord token. When you publish or bump a listing we also ask Discord whether the invite code is still valid; Discord sees that invite code.</li>
           <li><strong>From Warframe Forums, through a reader.</strong> Direct fetches from our server are blocked by Cloudflare. When you confirm verification, we ask a browser-based reader to load your public About Me tab and check for your one-time code. That request includes the public profile URL you gave us.</li>
           <li><strong>Automatically.</strong> Session cookies after sign-in; theme in local storage if you toggle it; standard HTTPS request metadata at the host.</li>
         </ul>
@@ -157,7 +161,9 @@ export function privacyView() {
               <tr><td>Let you sign in and stay signed in</td><td>Discord profile, session cookie, password hash for local/admin login</td></tr>
               <tr><td>Stop throwaway Discord accounts from flooding posts</td><td>Discord id (account age), verified-email check in production</td></tr>
               <tr><td>Tie a poster to a Warframe Forum identity</td><td>Forum URL, verification code, verified flag</td></tr>
-              <tr><td>Let you edit, bump, or remove your posts</td><td>Owner id, session, listing records</td></tr>
+              <tr><td>Let you edit, bump, pause, or remove your posts</td><td>Owner id, session, listing records</td></tr>
+              <tr><td>Keep names and tags unique, hide stale or paused Discord buttons</td><td>Listing name, tag, bump time, paused flag, invite check</td></tr>
+              <tr><td>Handle “report this listing”</td><td>Report reason, optional details, reporter id if signed in</td></tr>
               <tr><td>Enforce cooldowns (new listing 15 minutes, bump 12 hours, forum check a few seconds)</td><td>Timestamps on listings and the last forum check</td></tr>
               <tr><td>Moderation by the operator</td><td>Admin account can edit or remove any listing</td></tr>
               <tr><td>Security and abuse handling</td><td>Sessions, Discord ids, host logs</td></tr>
@@ -236,8 +242,8 @@ export function privacyView() {
               <tr><th>Recipient</th><th>Why</th><th>What they may see</th></tr>
             </thead>
             <tbody>
-              <tr><td>Railway (hosting and files)</td><td>Run the app, store <code>db.json</code> and uploads</td><td>The same data we store, plus ordinary server logs</td></tr>
-              <tr><td>Discord</td><td>Sign-in</td><td>That you authorized this app; Discord already has your Discord account</td></tr>
+              <tr><td>Railway (hosting, files, and optional Postgres)</td><td>Run the app, store listings and uploads</td><td>The same data we store, plus ordinary server logs</td></tr>
+              <tr><td>Discord</td><td>Sign-in and invite checks</td><td>That you authorized this app; Discord already has your Discord account. Invite lookups send the invite code</td></tr>
               <tr><td>Jina AI reader (<code>r.jina.ai</code>)</td><td>Read a public About Me page when Cloudflare blocks our server</td><td>The public forum profile URL you submitted, at the moment you click to check</td></tr>
               <tr><td>Google Fonts</td><td>Load IBM Plex</td><td>Your IP and browser when the font CSS and files load</td></tr>
               <tr><td>Warframe Forums / Digital Extremes</td><td>You publish the code on About Me; we only read that public tab</td><td>Whatever you put on your forum profile</td></tr>
@@ -260,6 +266,7 @@ export function privacyView() {
         <h2>How long we keep data</h2>
         <ul class="policy-bullets">
           <li><strong>Public listings</strong> until you or a moderator remove them, or you delete your account (which also removes your listings and uploads).</li>
+          <li><strong>Listing reports</strong> until the operator resolves them or the project is shut down. Deleting your account clears your reporter id from reports you filed; the report text can remain for moderation history.</li>
           <li><strong>Account records</strong> until you delete the account, or the operator deletes it for abuse or shutdown.</li>
           <li><strong>Sessions</strong> 30 days from issue, or until you sign out. Signing out removes that session token, and expired session records are deleted automatically. Other devices stay signed in until those sessions expire or you delete the account.</li>
           <li><strong>OAuth cookie</strong> 10 minutes.</li>
@@ -280,7 +287,7 @@ export function privacyView() {
           <li>Production posting requires Discord (minimum account age, default 7 days) and a verified forum profile</li>
           <li>Upload type and size limits, checked against the file type rather than its name</li>
           <li>Uploads are served as inert downloads, so a file cannot run code on this site</li>
-          <li>Rate limits on sign-in, sign-up, and verification checks</li>
+          <li>Rate limits on sign-in, sign-up, verification checks, listing creates, and reports</li>
           <li>Post HTML is sanitized before display</li>
         </ul>
         <p>Do not reuse a unique password you care about on a local demo login. Production sign-in is Discord, not a password you invent for this site.</p>
@@ -313,9 +320,10 @@ export function privacyView() {
             </thead>
             <tbody>
               <tr><td>Stop this browser from being signed in</td><td>Click Sign out. That clears <code>wfr_session</code> and drops that session from our database.</td></tr>
-              <tr><td>See what we store</td><td>Open <a href="#/account" data-link>your account</a> and download a JSON copy with Download my data.</td></tr>
+              <tr><td>See what we store</td><td>Open <a href="/account" data-link>your account</a> and download a JSON copy with Download my data.</td></tr>
               <tr><td>Correct listing text, Discord invite, or images</td><td>Edit the listing from your account page.</td></tr>
-              <tr><td>Take a listing off the board</td><td>Remove it from your account page. Uploaded image/video for that post are deleted from our storage.</td></tr>
+              <tr><td>Take a listing off the board</td><td>Pause recruiting (hides Discord) or remove it from your account page. Removing deletes that post’s uploads.</td></tr>
+              <tr><td>Report a listing</td><td>Open the listing URL and use Report this listing. You do not need an account.</td></tr>
               <tr><td>Stop being verified on a forum URL</td><td>Delete the account, or paste a different profile URL (that resets verification). Also delete the code from Warframe Forum About Me.</td></tr>
               <tr><td>Erase the account</td><td>Delete my account on the account page. This removes your user row, sessions, listings you own, and those uploads. Admin accounts cannot use this button so the board cannot be locked out.</td></tr>
               <tr><td>Revoke Discord access</td><td>Discord → User Settings → Authorized Apps → remove WF Clan Recruit. Also delete the account here, or we will still have the Discord id we already stored until you delete.</td></tr>
@@ -347,7 +355,10 @@ export function privacyView() {
           <li>Discord snowflake id used to estimate account age (default 7 days)</li>
           <li>Discord <code>verified</code> email required in production</li>
           <li>Forum About Me must contain your current code</li>
-          <li>Listing, bump, and forum-check rate limits</li>
+          <li>Discord invite lookup (reject invalid or expired invites)</li>
+          <li>Unique clan/alliance name and tag</li>
+          <li>Stale listings (21 days without a bump hide Join Discord)</li>
+          <li>Listing, bump, report, and forum-check rate limits</li>
         </ul>
         <p>That is anti-abuse gating, not a credit score and not ad targeting. There is no appeal form inside the app. If you believe a check failed in error, sign in with a Discord account that meets the rules, wait the cooldown, or open a GitHub issue without posting secrets.</p>
       </article>
@@ -361,7 +372,7 @@ export function privacyView() {
       <article class="panel policy-section" id="contact">
         <p class="kicker">19</p>
         <h2>Contact</h2>
-        <p>Use in-app tools first: <a href="#/account" data-link>account page</a> for download and deletion, Sign out in the header, and Remove on each listing.</p>
+        <p>Use in-app tools first: <a href="/account" data-link>account page</a> for download and deletion, Sign out in the header, and Remove on each listing.</p>
         <p>For operator issues, the public repository is <a href="https://github.com/hoeslovevid/wfclanrecruit" target="_blank" rel="noopener noreferrer">github.com/hoeslovevid/wfclanrecruit</a>. GitHub issues are public. Do not paste session cookies, Discord tokens, emails, or passwords there.</p>
         <p>This page is a description of our practices. It is not legal advice and does not create extra rights beyond applicable law and the controls we actually ship.</p>
       </article>
@@ -378,8 +389,8 @@ export function privacyView() {
           <div><dt>Session</dt><dd>A random token that proves you already signed in, kept in an HTTP-only cookie.</dd></div>
         </dl>
         <div class="row guide-actions">
-          <a class="btn btn-primary" href="#/browse" data-link>Back to the board</a>
-          <a class="btn btn-ghost" href="#/account" data-link>Account and data controls</a>
+          <a class="btn btn-primary" href="/browse" data-link>Back to the board</a>
+          <a class="btn btn-ghost" href="/account" data-link>Account and data controls</a>
         </div>
       </article>
     </section>

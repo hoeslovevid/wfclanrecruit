@@ -8,8 +8,16 @@ import fs from "node:fs";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { hashPassword, newToken, verifyPassword } from "./auth.js";
-import { initStorage, paths, readDb, writeDb } from "./db.js";
+import { initStorage, paths, postgresEnabled, readDb, storageLabel, writeDb, closePg } from "./db.js";
 import { rateLimit } from "./ratelimit.js";
+import { inspectDiscordInvite } from "./invite.js";
+import {
+  REPORT_REASONS,
+  activityAt as listingActivity,
+  applyAllianceRoster,
+  listingConflict,
+  withListingState,
+} from "./listing.js";
 import { aboutTooLong, normalizeAbout, plainTextFromHtml } from "../src/richtext.js";
 import {
   DISCORD_MIN_AGE_DAYS,
@@ -163,6 +171,20 @@ function requireUser(req, res, next) {
   next();
 }
 
+function requireAdmin(req, res, next) {
+  const user = currentUser(req);
+  if (!user) {
+    res.status(401).json({ error: "Sign in to continue." });
+    return;
+  }
+  if (!user.admin) {
+    res.status(403).json({ error: "Admin only." });
+    return;
+  }
+  req.user = user;
+  next();
+}
+
 function requirePoster(req, res, next) {
   const user = currentUser(req);
   if (!user) {
@@ -182,6 +204,12 @@ const registerLimiter = rateLimit({ name: "register", limit: 5, windowMs: 60 * 6
 const discordStartLimiter = rateLimit({ name: "discord-start", limit: 20, windowMs: 15 * 60 * 1000 });
 const exportLimiter = rateLimit({ name: "export", limit: 10, windowMs: 60 * 60 * 1000 });
 const listingLimiter = rateLimit({ name: "listing", limit: 20, windowMs: 60 * 60 * 1000 });
+const reportLimiter = rateLimit({
+  name: "report",
+  limit: 8,
+  windowMs: 60 * 60 * 1000,
+  message: "Too many reports. Try again later.",
+});
 const forumCheckLimiter = rateLimit({
   name: "forum-check",
   limit: 10,
@@ -245,7 +273,7 @@ function decodeOauth(value) {
 const BUMP_COOLDOWN_MS = 12 * 60 * 60 * 1000;
 
 function activityAt(item) {
-  return item.bumpedAt || item.createdAt;
+  return listingActivity(item);
 }
 
 function bumpWaitMessage(item) {
@@ -258,11 +286,11 @@ function bumpWaitMessage(item) {
 
 function withBumpState(item) {
   const readyAt = new Date(new Date(activityAt(item)).getTime() + BUMP_COOLDOWN_MS).toISOString();
-  return {
+  return withListingState({
     ...item,
     canBump: Date.now() >= new Date(readyAt).getTime(),
     bumpReadyAt: readyAt,
-  };
+  });
 }
 
 function listingFile(req, name) {
@@ -364,6 +392,7 @@ function parseClanBody(body, user) {
       status: String(body.status || "Open"),
       leader: String(body.leader || user.username).slice(0, 32),
       discord: String(body.discord),
+      paused: String(body.paused || "") === "1" || body.paused === true || body.paused === "true",
       founded: String(body.founded || new Date().getFullYear()),
       allianceId,
       headline: String(body.headline).slice(0, 90),
@@ -410,6 +439,8 @@ function parseAllianceBody(body) {
       clanCount,
       members: Number.isFinite(members) ? members : 0,
       discord: String(body.discord),
+      paused: String(body.paused || "") === "1" || body.paused === true || body.paused === "true",
+      rosterIds: asArray(body.rosterIds),
       headline: String(body.headline).slice(0, 90),
       summary: String(body.summary).slice(0, 220),
       about,
@@ -493,7 +524,27 @@ function asArray(value) {
 }
 
 function validateDiscord(url) {
-  return /^https?:\/\/(discord\.gg|discord\.com\/invite)\//i.test(String(url || ""));
+  return /^https?:\/\/(www\.)?(discord\.gg|discord\.com\/invite)\//i.test(String(url || ""));
+}
+
+async function attachInvite(fields) {
+  const invite = await inspectDiscordInvite(fields.discord);
+  if (!invite.ok) return { error: invite.error };
+  return {
+    ...fields,
+    discord: invite.url,
+    inviteOk: true,
+    inviteCheckedAt: invite.checkedAt,
+  };
+}
+
+function sortListings(a, b) {
+  if (a.recruiting !== b.recruiting) return a.recruiting ? -1 : 1;
+  return new Date(activityAt(b)) - new Date(activityAt(a));
+}
+
+function listingTaken(db, fields) {
+  return listingConflict([...(db.clans || []), ...(db.alliances || [])], fields);
 }
 
 function decorateClan(clan, db) {
@@ -505,8 +556,17 @@ function decorateClan(clan, db) {
   });
 }
 
+function decorateAlliance(alliance, db) {
+  return withBumpState({
+    ...alliance,
+    memberClans: (db.clans || [])
+      .filter((clan) => clan.allianceId === alliance.id)
+      .map((clan) => decorateClan(clan, db)),
+  });
+}
+
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, name: "WF Clan Recruit" });
+  res.json({ ok: true, name: "WF Clan Recruit", storage: postgresEnabled() ? "postgres" : "file" });
 });
 
 app.get("/api/auth/me", (req, res) => {
@@ -524,7 +584,7 @@ app.get("/api/auth/me", (req, res) => {
 app.get("/api/auth/discord", discordStartLimiter, (req, res) => {
   const mode = req.query.mode === "register" ? "register" : "login";
   if (!discordConfigured()) {
-    res.redirect(`${publicOrigin(req)}/#/${mode}?error=discord-config`);
+    res.redirect(`${publicOrigin(req)}/${mode}?error=discord-config`);
     return;
   }
   const state = newToken();
@@ -555,7 +615,7 @@ app.get("/api/auth/discord/callback", async (req, res) => {
   const storedMode = stored.mode === "register" ? "register" : "login";
   const fail = (code) => {
     res.clearCookie(OAUTH_COOKIE, cookieOptions());
-    res.redirect(`${origin}/#/${storedMode}?error=${encodeURIComponent(code)}`);
+    res.redirect(`${origin}/${storedMode}?error=${encodeURIComponent(code)}`);
   };
   if (!discordConfigured()) {
     fail("discord-config");
@@ -823,6 +883,7 @@ app.get("/api/auth/export", requireUser, exportLimiter, (req, res) => {
     },
     clans: (db.clans || []).filter((item) => item.ownerId === user.id),
     alliances: (db.alliances || []).filter((item) => item.ownerId === user.id),
+    reports: (db.reports || []).filter((item) => item.reporterId === user.id),
   });
 });
 
@@ -849,6 +910,9 @@ app.delete("/api/auth/account", requireUser, (req, res) => {
       .filter((item) => item.ownerId !== userId)
       .map((clan) => (droppedAlliances.has(clan.allianceId) ? { ...clan, allianceId: null } : clan));
     db.alliances = (db.alliances || []).filter((item) => item.ownerId !== userId);
+    db.reports = (db.reports || []).map((item) =>
+      item.reporterId === userId ? { ...item, reporterId: null } : item
+    );
     db.sessions = (db.sessions || []).filter((item) => item.userId !== userId);
     db.users = (db.users || []).filter((item) => item.id !== userId);
     res.clearCookie(COOKIE, cookieOptions());
@@ -859,9 +923,7 @@ app.delete("/api/auth/account", requireUser, (req, res) => {
 
 app.get("/api/clans", (_req, res) => {
   const db = readDb();
-  const clans = db.clans
-    .map((clan) => decorateClan(clan, db))
-    .sort((a, b) => new Date(activityAt(b)) - new Date(activityAt(a)));
+  const clans = db.clans.map((clan) => decorateClan(clan, db)).sort(sortListings);
   res.json({ clans });
 });
 
@@ -875,7 +937,7 @@ app.get("/api/clans/:id", (req, res) => {
   res.json({ clan: decorateClan(clan, db) });
 });
 
-app.post("/api/clans", requirePoster, listingLimiter, listingUpload, (req, res) => {
+app.post("/api/clans", requirePoster, listingLimiter, listingUpload, async (req, res) => {
   if (!assertListingFiles(req, res)) return;
   const parsed = parseClanBody(req.body, req.user);
   if (parsed.error) {
@@ -883,23 +945,35 @@ app.post("/api/clans", requirePoster, listingLimiter, listingUpload, (req, res) 
     res.status(400).json({ error: parsed.error });
     return;
   }
+  const invited = await attachInvite(parsed.fields);
+  if (invited.error) {
+    discardUploads(req);
+    res.status(400).json({ error: invited.error });
+    return;
+  }
 
   writeDb((db) => {
+    const taken = listingTaken(db, invited);
+    if (taken) {
+      discardUploads(req);
+      res.status(409).json({ error: taken });
+      return db;
+    }
     const wait = listingCreateWait(db, req.user.id);
     if (wait) {
       discardUploads(req);
       res.status(429).json({ error: wait });
       return db;
     }
-    if (parsed.fields.allianceId && !db.alliances.some((item) => item.id === parsed.fields.allianceId)) {
+    if (invited.allianceId && !db.alliances.some((item) => item.id === invited.allianceId)) {
       discardUploads(req);
       res.status(400).json({ error: "That alliance does not exist." });
       return db;
     }
     const now = new Date().toISOString();
     const clan = {
-      id: slugify(parsed.fields.name),
-      ...parsed.fields,
+      id: slugify(invited.name),
+      ...invited,
       image: savedUpload(listingFile(req, "image")),
       video: savedUpload(listingFile(req, "video")),
       featured: false,
@@ -913,12 +987,18 @@ app.post("/api/clans", requirePoster, listingLimiter, listingUpload, (req, res) 
   });
 });
 
-app.put("/api/clans/:id", requirePoster, listingUpload, (req, res) => {
+app.put("/api/clans/:id", requirePoster, listingUpload, async (req, res) => {
   if (!assertListingFiles(req, res)) return;
   const parsed = parseClanBody(req.body, req.user);
   if (parsed.error) {
     discardUploads(req);
     res.status(400).json({ error: parsed.error });
+    return;
+  }
+  const invited = await attachInvite(parsed.fields);
+  if (invited.error) {
+    discardUploads(req);
+    res.status(400).json({ error: invited.error });
     return;
   }
 
@@ -934,12 +1014,18 @@ app.put("/api/clans/:id", requirePoster, listingUpload, (req, res) => {
       res.status(403).json({ error: "You can only edit your own posts." });
       return db;
     }
-    if (parsed.fields.allianceId && !db.alliances.some((item) => item.id === parsed.fields.allianceId)) {
+    const taken = listingTaken(db, { ...invited, id: clan.id });
+    if (taken) {
+      discardUploads(req);
+      res.status(409).json({ error: taken });
+      return db;
+    }
+    if (invited.allianceId && !db.alliances.some((item) => item.id === invited.allianceId)) {
       discardUploads(req);
       res.status(400).json({ error: "That alliance does not exist." });
       return db;
     }
-    Object.assign(clan, parsed.fields, {
+    Object.assign(clan, invited, {
       image: nextImage(clan.image, listingFile(req, "image")),
       video: nextVideo(clan.video, listingFile(req, "video"), req.body.removeVideo),
     });
@@ -948,7 +1034,45 @@ app.put("/api/clans/:id", requirePoster, listingUpload, (req, res) => {
   });
 });
 
-app.post("/api/clans/:id/bump", requirePoster, (req, res) => {
+app.post("/api/clans/:id/bump", requirePoster, async (req, res) => {
+  const current = readDb().clans.find((item) => item.id === req.params.id);
+  if (!current) {
+    res.status(404).json({ error: "Clan not found." });
+    return;
+  }
+  if (!canRemove(req.user, current)) {
+    res.status(403).json({ error: "You can only bump your own posts." });
+    return;
+  }
+  const wait = bumpWaitMessage(current);
+  if (wait) {
+    res.status(429).json({ error: wait });
+    return;
+  }
+  const invite = await inspectDiscordInvite(current.discord, { required: false });
+  writeDb((db) => {
+    const clan = db.clans.find((item) => item.id === req.params.id);
+    if (!clan) {
+      res.status(404).json({ error: "Clan not found." });
+      return db;
+    }
+    if (!invite.ok) {
+      clan.inviteOk = false;
+      res.status(400).json({ error: invite.error });
+      return db;
+    }
+    if (!invite.skipped) {
+      clan.discord = invite.url;
+      clan.inviteOk = true;
+      clan.inviteCheckedAt = invite.checkedAt;
+    }
+    clan.bumpedAt = new Date().toISOString();
+    res.json({ clan: decorateClan(clan, db) });
+    return db;
+  });
+});
+
+app.post("/api/clans/:id/pause", requireUser, (req, res) => {
   writeDb((db) => {
     const clan = db.clans.find((item) => item.id === req.params.id);
     if (!clan) {
@@ -956,19 +1080,59 @@ app.post("/api/clans/:id/bump", requirePoster, (req, res) => {
       return db;
     }
     if (!canRemove(req.user, clan)) {
-      res.status(403).json({ error: "You can only bump your own posts." });
+      res.status(403).json({ error: "You can only pause your own posts." });
       return db;
     }
-    const wait = bumpWaitMessage(clan);
-    if (wait) {
-      res.status(429).json({ error: wait });
-      return db;
-    }
-    clan.bumpedAt = new Date().toISOString();
+    clan.paused = Boolean(req.body.paused);
     res.json({ clan: decorateClan(clan, db) });
     return db;
   });
 });
+
+function writeReport(req, res, kind) {
+  const reason = String(req.body.reason || "");
+  if (!REPORT_REASONS.includes(reason)) {
+    res.status(400).json({ error: "Pick a report reason." });
+    return;
+  }
+  const reporter = currentUser(req);
+  writeDb((db) => {
+    const list = kind === "clan" ? db.clans : db.alliances;
+    const listing = list.find((item) => item.id === req.params.id);
+    if (!listing) {
+      res.status(404).json({ error: "Listing not found." });
+      return db;
+    }
+    const hourAgo = Date.now() - 60 * 60 * 1000;
+    const duplicate = (db.reports || []).some(
+      (item) =>
+        item.listingId === listing.id &&
+        item.reason === reason &&
+        item.reporterId === (reporter?.id || null) &&
+        new Date(item.createdAt).getTime() > hourAgo
+    );
+    if (duplicate) {
+      res.status(429).json({ error: "You already reported this listing." });
+      return db;
+    }
+    db.reports = db.reports || [];
+    db.reports.unshift({
+      id: `report-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
+      kind,
+      listingId: listing.id,
+      listingName: listing.name,
+      reason,
+      details: String(req.body.details || "").slice(0, 400),
+      reporterId: reporter?.id || null,
+      createdAt: new Date().toISOString(),
+      status: "open",
+    });
+    res.json({ ok: true });
+    return db;
+  });
+}
+
+app.post("/api/clans/:id/report", reportLimiter, (req, res) => writeReport(req, res, "clan"));
 
 app.delete("/api/clans/:id", requireUser, (req, res) => {
   writeDb((db) => {
@@ -983,6 +1147,12 @@ app.delete("/api/clans/:id", requireUser, (req, res) => {
     }
     removeStoredFile(clan.image);
     removeStoredFile(clan.video);
+    const now = new Date().toISOString();
+    db.reports = (db.reports || []).map((item) =>
+      item.listingId === clan.id && item.status === "open"
+        ? { ...item, status: "resolved", resolvedAt: now }
+        : item
+    );
     db.clans = db.clans.filter((item) => item.id !== clan.id);
     res.json({ ok: true });
     return db;
@@ -991,19 +1161,7 @@ app.delete("/api/clans/:id", requireUser, (req, res) => {
 
 app.get("/api/alliances", (_req, res) => {
   const db = readDb();
-  const alliances = db.alliances
-    .map((alliance) =>
-      withBumpState({
-        ...alliance,
-        memberClans: db.clans.filter((clan) => clan.allianceId === alliance.id).map((clan) => ({
-          id: clan.id,
-          name: clan.name,
-          tag: clan.tag,
-          image: clan.image,
-        })),
-      })
-    )
-    .sort((a, b) => new Date(activityAt(b)) - new Date(activityAt(a)));
+  const alliances = db.alliances.map((alliance) => decorateAlliance(alliance, db)).sort(sortListings);
   res.json({ alliances });
 });
 
@@ -1015,14 +1173,11 @@ app.get("/api/alliances/:id", (req, res) => {
     return;
   }
   res.json({
-    alliance: withBumpState({
-      ...alliance,
-      memberClans: db.clans.filter((clan) => clan.allianceId === alliance.id),
-    }),
+    alliance: decorateAlliance(alliance, db),
   });
 });
 
-app.post("/api/alliances", requirePoster, listingLimiter, listingUpload, (req, res) => {
+app.post("/api/alliances", requirePoster, listingLimiter, listingUpload, async (req, res) => {
   if (!assertListingFiles(req, res)) return;
   const parsed = parseAllianceBody(req.body);
   if (parsed.error) {
@@ -1030,8 +1185,21 @@ app.post("/api/alliances", requirePoster, listingLimiter, listingUpload, (req, r
     res.status(400).json({ error: parsed.error });
     return;
   }
+  const { rosterIds, ...base } = parsed.fields;
+  const invited = await attachInvite(base);
+  if (invited.error) {
+    discardUploads(req);
+    res.status(400).json({ error: invited.error });
+    return;
+  }
 
   writeDb((db) => {
+    const taken = listingTaken(db, invited);
+    if (taken) {
+      discardUploads(req);
+      res.status(409).json({ error: taken });
+      return db;
+    }
     const wait = listingCreateWait(db, req.user.id);
     if (wait) {
       discardUploads(req);
@@ -1040,8 +1208,8 @@ app.post("/api/alliances", requirePoster, listingLimiter, listingUpload, (req, r
     }
     const now = new Date().toISOString();
     const alliance = {
-      id: slugify(parsed.fields.name),
-      ...parsed.fields,
+      id: slugify(invited.name),
+      ...invited,
       image: savedUpload(listingFile(req, "image")),
       video: savedUpload(listingFile(req, "video")),
       featured: false,
@@ -1050,17 +1218,25 @@ app.post("/api/alliances", requirePoster, listingLimiter, listingUpload, (req, r
       bumpedAt: now,
     };
     db.alliances.unshift(alliance);
-    res.status(201).json({ alliance: withBumpState(alliance) });
+    applyAllianceRoster(db, alliance.id, req.user.id, rosterIds);
+    res.status(201).json({ alliance: decorateAlliance(alliance, db) });
     return db;
   });
 });
 
-app.put("/api/alliances/:id", requirePoster, listingUpload, (req, res) => {
+app.put("/api/alliances/:id", requirePoster, listingUpload, async (req, res) => {
   if (!assertListingFiles(req, res)) return;
   const parsed = parseAllianceBody(req.body);
   if (parsed.error) {
     discardUploads(req);
     res.status(400).json({ error: parsed.error });
+    return;
+  }
+  const { rosterIds, ...base } = parsed.fields;
+  const invited = await attachInvite(base);
+  if (invited.error) {
+    discardUploads(req);
+    res.status(400).json({ error: invited.error });
     return;
   }
 
@@ -1076,16 +1252,61 @@ app.put("/api/alliances/:id", requirePoster, listingUpload, (req, res) => {
       res.status(403).json({ error: "You can only edit your own posts." });
       return db;
     }
-    Object.assign(alliance, parsed.fields, {
+    const taken = listingTaken(db, { ...invited, id: alliance.id });
+    if (taken) {
+      discardUploads(req);
+      res.status(409).json({ error: taken });
+      return db;
+    }
+    Object.assign(alliance, invited, {
       image: nextImage(alliance.image, listingFile(req, "image")),
       video: nextVideo(alliance.video, listingFile(req, "video"), req.body.removeVideo),
     });
-    res.json({ alliance: withBumpState(alliance) });
+    applyAllianceRoster(db, alliance.id, alliance.ownerId, rosterIds);
+    res.json({ alliance: decorateAlliance(alliance, db) });
     return db;
   });
 });
 
-app.post("/api/alliances/:id/bump", requirePoster, (req, res) => {
+app.post("/api/alliances/:id/bump", requirePoster, async (req, res) => {
+  const current = readDb().alliances.find((item) => item.id === req.params.id);
+  if (!current) {
+    res.status(404).json({ error: "Alliance not found." });
+    return;
+  }
+  if (!canRemove(req.user, current)) {
+    res.status(403).json({ error: "You can only bump your own posts." });
+    return;
+  }
+  const wait = bumpWaitMessage(current);
+  if (wait) {
+    res.status(429).json({ error: wait });
+    return;
+  }
+  const invite = await inspectDiscordInvite(current.discord, { required: false });
+  writeDb((db) => {
+    const alliance = db.alliances.find((item) => item.id === req.params.id);
+    if (!alliance) {
+      res.status(404).json({ error: "Alliance not found." });
+      return db;
+    }
+    if (!invite.ok) {
+      alliance.inviteOk = false;
+      res.status(400).json({ error: invite.error });
+      return db;
+    }
+    if (!invite.skipped) {
+      alliance.discord = invite.url;
+      alliance.inviteOk = true;
+      alliance.inviteCheckedAt = invite.checkedAt;
+    }
+    alliance.bumpedAt = new Date().toISOString();
+    res.json({ alliance: decorateAlliance(alliance, db) });
+    return db;
+  });
+});
+
+app.post("/api/alliances/:id/pause", requireUser, (req, res) => {
   writeDb((db) => {
     const alliance = db.alliances.find((item) => item.id === req.params.id);
     if (!alliance) {
@@ -1093,16 +1314,33 @@ app.post("/api/alliances/:id/bump", requirePoster, (req, res) => {
       return db;
     }
     if (!canRemove(req.user, alliance)) {
-      res.status(403).json({ error: "You can only bump your own posts." });
+      res.status(403).json({ error: "You can only pause your own posts." });
       return db;
     }
-    const wait = bumpWaitMessage(alliance);
-    if (wait) {
-      res.status(429).json({ error: wait });
+    alliance.paused = Boolean(req.body.paused);
+    res.json({ alliance: decorateAlliance(alliance, db) });
+    return db;
+  });
+});
+
+app.post("/api/alliances/:id/report", reportLimiter, (req, res) => writeReport(req, res, "alliance"));
+
+app.get("/api/reports", requireAdmin, (_req, res) => {
+  const db = readDb();
+  res.json({ reports: db.reports || [] });
+});
+
+app.post("/api/reports/:id/resolve", requireAdmin, (req, res) => {
+  const status = req.body.status === "dismissed" ? "dismissed" : "resolved";
+  writeDb((db) => {
+    const report = (db.reports || []).find((item) => item.id === req.params.id);
+    if (!report) {
+      res.status(404).json({ error: "Report not found." });
       return db;
     }
-    alliance.bumpedAt = new Date().toISOString();
-    res.json({ alliance: withBumpState(alliance) });
+    report.status = status;
+    report.resolvedAt = new Date().toISOString();
+    res.json({ report });
     return db;
   });
 });
@@ -1120,6 +1358,12 @@ app.delete("/api/alliances/:id", requireUser, (req, res) => {
     }
     removeStoredFile(alliance.image);
     removeStoredFile(alliance.video);
+    const now = new Date().toISOString();
+    db.reports = (db.reports || []).map((item) =>
+      item.listingId === alliance.id && item.status === "open"
+        ? { ...item, status: "resolved", resolvedAt: now }
+        : item
+    );
     db.clans = db.clans.map((clan) =>
       clan.allianceId === alliance.id ? { ...clan, allianceId: null } : clan
     );
@@ -1185,7 +1429,7 @@ async function start() {
     server.once("error", reject);
   });
   console.log(`WF Clan Recruit on http://localhost:${PORT}`);
-  console.log(`Storage: ${paths.dbPath}`);
+  console.log(`Storage: ${storageLabel()}`);
   console.log(`Frontend: ${frontend === "live" ? "live source (same app as production)" : "production dist build"}`);
   if (!discordConfigured()) {
     console.warn("DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET are unset. Discord sign-in is off.");
@@ -1218,7 +1462,9 @@ function shutdown(signal) {
     process.exit(0);
     return;
   }
-  server.close(() => process.exit(0));
+  server.close(() => {
+    closePg().finally(() => process.exit(0));
+  });
   setTimeout(() => process.exit(0), 4000).unref();
 }
 

@@ -29,11 +29,21 @@ export const api = {
   createClan: (formData) => request("/api/clans", { method: "POST", body: formData }),
   updateClan: (id, formData) => request(`/api/clans/${id}`, { method: "PUT", body: formData }),
   bumpClan: (id) => request(`/api/clans/${id}/bump`, { method: "POST", body: "{}" }),
+  pauseClan: (id, paused) =>
+    request(`/api/clans/${id}/pause`, { method: "POST", body: JSON.stringify({ paused }) }),
+  reportClan: (id, body) => request(`/api/clans/${id}/report`, { method: "POST", body: JSON.stringify(body) }),
   deleteClan: (id) => request(`/api/clans/${id}`, { method: "DELETE" }),
   alliances: () => request("/api/alliances"),
   alliance: (id) => request(`/api/alliances/${id}`),
   createAlliance: (formData) => request("/api/alliances", { method: "POST", body: formData }),
   updateAlliance: (id, formData) => request(`/api/alliances/${id}`, { method: "PUT", body: formData }),
   bumpAlliance: (id) => request(`/api/alliances/${id}/bump`, { method: "POST", body: "{}" }),
+  pauseAlliance: (id, paused) =>
+    request(`/api/alliances/${id}/pause`, { method: "POST", body: JSON.stringify({ paused }) }),
+  reportAlliance: (id, body) =>
+    request(`/api/alliances/${id}/report`, { method: "POST", body: JSON.stringify(body) }),
   deleteAlliance: (id) => request(`/api/alliances/${id}`, { method: "DELETE" }),
+  reports: () => request("/api/reports"),
+  resolveReport: (id, status) =>
+    request(`/api/reports/${id}/resolve`, { method: "POST", body: JSON.stringify({ status }) }),
 };

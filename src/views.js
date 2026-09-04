@@ -98,10 +98,68 @@ export function photo(item, size = 56) {
   return `<div class="photo fallback" style="--hue:${hueFrom(item.id || item.name)}">${escapeHtml(initials)}</div>`;
 }
 
+export const REPORT_REASON_LABELS = {
+  dead_invite: "Dead Discord invite",
+  inactive: "Looks inactive",
+  fake: "Fake or misleading",
+  stolen_name: "Stolen name or tag",
+  other: "Something else",
+};
+
+function listingBadges(item) {
+  const bits = [];
+  if (item.paused) bits.push(`<span class="pill is-paused">Paused</span>`);
+  if (item.stale) bits.push(`<span class="pill is-stale">Stale</span>`);
+  if (item.inviteOk === false) bits.push(`<span class="pill is-trial">Invite failed</span>`);
+  return bits.join("");
+}
+
+function recruitingNote(item) {
+  if (item.paused) return "Recruiting is paused. Discord is hidden until the leader turns it back on.";
+  if (item.inviteOk === false) return "The Discord invite failed a check. The leader needs a working invite.";
+  if (item.stale) return "This listing went 21 days without a bump, so Discord is hidden until the leader refreshes it.";
+  return "Not recruiting right now.";
+}
+
+function joinDiscord(item, label) {
+  if (item.recruiting === false) {
+    return `<p class="muted join-note">${escapeHtml(recruitingNote(item))}</p>`;
+  }
+  return `<a class="btn btn-discord" href="${escapeHtml(item.discord)}" target="_blank" rel="noopener noreferrer" data-stop>${escapeHtml(label)}</a>`;
+}
+
+function reportForm(kind, id) {
+  const options = Object.entries(REPORT_REASON_LABELS)
+    .map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`)
+    .join("");
+  return `
+    <details class="report-box">
+      <summary>Report this listing</summary>
+      <form class="stack report-form" data-report-kind="${escapeHtml(kind)}" data-report-id="${escapeHtml(id)}">
+        <label class="field"><span>Reason</span><select name="reason" required><option value="">Choose one</option>${options}</select></label>
+        <label class="field"><span>Details <small>optional</small></span><textarea name="details" maxlength="400" rows="3" placeholder="Dead invite, stolen tag, no activity…"></textarea></label>
+        <button class="btn btn-ghost" type="submit">Send report</button>
+        <p class="muted" data-report-note hidden></p>
+      </form>
+    </details>
+  `;
+}
+
+function clanRosterChecks(clans, selected = []) {
+  return clans
+    .map((clan) => {
+      const id = `roster-${clan.id}`;
+      return `<label class="check" for="${id}"><input id="${id}" type="checkbox" name="rosterIds" value="${escapeHtml(clan.id)}" ${
+        selected.includes(clan.id) ? "checked" : ""
+      } /><span>[${escapeHtml(clan.tag)}] ${escapeHtml(clan.name)}</span></label>`;
+    })
+    .join("");
+}
+
 export function clanCard(clan) {
   const fill = fillPercent(clan);
   return `
-    <article class="card" data-open-clan="${escapeHtml(clan.id)}" tabindex="0">
+    <article class="card${clan.recruiting === false ? " is-quiet" : ""}" data-href="/clans/${escapeHtml(clan.id)}" tabindex="0">
       <header class="card-head">
         ${photo(clan)}
         <div>
@@ -109,7 +167,10 @@ export function clanCard(clan) {
           <h3>${escapeHtml(clan.name)}</h3>
           <p class="muted">${escapeHtml(clan.platform)} · ${escapeHtml(clan.tier)} · ${escapeHtml(clan.region)}</p>
         </div>
-        <span class="pill ${statusClass(clan.status)}">${escapeHtml(clan.status)}</span>
+        <div class="card-pills">
+          <span class="pill ${statusClass(clan.status)}">${escapeHtml(clan.status)}</span>
+          ${listingBadges(clan)}
+        </div>
       </header>
       <p class="headline">${escapeHtml(clan.headline)}</p>
       <p class="muted">${escapeHtml(clan.summary)}</p>
@@ -130,8 +191,8 @@ export function clanCard(clan) {
         </div>
       </div>
       <footer class="card-foot">
-        <button class="btn btn-ghost" type="button">View post</button>
-        <a class="btn btn-discord" href="${escapeHtml(clan.discord)}" target="_blank" rel="noopener noreferrer" data-stop>Join Discord</a>
+        <a class="btn btn-ghost" href="/clans/${escapeHtml(clan.id)}" data-link>View post</a>
+        ${joinDiscord(clan, "Join Discord")}
       </footer>
     </article>
   `;
@@ -140,7 +201,7 @@ export function clanCard(clan) {
 export function allianceCard(alliance) {
   const clans = alliance.memberClans || [];
   return `
-    <article class="card" data-open-alliance="${escapeHtml(alliance.id)}" tabindex="0">
+    <article class="card${alliance.recruiting === false ? " is-quiet" : ""}" data-href="/alliances/${escapeHtml(alliance.id)}" tabindex="0">
       <header class="card-head">
         ${photo(alliance)}
         <div>
@@ -148,7 +209,10 @@ export function allianceCard(alliance) {
           <h3>${escapeHtml(alliance.name)}</h3>
           <p class="muted">${escapeHtml((alliance.platforms || []).join(" / "))} · ${escapeHtml(alliance.region)}</p>
         </div>
-        <span class="pill ${statusClass(alliance.status)}">${escapeHtml(alliance.status)}</span>
+        <div class="card-pills">
+          <span class="pill ${statusClass(alliance.status)}">${escapeHtml(alliance.status)}</span>
+          ${listingBadges(alliance)}
+        </div>
       </header>
       <p class="headline">${escapeHtml(alliance.headline)}</p>
       <p class="muted">${escapeHtml(alliance.summary)}</p>
@@ -166,8 +230,8 @@ export function allianceCard(alliance) {
           : ""
       }
       <footer class="card-foot">
-        <button class="btn btn-ghost" type="button">View alliance</button>
-        <a class="btn btn-discord" href="${escapeHtml(alliance.discord)}" target="_blank" rel="noopener noreferrer" data-stop>Join Discord</a>
+        <a class="btn btn-ghost" href="/alliances/${escapeHtml(alliance.id)}" data-link>View alliance</a>
+        ${joinDiscord(alliance, "Join Discord")}
       </footer>
     </article>
   `;
@@ -210,7 +274,7 @@ export function homeView({ clans, alliances, user, auth = {} }) {
           <p class="eyebrow">Featured clans</p>
           <h2>Worth opening first</h2>
         </div>
-        <a class="text-link" href="#/browse" data-link>Browse all clans</a>
+        <a class="text-link" href="/browse" data-link>Browse all clans</a>
       </div>
       <div class="grid">${featuredClans.map((clan) => clanCard(clan)).join("")}</div>
     </section>`
@@ -225,7 +289,7 @@ export function homeView({ clans, alliances, user, auth = {} }) {
           <p class="eyebrow">Alliances</p>
           <h2>If you want more than one clan</h2>
         </div>
-        <a class="text-link" href="#/alliances" data-link>Browse alliances</a>
+        <a class="text-link" href="/alliances" data-link>Browse alliances</a>
       </div>
       <div class="grid two">${homeAlliances.map((item) => allianceCard(item)).join("")}</div>
     </section>`
@@ -241,7 +305,7 @@ export function homeView({ clans, alliances, user, auth = {} }) {
           <li>Open the Discord from the post.</li>
           <li>Wait for the in-game invite.</li>
         </ol>
-        <a class="btn btn-primary" href="#/browse" data-link>Browse clans</a>
+        <a class="btn btn-primary" href="/browse" data-link>Browse clans</a>
       </div>
       <div class="panel">
         <p class="eyebrow">For leaders</p>
@@ -249,10 +313,10 @@ export function homeView({ clans, alliances, user, auth = {} }) {
         <p class="muted">Create an account with one Discord click. That is your sign-in — no second Discord login. Then verify your Warframe Forum profile and publish.</p>
         ${
           user
-            ? `<a class="btn btn-ghost" href="#/post" data-link>Post a listing</a>`
+            ? `<a class="btn btn-ghost" href="/post" data-link>Post a listing</a>`
             : auth.discord
               ? discordCreateButton("/account")
-              : `<a class="btn btn-ghost" href="#/register" data-link>Create an account</a>`
+              : `<a class="btn btn-ghost" href="/register" data-link>Create an account</a>`
         }
       </div>
     </section>
@@ -504,7 +568,7 @@ function authGate(nextHash, auth = {}) {
       <p class="lead">Anyone can browse. Click Create account with Discord — that creates the account and is your Discord sign-in. Then verify a Warframe Forum profile to post.</p>
       <div class="row">
         ${auth.discord ? discordCreateButton(nextHash) : ""}
-        <a class="btn ${auth.discord ? "btn-ghost" : "btn-primary"}" href="#/login?next=${encodeURIComponent(nextHash)}" data-link>Sign in</a>
+        <a class="btn ${auth.discord ? "btn-ghost" : "btn-primary"}" href="/login?next=${encodeURIComponent(nextHash)}" data-link>Sign in</a>
       </div>
       ${auth.discord ? `<p class="muted">That Discord click creates the account and signs you in. You will not need a second Discord login.</p>` : ""}
       ${demoLoginHint()}
@@ -521,7 +585,7 @@ export function publishGateView(user, nextHash = "/post", auth = {}) {
         <p class="eyebrow">Discord</p>
         <h1>Account is too new</h1>
         <p class="lead">Discord accounts must be at least ${user.minAgeDays || 7} days old before you can post. Yours is ${user.discordAgeDays ?? 0} days old.</p>
-        <a class="btn btn-ghost" href="#/browse" data-link>Browse clans</a>
+        <a class="btn btn-ghost" href="/browse" data-link>Browse clans</a>
       </section>
     `;
   }
@@ -552,8 +616,8 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
       <h1>${editing ? "Edit listing" : "Post a listing"}</h1>
       <p class="lead">${editing ? "Update this clan post. Bump it from your account page to send it to the top of the board." : "Upload an image, write the post once, and send recruits to Discord."}</p>
       <div class="tabs" role="tablist" aria-label="Listing type">
-        <a class="tab is-active" href="#/post${editing ? `?id=${encodeURIComponent(draft.id)}` : ""}" data-link>Clan</a>
-        <a class="tab" href="#/post-alliance" data-link>Alliance</a>
+        <a class="tab is-active" href="/post${editing ? `?id=${encodeURIComponent(draft.id)}` : ""}" data-link>Clan</a>
+        <a class="tab" href="/post-alliance" data-link>Alliance</a>
       </div>
     </section>
     <section class="composer">
@@ -566,6 +630,7 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
             <label class="field"><span>In-game leader</span><input name="leader" required maxlength="32" value="${escapeHtml(draft.leader || user.username)}" /></label>
             <label class="field"><span>Founded</span><input name="founded" maxlength="8" value="${escapeHtml(draft.founded || "")}" placeholder="2019" /></label>
           </div>
+          <p class="muted">Name and tag must be unique on the board. You can post more than one clan.</p>
           ${imagePicker("Clan image")}
         </div>
         <div class="form-block">
@@ -578,7 +643,7 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
             <label class="field"><span>Status</span><select name="status" required>${optionList(STATUSES, draft.status)}</select></label>
             <label class="field"><span>Members</span><input name="members" type="number" min="1" max="1000" required value="${escapeHtml(draft.members || "")}" /></label>
             <label class="field"><span>Minimum MR <em id="post-mr">${draft.mrRequired ?? 0}</em></span><input type="range" name="mrRequired" min="0" max="36" value="${escapeHtml(draft.mrRequired ?? 0)}" /></label>
-            <label class="field"><span>Discord invite</span><input name="discord" type="url" required placeholder="https://discord.gg/yourclan" value="${escapeHtml(draft.discord || "")}" /></label>
+            <label class="field"><span>Discord invite <small>permanent invite, we check it</small></span><input name="discord" type="url" required placeholder="https://discord.gg/yourclan" value="${escapeHtml(draft.discord || "")}" /></label>
             <label class="field">
               <span>Alliance</span>
               <select name="allianceId">
@@ -612,19 +677,23 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
   `;
 }
 
-export function alliancePostView({ user, draft = {}, auth = {} }) {
+export function alliancePostView({ user, draft = {}, auth = {}, clans = [] }) {
   const next = draft.id ? `/post-alliance?id=${draft.id}` : "/post-alliance";
   if (!user) return authGate(next, auth);
   if (!user.canPublish) return publishGateView(user, next, auth);
   const editing = Boolean(draft.id);
+  const ownerId = draft.ownerId || user.id;
+  const mine = clans.filter((clan) => clan.ownerId === ownerId);
+  const selected = (draft.memberClans || []).map((clan) => clan.id);
+  const rosterSelected = selected.length ? selected : mine.filter((clan) => clan.allianceId === draft.id).map((clan) => clan.id);
   return `
     <section class="page-hero">
       <p class="eyebrow">Leaders</p>
       <h1>${editing ? "Edit listing" : "Post a listing"}</h1>
       <p class="lead">${editing ? "Update this alliance post. Bump it from your account page to send it to the top of the board." : "For groups of clans that share a Discord and want one public listing."}</p>
       <div class="tabs" role="tablist" aria-label="Listing type">
-        <a class="tab" href="#/post" data-link>Clan</a>
-        <a class="tab is-active" href="#/post-alliance${editing ? `?id=${encodeURIComponent(draft.id)}` : ""}" data-link>Alliance</a>
+        <a class="tab" href="/post" data-link>Clan</a>
+        <a class="tab is-active" href="/post-alliance${editing ? `?id=${encodeURIComponent(draft.id)}` : ""}" data-link>Alliance</a>
       </div>
     </section>
     <section class="composer">
@@ -637,6 +706,7 @@ export function alliancePostView({ user, draft = {}, auth = {} }) {
             <label class="field"><span>Clans in alliance</span><input name="clanCount" type="number" min="1" required value="${escapeHtml(draft.clanCount || "")}" /></label>
             <label class="field"><span>Approx. players</span><input name="members" type="number" min="1" required value="${escapeHtml(draft.members || "")}" /></label>
           </div>
+          <p class="muted">Name and tag must be unique on the board.</p>
           ${imagePicker("Alliance image")}
         </div>
         <div class="form-block">
@@ -645,9 +715,18 @@ export function alliancePostView({ user, draft = {}, auth = {} }) {
             <label class="field"><span>Region</span><select name="region" required>${optionList(REGIONS, draft.region || "Global")}</select></label>
             <label class="field"><span>Language</span><select name="language" required>${optionList(LANGUAGES, draft.language)}</select></label>
             <label class="field"><span>Status</span><select name="status" required>${optionList(STATUSES, draft.status)}</select></label>
-            <label class="field"><span>Discord invite</span><input name="discord" type="url" required placeholder="https://discord.gg/youralliance" value="${escapeHtml(draft.discord || "")}" /></label>
+            <label class="field"><span>Discord invite <small>permanent invite, we check it</small></span><input name="discord" type="url" required placeholder="https://discord.gg/youralliance" value="${escapeHtml(draft.discord || "")}" /></label>
           </div>
           <fieldset class="fieldset"><legend>Platforms</legend><div class="checks">${checks("platforms", PLATFORMS, draft.platforms || [])}</div></fieldset>
+          <fieldset class="fieldset">
+            <legend>Clan roster</legend>
+            <p class="muted">Tick your clan listings to show them on this alliance page. You can post more than one clan.</p>
+            <div class="checks">${
+              mine.length
+                ? clanRosterChecks(mine, rosterSelected)
+                : `<p class="muted">Post clan listings first, then attach them here.</p>`
+            }</div>
+          </fieldset>
         </div>
         <div class="form-block">
           <h2>The post</h2>
@@ -704,8 +783,8 @@ export function authView(mode, next = "/", { error = "", discord = true, passwor
       }
       ${
         isLogin
-          ? `<p class="muted">New here? <a href="#/register?${nextQuery}" data-link>Create an account with Discord</a></p>`
-          : `<p class="muted">Already have an account? <a href="#/login?${nextQuery}" data-link>Sign in with Discord</a>.</p>`
+          ? `<p class="muted">New here? <a href="/register?${nextQuery}" data-link>Create an account with Discord</a></p>`
+          : `<p class="muted">Already have an account? <a href="/login?${nextQuery}" data-link>Sign in with Discord</a>.</p>`
       }
       ${
         isLogin || passwordRegister
@@ -725,7 +804,7 @@ export function authView(mode, next = "/", { error = "", discord = true, passwor
   `;
 }
 
-export function accountView({ user, clans, alliances }) {
+export function accountView({ user, clans, alliances, reports = [] }) {
   const admin = Boolean(user.admin);
   return `
     <section class="page-hero">
@@ -733,8 +812,8 @@ export function accountView({ user, clans, alliances }) {
       <h1>${escapeHtml(user.username)}</h1>
       <p class="lead">${
         admin
-          ? "Edit, bump, or remove any listing. Bumps move a post to the top of the board."
-          : "Edit your listing, bump it to the top of the board, or remove it."
+          ? "Edit, bump, pause, or remove any listing. Open reports are at the bottom."
+          : "Edit your listing, bump it, pause recruiting, or remove it."
       }</p>
     </section>
     <section class="section">
@@ -757,18 +836,19 @@ export function accountView({ user, clans, alliances }) {
       </div>
     </section>
     <section class="section">
-      <div class="section-head"><h2>${admin ? "Clan posts" : "Your clans"}</h2><a class="text-link" href="#/post" data-link>New clan</a></div>
+      <div class="section-head"><h2>${admin ? "Clan posts" : "Your clans"}</h2><a class="text-link" href="/post" data-link>New clan</a></div>
       ${listingList(clans, "clan", "You have not posted a clan yet.")}
     </section>
     <section class="section">
-      <div class="section-head"><h2>${admin ? "Alliance posts" : "Your alliances"}</h2><a class="text-link" href="#/post-alliance" data-link>New alliance</a></div>
+      <div class="section-head"><h2>${admin ? "Alliance posts" : "Your alliances"}</h2><a class="text-link" href="/post-alliance" data-link>New alliance</a></div>
       ${listingList(alliances, "alliance", "You have not posted an alliance yet.")}
     </section>
+    ${admin ? reportsPanel(reports) : ""}
     <section class="section">
       <div class="panel">
         <p class="kicker">Privacy</p>
         <h2>Your data on this site</h2>
-        <p class="muted">Listings you publish are public. Discord email and session tokens are not shown on the board. Read the <a href="#/privacy" data-link>privacy policy</a> for the full list, including cookies, the forum reader, and third parties.</p>
+        <p class="muted">Listings you publish are public. Discord email and session tokens are not shown on the board. Read the <a href="/privacy" data-link>privacy policy</a> for the full list, including cookies, the forum reader, and third parties.</p>
         <div class="row">
           <button class="btn btn-ghost" type="button" data-export-account>Download my data</button>
           ${admin ? "" : `<button class="btn btn-ghost btn-danger" type="button" data-delete-account>Delete my account</button>`}
@@ -781,23 +861,66 @@ export function accountView({ user, clans, alliances }) {
 
 function listingList(items, kind, emptyText) {
   if (!items.length) return `<p class="muted">${emptyText}</p>`;
-  const editHash = kind === "clan" ? "#/post" : "#/post-alliance";
+  const editPath = kind === "clan" ? "/post" : "/post-alliance";
+  const openPath = kind === "clan" ? "/clans" : "/alliances";
   const bumpAttr = kind === "clan" ? "data-bump-clan" : "data-bump-alliance";
   const deleteAttr = kind === "clan" ? "data-delete-clan" : "data-delete-alliance";
+  const pauseAttr = kind === "clan" ? "data-pause-clan" : "data-pause-alliance";
   return `<div class="list">${items
-    .map(
-      (item) => `
-            <div class="list-row">
+    .map((item) => {
+      const badges = listingBadges(item);
+      return `
+            <div class="list-row${item.recruiting === false ? " is-quiet" : ""}">
               ${photo(item, 44)}
-              <div><strong>${escapeHtml(item.name)}</strong><p class="muted">[${escapeHtml(item.tag)}] · ${escapeHtml(item.status)}</p></div>
+              <div>
+                <strong>${escapeHtml(item.name)}</strong>
+                <p class="muted">[${escapeHtml(item.tag)}] · ${escapeHtml(item.status)}${badges ? ` ${badges}` : ""}</p>
+              </div>
               <div class="list-actions">
-                <a class="btn btn-ghost" href="${editHash}?id=${encodeURIComponent(item.id)}" data-link>Edit</a>
+                <a class="btn btn-ghost" href="${openPath}/${encodeURIComponent(item.id)}" data-link>Open</a>
+                <a class="btn btn-ghost" href="${editPath}?id=${encodeURIComponent(item.id)}" data-link>Edit</a>
+                <button class="btn btn-ghost" type="button" ${pauseAttr}="${escapeHtml(item.id)}" data-paused="${item.paused ? "0" : "1"}">${
+                  item.paused ? "Resume" : "Pause"
+                }</button>
                 <button class="btn btn-ghost" type="button" ${bumpAttr}="${escapeHtml(item.id)}" ${item.canBump ? "" : "disabled"} title="${item.canBump ? "Send this post to the top of the board" : "You can bump once every 12 hours"}">Bump</button>
                 <button class="btn btn-ghost" type="button" ${deleteAttr}="${escapeHtml(item.id)}">Remove</button>
               </div>
-            </div>`
-    )
+            </div>`;
+    })
     .join("")}</div>`;
+}
+
+function reportsPanel(reports) {
+  const open = reports.filter((item) => item.status === "open");
+  const rest = reports.filter((item) => item.status !== "open");
+  const rows = [...open, ...rest];
+  if (!rows.length) {
+    return `<section class="section"><div class="panel"><p class="kicker">Reports</p><h2>No listing reports</h2><p class="muted">Players can report dead invites, inactivity, fake posts, or stolen names.</p></div></section>`;
+  }
+  return `<section class="section">
+      <div class="section-head"><h2>Reports</h2><p class="muted">${open.length} open</p></div>
+      <div class="list">${rows
+        .map(
+          (item) => `
+        <div class="list-row">
+          <div>
+            <strong>${escapeHtml(REPORT_REASON_LABELS[item.reason] || item.reason)}</strong>
+            <p class="muted">${escapeHtml(item.kind)} · ${escapeHtml(item.listingName || item.listingId)} · ${escapeHtml(item.status)} · ${timeAgo(item.createdAt)}</p>
+            ${item.details ? `<p class="muted">${escapeHtml(item.details)}</p>` : ""}
+          </div>
+          <div class="list-actions">
+            <a class="btn btn-ghost" href="/${item.kind === "clan" ? "clans" : "alliances"}/${encodeURIComponent(item.listingId)}" data-link>Open</a>
+            ${
+              item.status === "open"
+                ? `<button class="btn btn-ghost" type="button" data-resolve-report="${escapeHtml(item.id)}" data-status="resolved">Resolve</button>
+                   <button class="btn btn-ghost" type="button" data-resolve-report="${escapeHtml(item.id)}" data-status="dismissed">Dismiss</button>`
+                : ""
+            }
+          </div>
+        </div>`
+        )
+        .join("")}</div>
+    </section>`;
 }
 
 export function guideView() {
@@ -831,115 +954,118 @@ export function guideView() {
         <ul class="guide-rules">
           <li>Create an account with the Discord button. That click is your Discord auth.</li>
           <li>Verify a Warframe Forum profile with a one-time code, like Warframe Market.</li>
-          <li>Use a real Discord invite. People will click it.</li>
+          <li>Use a real, non-expiring Discord invite. We check it with Discord before it goes live.</li>
+          <li>Clan names and tags are unique. Do not post someone else’s name.</li>
           <li>Be exact about MR, trials, and behavior rules.</li>
-          <li>You can remove your own posts from the account page.</li>
-          <li>The <a href="#/privacy" data-link>privacy policy</a> lists what we store and how to download or delete it.</li>
+          <li>Bump at least every 21 days or the listing goes stale and Discord is hidden.</li>
+          <li>You can pause recruiting or remove your own posts from the account page.</li>
+          <li>The <a href="/privacy" data-link>privacy policy</a> lists what we store and how to download or delete it.</li>
         </ul>
       </article>
       <div class="row guide-actions">
-        <a class="btn btn-primary" href="#/browse" data-link>Browse clans</a>
-        <a class="btn btn-ghost" href="#/post" data-link>Post a listing</a>
+        <a class="btn btn-primary" href="/browse" data-link>Browse clans</a>
+        <a class="btn btn-ghost" href="/post" data-link>Post a listing</a>
       </div>
     </section>
   `;
 }
 
-export function clanModal(clan, { admin = false } = {}) {
+export function clanPage(clan, { admin = false } = {}) {
   return `
-    <div class="backdrop">
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="clan-title">
-        <button class="icon-close" type="button" data-close-modal aria-label="Close">×</button>
-        <div class="modal-hero">
-          ${photo(clan, 72)}
-          <div>
-            <div class="modal-kicker">
-              <p class="kicker">[${escapeHtml(clan.tag)}] · Est. ${escapeHtml(clan.founded || "—")}${clan.allianceName ? ` · ${escapeHtml(clan.allianceName)}` : ""}</p>
-              <span class="pill ${statusClass(clan.status)}">${escapeHtml(clan.status)}</span>
-            </div>
-            <h2 id="clan-title">${escapeHtml(clan.name)}</h2>
-            <p class="headline">${escapeHtml(clan.headline)}</p>
-            <div class="chips">${chipList(clan.playstyles)}</div>
+    <article class="listing-page panel">
+      <p class="eyebrow"><a href="/browse" data-link>Clans</a></p>
+      <div class="modal-hero">
+        ${photo(clan, 72)}
+        <div>
+          <div class="modal-kicker">
+            <p class="kicker">[${escapeHtml(clan.tag)}] · Est. ${escapeHtml(clan.founded || "—")}${
+              clan.allianceName
+                ? ` · <a href="/alliances/${escapeHtml(clan.allianceId)}" data-link>${escapeHtml(clan.allianceName)}</a>`
+                : ""
+            }</p>
+            <span class="pill ${statusClass(clan.status)}">${escapeHtml(clan.status)}</span>
+            ${listingBadges(clan)}
           </div>
-        </div>
-        <dl class="detail-stats">
-          <div><dt>Platform</dt><dd>${escapeHtml(clan.platform)}</dd></div>
-          <div><dt>Tier</dt><dd>${escapeHtml(clan.tier)}</dd></div>
-          <div><dt>Roster</dt><dd>${clan.members} / ${capacity(clan)}</dd></div>
-          <div><dt>MR</dt><dd>${clan.mrRequired === 0 ? "Any" : `${clan.mrRequired}+`}</dd></div>
-          <div><dt>Region</dt><dd>${escapeHtml(clan.region)}</dd></div>
-          <div><dt>Language</dt><dd>${escapeHtml(clan.language)}</dd></div>
-          <div><dt>Leader</dt><dd>${escapeHtml(clan.leader)}</dd></div>
-          <div><dt>Posted</dt><dd>${timeAgo(postedStat(clan).at)}</dd></div>
-        </dl>
-        <div class="meter tall"><i style="width:${fillPercent(clan)}%"></i></div>
-        <h3>About</h3>
-        ${postBodyHtml(clan.about, clan.video)}
-        <div class="two-col">
-          <div><h3>They offer</h3><ul>${clan.offering.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
-          <div><h3>Requirements</h3><ul>${clan.requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
-        </div>
-        <div class="row">
-          <a class="btn btn-discord" href="${escapeHtml(clan.discord)}" target="_blank" rel="noopener noreferrer">Join ${escapeHtml(clan.name)} on Discord</a>
-          ${
-            admin
-              ? `<button class="btn btn-ghost" type="button" data-delete-clan="${escapeHtml(clan.id)}">Remove listing</button>`
-              : ""
-          }
+          <h1 id="clan-title">${escapeHtml(clan.name)}</h1>
+          <p class="headline">${escapeHtml(clan.headline)}</p>
+          <div class="chips">${chipList(clan.playstyles)}</div>
         </div>
       </div>
-    </div>
+      <dl class="detail-stats">
+        <div><dt>Platform</dt><dd>${escapeHtml(clan.platform)}</dd></div>
+        <div><dt>Tier</dt><dd>${escapeHtml(clan.tier)}</dd></div>
+        <div><dt>Roster</dt><dd>${clan.members} / ${capacity(clan)}</dd></div>
+        <div><dt>MR</dt><dd>${clan.mrRequired === 0 ? "Any" : `${clan.mrRequired}+`}</dd></div>
+        <div><dt>Region</dt><dd>${escapeHtml(clan.region)}</dd></div>
+        <div><dt>Language</dt><dd>${escapeHtml(clan.language)}</dd></div>
+        <div><dt>Leader</dt><dd>${escapeHtml(clan.leader)}</dd></div>
+        <div><dt>${postedStat(clan).label}</dt><dd>${timeAgo(postedStat(clan).at)}</dd></div>
+      </dl>
+      <div class="meter tall"><i style="width:${fillPercent(clan)}%"></i></div>
+      <h2>About</h2>
+      ${postBodyHtml(clan.about, clan.video)}
+      <div class="two-col">
+        <div><h2>They offer</h2><ul>${clan.offering.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
+        <div><h2>Requirements</h2><ul>${clan.requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
+      </div>
+      <div class="row listing-actions">
+        ${joinDiscord(clan, `Join ${clan.name} on Discord`)}
+        <button class="btn btn-ghost" type="button" data-copy-url>Copy link</button>
+        ${admin ? `<button class="btn btn-ghost" type="button" data-delete-clan="${escapeHtml(clan.id)}">Remove listing</button>` : ""}
+      </div>
+      ${reportForm("clan", clan.id)}
+    </article>
   `;
 }
 
-export function allianceModal(alliance, { admin = false } = {}) {
+export function alliancePage(alliance, { admin = false } = {}) {
   const clans = alliance.memberClans || [];
   return `
-    <div class="backdrop">
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="alliance-title">
-        <button class="icon-close" type="button" data-close-modal aria-label="Close">×</button>
-        <div class="modal-hero">
-          ${photo(alliance, 72)}
-          <div>
-            <div class="modal-kicker">
-              <p class="kicker">[${escapeHtml(alliance.tag)}] · Alliance</p>
-              <span class="pill ${statusClass(alliance.status)}">${escapeHtml(alliance.status)}</span>
-            </div>
-            <h2 id="alliance-title">${escapeHtml(alliance.name)}</h2>
-            <p class="headline">${escapeHtml(alliance.headline)}</p>
+    <article class="listing-page panel">
+      <p class="eyebrow"><a href="/alliances" data-link>Alliances</a></p>
+      <div class="modal-hero">
+        ${photo(alliance, 72)}
+        <div>
+          <div class="modal-kicker">
+            <p class="kicker">[${escapeHtml(alliance.tag)}] · Alliance</p>
+            <span class="pill ${statusClass(alliance.status)}">${escapeHtml(alliance.status)}</span>
+            ${listingBadges(alliance)}
           </div>
-        </div>
-        <dl class="detail-stats">
-          <div><dt>Platforms</dt><dd>${escapeHtml((alliance.platforms || []).join(", "))}</dd></div>
-          <div><dt>Clans</dt><dd>${alliance.clanCount}</dd></div>
-          <div><dt>Players</dt><dd>${alliance.members}</dd></div>
-          <div><dt>Region</dt><dd>${escapeHtml(alliance.region)}</dd></div>
-          <div><dt>Language</dt><dd>${escapeHtml(alliance.language)}</dd></div>
-          <div><dt>Posted</dt><dd>${timeAgo(postedStat(alliance).at)}</dd></div>
-        </dl>
-        <h3>About</h3>
-        ${postBodyHtml(alliance.about, alliance.video)}
-        <div class="two-col">
-          <div><h3>They offer</h3><ul>${alliance.offering.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
-          <div><h3>Requirements</h3><ul>${alliance.requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
-        </div>
-        ${
-          clans.length
-            ? `<h3>Clans on this board</h3><div class="mini-clans">${clans
-                .map((clan) => `<button class="mini-clan btn-plain" type="button" data-open-clan="${escapeHtml(clan.id)}">${photo(clan, 28)} ${escapeHtml(clan.name)}</button>`)
-                .join("")}</div>`
-            : ""
-        }
-        <div class="row">
-          <a class="btn btn-discord" href="${escapeHtml(alliance.discord)}" target="_blank" rel="noopener noreferrer">Join ${escapeHtml(alliance.name)} on Discord</a>
-          ${
-            admin
-              ? `<button class="btn btn-ghost" type="button" data-delete-alliance="${escapeHtml(alliance.id)}">Remove listing</button>`
-              : ""
-          }
+          <h1 id="alliance-title">${escapeHtml(alliance.name)}</h1>
+          <p class="headline">${escapeHtml(alliance.headline)}</p>
         </div>
       </div>
-    </div>
+      <dl class="detail-stats">
+        <div><dt>Platforms</dt><dd>${escapeHtml((alliance.platforms || []).join(", "))}</dd></div>
+        <div><dt>Clans</dt><dd>${alliance.clanCount}</dd></div>
+        <div><dt>Players</dt><dd>${alliance.members}</dd></div>
+        <div><dt>Region</dt><dd>${escapeHtml(alliance.region)}</dd></div>
+        <div><dt>Language</dt><dd>${escapeHtml(alliance.language)}</dd></div>
+        <div><dt>${postedStat(alliance).label}</dt><dd>${timeAgo(postedStat(alliance).at)}</dd></div>
+      </dl>
+      <h2>About</h2>
+      ${postBodyHtml(alliance.about, alliance.video)}
+      <div class="two-col">
+        <div><h2>They offer</h2><ul>${alliance.offering.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
+        <div><h2>Requirements</h2><ul>${alliance.requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
+      </div>
+      ${
+        clans.length
+          ? `<h2>Clans on this board</h2><div class="mini-clans">${clans
+              .map(
+                (clan) =>
+                  `<a class="mini-clan" href="/clans/${escapeHtml(clan.id)}" data-link>${photo(clan, 28)} ${escapeHtml(clan.name)}</a>`
+              )
+              .join("")}</div>`
+          : ""
+      }
+      <div class="row listing-actions">
+        ${joinDiscord(alliance, `Join ${alliance.name} on Discord`)}
+        <button class="btn btn-ghost" type="button" data-copy-url>Copy link</button>
+        ${admin ? `<button class="btn btn-ghost" type="button" data-delete-alliance="${escapeHtml(alliance.id)}">Remove listing</button>` : ""}
+      </div>
+      ${reportForm("alliance", alliance.id)}
+    </article>
   `;
 }
 
@@ -1000,12 +1126,12 @@ export function previewAlliance(form, imageUrl = null, videoUrl = null) {
 export function navAccount(user, { discord = false } = {}) {
   if (user) {
     return `
-      <a class="btn btn-ghost" href="#/account" data-link>${escapeHtml(user.username)}</a>
+      <a class="btn btn-ghost" href="/account" data-link>${escapeHtml(user.username)}</a>
       <button class="btn btn-ghost" type="button" data-logout>Sign out</button>
     `;
   }
   return `
-    <a class="btn btn-ghost" href="#/login" data-link>Sign in</a>
-    ${discord ? discordCreateButton("/account") : `<a class="btn btn-primary" href="#/register" data-link>Create account</a>`}
+    <a class="btn btn-ghost" href="/login" data-link>Sign in</a>
+    ${discord ? discordCreateButton("/account") : `<a class="btn btn-primary" href="/register" data-link>Create account</a>`}
   `;
 }
