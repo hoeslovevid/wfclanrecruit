@@ -33,7 +33,8 @@ function escapeHtml(value) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 export function isSafeHref(value) {
@@ -178,6 +179,7 @@ export function plainTextFromHtml(html) {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }

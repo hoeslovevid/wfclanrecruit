@@ -261,7 +261,7 @@ export function privacyView() {
         <ul class="policy-bullets">
           <li><strong>Public listings</strong> until you or a moderator remove them, or you delete your account (which also removes your listings and uploads).</li>
           <li><strong>Account records</strong> until you delete the account, or the operator deletes it for abuse or shutdown.</li>
-          <li><strong>Sessions</strong> 30 days from issue, or until you sign out. Signing out removes that session token. Other devices stay signed in until those sessions expire or you delete the account.</li>
+          <li><strong>Sessions</strong> 30 days from issue, or until you sign out. Signing out removes that session token, and expired session records are deleted automatically. Other devices stay signed in until those sessions expire or you delete the account.</li>
           <li><strong>OAuth cookie</strong> 10 minutes.</li>
           <li><strong>Forum verification code</strong> on our side until you verify. The copy on Warframe Forums stays until you edit About Me.</li>
           <li><strong>Theme</strong> in your browser until you clear it.</li>
@@ -278,7 +278,9 @@ export function privacyView() {
           <li>Passwords stored as hashes, not plain text</li>
           <li>Discord tokens not saved after login</li>
           <li>Production posting requires Discord (minimum account age, default 7 days) and a verified forum profile</li>
-          <li>Upload type and size limits</li>
+          <li>Upload type and size limits, checked against the file type rather than its name</li>
+          <li>Uploads are served as inert downloads, so a file cannot run code on this site</li>
+          <li>Rate limits on sign-in, sign-up, and verification checks</li>
           <li>Post HTML is sanitized before display</li>
         </ul>
         <p>Do not reuse a unique password you care about on a local demo login. Production sign-in is Discord, not a password you invent for this site.</p>

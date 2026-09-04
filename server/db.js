@@ -24,25 +24,16 @@ const dataDir = volume || path.join(projectRoot, "data");
 const uploadDir = volume ? path.join(volume, "uploads") : path.join(projectRoot, "uploads");
 const dbPath = path.join(dataDir, "db.json");
 
+let storageReady = false;
+
 export const paths = { dataDir, uploadDir, dbPath };
 
 const isProd = process.env.NODE_ENV === "production";
 const DEMO_USER_ID = "user-leader";
 
 function emptyDb() {
-  const now = new Date().toISOString();
   return {
-    users: isProd
-      ? []
-      : [
-          {
-            id: DEMO_USER_ID,
-            username: "leader",
-            password: hashPassword("recruit1"),
-            admin: false,
-            createdAt: now,
-          },
-        ],
+    users: [],
     sessions: [],
     clans: [],
     alliances: [],
@@ -78,7 +69,7 @@ function adminCredentials() {
   return { username, password };
 }
 
-function bootstrapAdmin(db) {
+async function bootstrapAdmin(db) {
   const { username, password } = adminCredentials();
   if (!username && !password) return { db, changed: false };
   if (!username || !password) {
@@ -103,7 +94,7 @@ function bootstrapAdmin(db) {
     admin = {
       id: takenId ? `user-admin-${Date.now().toString(36)}` : "user-admin",
       username,
-      password: hashPassword(password),
+      password: await hashPassword(password),
       admin: true,
       createdAt: new Date().toISOString(),
     };
@@ -119,8 +110,8 @@ function bootstrapAdmin(db) {
       admin.username = username;
       changed = true;
     }
-    if (!verifyPassword(password, admin.password)) {
-      admin.password = hashPassword(password);
+    if (!(await verifyPassword(password, admin.password))) {
+      admin.password = await hashPassword(password);
       changed = true;
       console.log(`Admin password updated for ${username}`);
     }
@@ -137,20 +128,48 @@ function bootstrapAdmin(db) {
   return { db, changed };
 }
 
+// #4: a torn write on restart used to leave db.json unparseable and lose
+// everything. Write to a temp file and rename, which is atomic on POSIX.
+function writeDbFile(db) {
+  const tmp = `${dbPath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
+  fs.renameSync(tmp, dbPath);
+}
+
+// #8/#12: expired sessions used to accumulate forever, contradicting the
+// 30-day retention the privacy policy states.
+function pruneSessions(db) {
+  const now = Date.now();
+  const sessions = (db.sessions || []).filter((session) => session.expires > now);
+  if (sessions.length === (db.sessions || []).length) return db;
+  return { ...db, sessions };
+}
+
 export function ensureStorage() {
+  if (storageReady) return;
   fs.mkdirSync(dataDir, { recursive: true });
   fs.mkdirSync(uploadDir, { recursive: true });
-  if (!fs.existsSync(dbPath)) {
-    const { db } = bootstrapAdmin(emptyDb());
-    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
-    return;
-  }
+  if (!fs.existsSync(dbPath)) writeDbFile(emptyDb());
+  storageReady = true;
+}
+
+// #3: this used to run inside readDb(), so every request paid a synchronous
+// scrypt in bootstrapAdmin (~21ms of blocked event loop). It is boot-only now.
+export async function initStorage() {
+  ensureStorage();
   const current = JSON.parse(fs.readFileSync(dbPath, "utf8"));
-  const sanitized = sanitizeDb(current);
-  const { db: next, changed } = bootstrapAdmin(sanitized);
-  if (next !== current || changed) {
-    fs.writeFileSync(dbPath, JSON.stringify(next, null, 2));
+  const sanitized = pruneSessions(sanitizeDb(current));
+  if (!isProd && !sanitized.users.some((user) => user.id === DEMO_USER_ID)) {
+    sanitized.users.push({
+      id: DEMO_USER_ID,
+      username: "leader",
+      password: await hashPassword("recruit1"),
+      admin: false,
+      createdAt: new Date().toISOString(),
+    });
   }
+  const { db: next } = await bootstrapAdmin(sanitized);
+  writeDbFile(next);
 }
 
 export function readDb() {
@@ -161,11 +180,15 @@ export function readDb() {
 let queue = Promise.resolve();
 
 export function writeDb(mutator) {
-  queue = queue.then(() => {
+  const run = () => {
     const db = readDb();
     const next = mutator(db) ?? db;
-    fs.writeFileSync(dbPath, JSON.stringify(next, null, 2));
+    writeDbFile(next);
     return next;
-  });
-  return queue;
+  };
+  // #6: the chain used to be `queue.then(run)`, so a single rejection made
+  // every later write reject forever. Swallow the prior result either way.
+  const result = queue.then(run, run);
+  queue = result.catch(() => {});
+  return result;
 }
