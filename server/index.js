@@ -618,7 +618,8 @@ app.post("/api/auth/forum/check", requireUser, async (req, res) => {
     const profile = await readForumProfile(profileUrl);
     if (!profileHasToken(profile.html, token)) {
       res.status(400).json({
-        error: "That profile does not contain your verification code yet. Add it to About Me, save, then check again.",
+        error:
+          "We loaded that profile, but your code is not in About Me yet. Open the About Me tab, paste the code, click Save, then check again.",
       });
       return;
     }
@@ -636,7 +637,9 @@ app.post("/api/auth/forum/check", requireUser, async (req, res) => {
       return db;
     });
   } catch (error) {
-    res.status(400).json({ error: error.message || "Forum check failed." });
+    res.status(400).json({
+      error: error.message || "Could not read that Warframe Forum profile. Try again in a few seconds.",
+    });
   }
 });
 

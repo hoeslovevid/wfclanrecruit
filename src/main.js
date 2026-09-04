@@ -209,7 +209,10 @@ function bindForumForm() {
       showNote(note, error.message);
     }
   });
-  app.querySelector("[data-forum='check']")?.addEventListener("click", async () => {
+  app.querySelector("[data-forum='check']")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    showNote(note, "Reading your About Me tab…", "muted");
     try {
       const result = await api.forumCheck(form.profileUrl.value.trim());
       state.user = result.user;
@@ -217,14 +220,17 @@ function bindForumForm() {
       await render();
     } catch (error) {
       showNote(note, error.message);
+      button.disabled = false;
     }
   });
 }
 
-function showNote(el, message) {
+function showNote(el, message, kind = "error") {
   if (!el) return;
   el.hidden = !message;
   el.textContent = message || "";
+  el.classList.toggle("error", Boolean(message) && kind !== "muted");
+  el.classList.toggle("muted", kind === "muted");
 }
 
 const IMAGE_MAX = 2 * 1024 * 1024;

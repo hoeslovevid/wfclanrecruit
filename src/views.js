@@ -455,6 +455,11 @@ function discordButton(nextHash) {
 
 function forumVerifyPanel(user) {
   const token = user.forumToken || "";
+  const aboutMeUrl =
+    user.forumAboutMeUrl ||
+    (user.forumProfileUrl
+      ? `${String(user.forumProfileUrl).replace(/\/?$/, "/")}?tab=field_core_pfield_1`
+      : "https://forums.warframe.com/");
   return `
     <form id="forum-form" class="stack">
       <label class="field">
@@ -464,7 +469,7 @@ function forumVerifyPanel(user) {
       ${
         token
           ? `<div class="verify-code">
-              <span>Put this exact code in your Forum About Me, then save the profile.</span>
+              <span>Put this exact code in <a href="${escapeHtml(aboutMeUrl)}" target="_blank" rel="noopener noreferrer">About Me</a>, then click Save on the forum.</span>
               <code>${escapeHtml(token)}</code>
             </div>`
           : `<p class="muted">Paste your profile URL and we will give you a one-time code.</p>`
@@ -472,7 +477,7 @@ function forumVerifyPanel(user) {
       <p class="error" id="forum-note" hidden></p>
       <div class="row">
         <button class="btn btn-ghost" type="submit" data-forum="start">${token ? "Update URL" : "Get code"}</button>
-        ${token ? `<button class="btn btn-primary" type="button" data-forum="check">I added the code</button>` : ""}
+        ${token ? `<button class="btn btn-primary" type="button" data-forum="check">I saved the code</button>` : ""}
       </div>
     </form>
   `;
@@ -510,11 +515,12 @@ export function publishGateView(user, nextHash = "/post") {
     <section class="auth-card">
       <p class="eyebrow">Warframe Forum</p>
       <h1>Verify your in-game name</h1>
-      <p class="lead">Same idea as Warframe Market: prove you own a forum.warframe.com profile. Recruits and leaders can both do this. Browsing stays public.</p>
+      <p class="lead">Prove you own a forums.warframe.com profile. Recruits and leaders can both do this. Browsing stays public.</p>
       <ol class="verify-steps">
-        <li>Open <a href="https://forums.warframe.com/" target="_blank" rel="noopener noreferrer">your Warframe Forum profile</a> and copy the URL.</li>
+        <li>Open <a href="https://forums.warframe.com/" target="_blank" rel="noopener noreferrer">your Warframe Forum profile</a> and copy the URL from the address bar.</li>
         <li>Paste it below and get a code.</li>
-        <li>Add that code to About Me, save, then confirm.</li>
+        <li>Open the <strong>About Me</strong> tab (not Activity), paste the code, and click Save.</li>
+        <li>Come back here and confirm. Give the forum a few seconds if the first check misses it.</li>
       </ol>
       ${forumVerifyPanel(user)}
     </section>

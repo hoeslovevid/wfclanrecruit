@@ -6,6 +6,10 @@ export const LISTING_CREATE_COOLDOWN_MS = 15 * 60 * 1000;
 
 const FORUM_PROFILE =
   /^https:\/\/forums\.warframe\.com\/profile\/[a-z0-9][a-z0-9\-_.]*\/?$/i;
+const FORUM_ABOUT_TAB = "field_core_pfield_1";
+const FORUM_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
+const FORUM_READER = "https://r.jina.ai/";
 
 export function discordConfigured() {
   return Boolean(process.env.DISCORD_CLIENT_ID && process.env.DISCORD_CLIENT_SECRET);
@@ -42,6 +46,11 @@ export function forumNameFromUrl(url) {
     .pop() || "";
   const name = slug.replace(/^\d+-/, "").replace(/-/g, " ").trim();
   return name.slice(0, 48) || slug.slice(0, 48);
+}
+
+export function aboutMeUrl(profileUrl) {
+  const url = normalizeForumUrl(profileUrl);
+  return url ? `${url}?tab=${FORUM_ABOUT_TAB}` : null;
 }
 
 export function publishGate(user, { isProd }) {
@@ -89,6 +98,7 @@ export function publicAccount(user, { isProd }) {
     forumName: user.forumName || null,
     forumToken: user.forumVerified ? null : user.forumToken || null,
     forumProfileUrl: user.forumProfileUrl || null,
+    forumAboutMeUrl: aboutMeUrl(user.forumProfileUrl),
     canPublish: gate.ok,
     publishBlock: gate.ok ? null : gate.reason,
     minAgeDays: DISCORD_MIN_AGE_DAYS,
@@ -109,33 +119,100 @@ export function uniqueDiscordUsername(db, discordUser) {
   return `tenno${Date.now().toString(36)}`.slice(0, 20);
 }
 
+function isBlockedPage(status, body) {
+  if (status === 403 || status === 503) return true;
+  const text = String(body || "").toLowerCase();
+  return (
+    text.includes("just a moment") ||
+    text.includes("performing security verification") ||
+    text.includes("cf-browser-verification") ||
+    text.includes("enable javascript and cookies to continue")
+  );
+}
+
+function assertSameProfile(requested, found) {
+  const expected = normalizeForumUrl(requested);
+  const actual = normalizeForumUrl(found);
+  if (!expected || !actual || expected !== actual) {
+    throw new Error("That link did not stay on a Warframe Forum profile.");
+  }
+  return expected;
+}
+
+async function fetchDirectProfile(url) {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        Accept: "text/html,application/xhtml+xml",
+        "Accept-Language": "en-US,en;q=0.9",
+        "User-Agent": FORUM_UA,
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(6000),
+    });
+    const html = await res.text();
+    if (!res.ok || isBlockedPage(res.status, html)) return null;
+    return { html, source: res.url || url };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchProfileViaReader(url) {
+  const headers = {
+    Accept: "application/json",
+    "X-No-Cache": "true",
+  };
+  if (process.env.JINA_API_KEY) {
+    headers.Authorization = `Bearer ${process.env.JINA_API_KEY}`;
+  }
+  const res = await fetch(`${FORUM_READER}${url}`, {
+    headers,
+    signal: AbortSignal.timeout(20000),
+  });
+  const raw = await res.text();
+  if (!res.ok) {
+    throw new Error("Could not load that forum profile right now. Wait a few seconds and try again.");
+  }
+  let text = raw;
+  let source = url;
+  try {
+    const payload = JSON.parse(raw);
+    const data = payload.data || payload;
+    text = data.text || data.content || data.html || "";
+    source = data.url || source;
+  } catch {
+    const match = raw.match(/^URL Source:\s*(\S+)/m);
+    if (match) source = match[1];
+    const idx = raw.indexOf("Markdown Content:");
+    text = idx >= 0 ? raw.slice(idx) : raw;
+  }
+  if (!text || isBlockedPage(200, text)) {
+    throw new Error("Warframe Forums blocked the profile check. Try again in a moment.");
+  }
+  return { html: text, source };
+}
+
 export async function readForumProfile(profileUrl) {
   const url = normalizeForumUrl(profileUrl);
   if (!url) {
     throw new Error("Use a forums.warframe.com/profile/... link.");
   }
-  const res = await fetch(url, {
-    headers: {
-      Accept: "text/html",
-      "User-Agent": "WFClanRecruit/1.0 (account verification)",
-    },
-    redirect: "follow",
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!res.ok) {
-    throw new Error("Could not load that forum profile. Check the URL and try again.");
+  const target = aboutMeUrl(url);
+  let page = await fetchDirectProfile(target);
+  if (!page) {
+    // Forums sit behind Cloudflare; anonymous server fetches get 403.
+    // A logged-in forum bot on Railway hits the same wall. Read About Me
+    // through a browser-based reader instead of storing forum cookies.
+    page = await fetchProfileViaReader(target);
   }
-  const finalUrl = String(res.url || url).split(/[?#]/)[0];
-  if (!normalizeForumUrl(finalUrl)) {
-    throw new Error("That link did not stay on a Warframe Forum profile.");
-  }
-  const html = await res.text();
-  return { html, url: normalizeForumUrl(finalUrl) };
+  const canonical = assertSameProfile(url, page.source);
+  return { html: page.html, url: canonical };
 }
 
 export function profileHasToken(html, token) {
   if (!token || token.length < 8) return false;
-  return String(html || "").includes(token);
+  return String(html || "").toLowerCase().includes(String(token).toLowerCase());
 }
 
 export function listingCreateWait(db, userId) {
