@@ -448,7 +448,15 @@ h2 { font-size: clamp(26px, 3vw, 36px); }
   margin: 0 auto;
 }
 
-.hero { padding: 68px 0 28px; }
+.hero { padding: 68px 0 28px; text-align: center; }
+.hero .lead {
+  margin-left: auto;
+  margin-right: auto;
+}
+.hero .search {
+  margin-left: auto;
+  margin-right: auto;
+}
 .page-hero { padding: 48px 0 16px; }
 .section { padding: 56px 0; }
 
