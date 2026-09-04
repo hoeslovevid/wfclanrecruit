@@ -207,12 +207,61 @@ export async function readForumProfile(profileUrl) {
     page = await fetchProfileViaReader(target);
   }
   const canonical = assertSameProfile(url, page.source);
-  return { html: page.html, url: canonical };
+  const owner = profileOwnerFrom(page.html);
+  if (!owner) {
+    throw new Error("Could not read that forum profile. Check the URL and try again.");
+  }
+  if (!slugMatchesOwner(canonical, owner)) {
+    throw new Error(
+      "That profile URL does not match the account it points to. Open your profile on the forums and copy the URL from the address bar."
+    );
+  }
+  return { html: page.html, url: canonical, owner };
+}
+
+// The profile page carries other people's display names (Recent Profile
+// Visitors, followers). Someone could rename themselves to their own token,
+// visit a victim's profile and then "verify" as that victim. Cut the page at
+// the first such section and drop link/image labels, which is where those
+// names appear, so only the owner's own prose is searched.
+const FOREIGN_SECTION = /(recent profile visitors|profile visitors|followers|following|friends)/i;
+
+export function verifiableRegion(text) {
+  let region = String(text || "");
+  const cut = region.search(FOREIGN_SECTION);
+  if (cut > 0) region = region.slice(0, cut);
+  return region
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/<a\b[\s\S]*?<\/a>/gi, " ");
+}
+
+// IPS resolves a profile by its numeric id and ignores the slug, so
+// /profile/1-anything renders user 1. Read the owner off the page instead of
+// trusting the URL the user pasted.
+export function profileOwnerFrom(text) {
+  const source = String(text || "");
+  const heading = source.match(/^#\s+(.+?)\s*$/m);
+  if (heading) return heading[1].replace(/<[^>]+>/g, "").trim();
+  const h1 = source.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+  if (h1) return h1[1].replace(/<[^>]+>/g, "").trim();
+  const title = source.match(/<title>([^<]*)<\/title>/i);
+  if (title) return title[1].split(/\s+-\s+/)[0].trim();
+  return "";
+}
+
+function comparable(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+export function slugMatchesOwner(profileUrl, owner) {
+  const slug = forumNameFromUrl(profileUrl);
+  return Boolean(comparable(owner)) && comparable(slug) === comparable(owner);
 }
 
 export function profileHasToken(html, token) {
   if (!token || token.length < 8) return false;
-  return String(html || "").toLowerCase().includes(String(token).toLowerCase());
+  return verifiableRegion(html).toLowerCase().includes(String(token).toLowerCase());
 }
 
 export function listingCreateWait(db, userId) {

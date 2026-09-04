@@ -2,12 +2,14 @@ import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import multer from "multer";
+import { Transform } from "node:stream";
 import path from "node:path";
 import fs from "node:fs";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { hashPassword, newToken, verifyPassword } from "./auth.js";
-import { ensureStorage, paths, readDb, writeDb } from "./db.js";
+import { initStorage, paths, readDb, writeDb } from "./db.js";
+import { rateLimit } from "./ratelimit.js";
 import { aboutTooLong, normalizeAbout, plainTextFromHtml } from "../src/richtext.js";
 import {
   DISCORD_MIN_AGE_DAYS,
@@ -37,43 +39,74 @@ const TIER_CAPS = {
   Moon: 1000,
 };
 
-ensureStorage();
-
 const IMAGE_MAX = 2 * 1024 * 1024;
 const VIDEO_MAX = 25 * 1024 * 1024;
-const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml"]);
+const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 const VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
-const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"]);
-const VIDEO_EXTS = new Set([".mp4", ".webm", ".m4v"]);
+const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
+const VIDEO_EXTS = new Set([".mp4", ".webm", ".m4v", ".mov"]);
 const EXT_BY_TYPE = {
   "image/png": ".png",
   "image/jpeg": ".jpg",
   "image/webp": ".webp",
   "image/gif": ".gif",
-  "image/svg+xml": ".svg",
   "video/mp4": ".mp4",
   "video/webm": ".webm",
+  "video/quicktime": ".mov",
+};
+
+const MAX_BY_FIELD = { image: IMAGE_MAX, video: VIDEO_MAX };
+
+// multer only supports one global fileSize limit, so count bytes per field and
+// abort the stream as soon as a field passes its own cap.
+const diskStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, paths.uploadDir),
+  filename: (_req, file, cb) => {
+    // Never trust originalname: a .html name with an image MIME used to be
+    // written verbatim and then served as text/html from our own origin.
+    const ext = EXT_BY_TYPE[file.mimetype] || ".bin";
+    cb(null, `${Date.now()}-${randomBytes(6).toString("hex")}${ext}`);
+  },
+});
+
+const cappedStorage = {
+  _handleFile(req, file, cb) {
+    const cap = MAX_BY_FIELD[file.fieldname] ?? IMAGE_MAX;
+    let bytes = 0;
+    const counter = new Transform({
+      transform(chunk, _enc, next) {
+        bytes += chunk.length;
+        if (bytes > cap) {
+          next(Object.assign(new Error("File too large."), { code: "LIMIT_FILE_SIZE", field: file.fieldname }));
+          return;
+        }
+        next(null, chunk);
+      },
+    });
+    // multer 2 exposes file.stream read-only, so hand the disk engine a
+    // prototype-linked view whose stream is the counted one.
+    const counted = Object.create(file, {
+      stream: { value: file.stream.pipe(counter), configurable: true },
+    });
+    diskStorage._handleFile(req, counted, cb);
+  },
+  _removeFile(req, file, cb) {
+    diskStorage._removeFile(req, file, cb);
+  },
 };
 
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, paths.uploadDir),
-    filename: (_req, file, cb) => {
-      const fromName = path.extname(file.originalname || "").toLowerCase();
-      const ext = fromName || EXT_BY_TYPE[file.mimetype] || ".bin";
-      cb(null, `${Date.now()}-${randomBytes(6).toString("hex")}${ext}`);
-    },
-  }),
+  storage: cappedStorage,
   limits: { fileSize: VIDEO_MAX, files: 2 },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname || "").toLowerCase();
     if (file.fieldname === "image") {
-      const ok = IMAGE_TYPES.has(file.mimetype) || IMAGE_EXTS.has(ext);
-      cb(ok ? null : new Error("Image must be PNG, JPG, WEBP, GIF, or SVG."), ok);
+      const ok = IMAGE_TYPES.has(file.mimetype) && IMAGE_EXTS.has(ext);
+      cb(ok ? null : new Error("Image must be PNG, JPG, WEBP, or GIF."), ok);
       return;
     }
     if (file.fieldname === "video") {
-      const ok = VIDEO_TYPES.has(file.mimetype) || VIDEO_EXTS.has(ext);
+      const ok = VIDEO_TYPES.has(file.mimetype) && VIDEO_EXTS.has(ext);
       cb(ok ? null : new Error("Video must be MP4 or WEBM."), ok);
       return;
     }
@@ -97,7 +130,18 @@ app.use(
 );
 app.use(cookieParser());
 app.use(express.json({ limit: "1mb" }));
-app.use("/uploads", express.static(paths.uploadDir));
+app.use(
+  "/uploads",
+  express.static(paths.uploadDir, {
+    setHeaders: (res) => {
+      // Defence in depth: even if an active-content file reaches this dir it
+      // must not execute against our origin.
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Content-Disposition", "attachment");
+      res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+    },
+  })
+);
 app.use("/images", express.static(path.join(root, "..", "public", "images")));
 
 function currentUser(req) {
@@ -134,6 +178,30 @@ function requirePoster(req, res, next) {
   next();
 }
 
+const registerLimiter = rateLimit({ name: "register", limit: 5, windowMs: 60 * 60 * 1000 });
+const discordStartLimiter = rateLimit({ name: "discord-start", limit: 20, windowMs: 15 * 60 * 1000 });
+const exportLimiter = rateLimit({ name: "export", limit: 10, windowMs: 60 * 60 * 1000 });
+const listingLimiter = rateLimit({ name: "listing", limit: 20, windowMs: 60 * 60 * 1000 });
+const forumCheckLimiter = rateLimit({
+  name: "forum-check",
+  limit: 10,
+  windowMs: 10 * 60 * 1000,
+  message: "Too many verification checks. Wait a few minutes and try again.",
+});
+const loginLimiter = rateLimit({
+  name: "login",
+  limit: 5,
+  windowMs: 15 * 60 * 1000,
+  keyOn: (req) => String(req.body?.username || "").toLowerCase(),
+  message: "Too many sign-in attempts. Try again in a few minutes.",
+});
+const loginIpLimiter = rateLimit({
+  name: "login-ip",
+  limit: 30,
+  windowMs: 15 * 60 * 1000,
+  message: "Too many sign-in attempts. Try again in a few minutes.",
+});
+
 function canRemove(user, listing) {
   return Boolean(user.admin) || listing.ownerId === user.id;
 }
@@ -141,9 +209,13 @@ function canRemove(user, listing) {
 function publicOrigin(req) {
   if (process.env.PUBLIC_URL) return String(process.env.PUBLIC_URL).replace(/\/$/, "");
   if (process.env.RAILWAY_PUBLIC_DOMAIN) return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+  // #9: x-forwarded-host is caller-controlled, so only honour it when it is a
+  // host we already trust. Otherwise fall back to the socket's own host.
   const proto = req.headers["x-forwarded-proto"] || req.protocol || "http";
-  const host = req.headers["x-forwarded-host"] || req.get("host");
-  return `${proto}://${host}`;
+  const forwarded = String(req.headers["x-forwarded-host"] || "").split(",")[0].trim();
+  const candidate = forwarded ? `${proto}://${forwarded}` : "";
+  if (candidate && configuredOrigins().has(candidate)) return candidate;
+  return `${proto}://${req.get("host")}`;
 }
 
 function discordRedirectUri(req) {
@@ -347,21 +419,31 @@ function parseAllianceBody(body) {
   };
 }
 
+function configuredOrigins() {
+  const list = [
+    process.env.PUBLIC_URL,
+    process.env.FRONTEND_URL,
+    process.env.RAILWAY_PUBLIC_DOMAIN && `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`,
+  ];
+  if (!isProd) {
+    list.push(
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+      "http://localhost:3001",
+      "http://127.0.0.1:3001"
+    );
+  }
+  return new Set(list.filter(Boolean).map((item) => String(item).replace(/\/$/, "")));
+}
+
+// #7: this used to allow any origin ending in .railway.app with credentials,
+// so any tenant on the shared domain was a trusted origin.
 function allowedOrigin(origin, callback) {
   if (!origin) {
     callback(null, true);
     return;
   }
-  const allowed = new Set([
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:3001",
-    "http://127.0.0.1:3001",
-    process.env.FRONTEND_URL,
-    process.env.RAILWAY_PUBLIC_DOMAIN && `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`,
-  ].filter(Boolean));
-  const railwayHost = origin.endsWith(".up.railway.app") || origin.endsWith(".railway.app");
-  callback(null, allowed.has(origin) || railwayHost);
+  callback(null, configuredOrigins().has(origin.replace(/\/$/, "")));
 }
 
 function cookieOptions() {
@@ -439,7 +521,7 @@ app.get("/api/auth/me", (req, res) => {
   });
 });
 
-app.get("/api/auth/discord", (req, res) => {
+app.get("/api/auth/discord", discordStartLimiter, (req, res) => {
   const mode = req.query.mode === "register" ? "register" : "login";
   if (!discordConfigured()) {
     res.redirect(`${publicOrigin(req)}/#/${mode}?error=discord-config`);
@@ -524,6 +606,7 @@ app.get("/api/auth/discord/callback", async (req, res) => {
 
     const linked = currentUser(req);
     const sessionToken = newToken();
+    const placeholderPassword = await hashPassword(newToken());
     const next = safeNextPath(stored.next);
     let errorCode = null;
     await writeDb((db) => {
@@ -538,7 +621,7 @@ app.get("/api/auth/discord/callback", async (req, res) => {
         user = {
           id: `user-discord-${discordUser.id}`,
           username: uniqueDiscordUsername(db, discordUser),
-          password: hashPassword(newToken()),
+          password: placeholderPassword,
           admin: false,
           createdAt: new Date().toISOString(),
         };
@@ -590,7 +673,7 @@ app.post("/api/auth/forum/start", requireUser, (req, res) => {
   });
 });
 
-app.post("/api/auth/forum/check", requireUser, async (req, res) => {
+app.post("/api/auth/forum/check", requireUser, forumCheckLimiter, async (req, res) => {
   const profileUrl = normalizeForumUrl(req.body.profileUrl || req.user.forumProfileUrl);
   if (!profileUrl) {
     res.status(400).json({ error: "Paste your Warframe Forum profile URL first." });
@@ -633,7 +716,7 @@ app.post("/api/auth/forum/check", requireUser, async (req, res) => {
       }
       user.forumVerified = true;
       user.forumProfileUrl = profile.url;
-      user.forumName = forumNameFromUrl(profile.url);
+      user.forumName = profile.owner;
       user.forumVerifiedAt = new Date().toISOString();
       res.json({ user: publicAccount(user, { isProd }) });
       return db;
@@ -645,7 +728,7 @@ app.post("/api/auth/forum/check", requireUser, async (req, res) => {
   }
 });
 
-app.post("/api/auth/register", (req, res) => {
+app.post("/api/auth/register", registerLimiter, async (req, res) => {
   if (isProd) {
     res.status(403).json({ error: "Create an account with Discord." });
     return;
@@ -661,6 +744,7 @@ app.post("/api/auth/register", (req, res) => {
     return;
   }
 
+  const passwordHash = await hashPassword(password);
   writeDb((db) => {
     if (db.users.some((user) => user.username.toLowerCase() === username.toLowerCase())) {
       res.status(409).json({ error: "That username is taken." });
@@ -669,7 +753,7 @@ app.post("/api/auth/register", (req, res) => {
     const user = {
       id: slugify(username),
       username,
-      password: hashPassword(password),
+      password: passwordHash,
       admin: false,
       createdAt: new Date().toISOString(),
     };
@@ -684,12 +768,12 @@ app.post("/api/auth/register", (req, res) => {
   });
 });
 
-app.post("/api/auth/login", (req, res) => {
+app.post("/api/auth/login", loginIpLimiter, loginLimiter, async (req, res) => {
   const username = String(req.body.username || "").trim();
   const password = String(req.body.password || "");
   const db = readDb();
   const user = db.users.find((item) => item.username.toLowerCase() === username.toLowerCase());
-  if (!user || !verifyPassword(password, user.password)) {
+  if (!user || !(await verifyPassword(password, user.password))) {
     res.status(401).json({ error: "Wrong username or password." });
     return;
   }
@@ -714,7 +798,7 @@ app.post("/api/auth/logout", (req, res) => {
   });
 });
 
-app.get("/api/auth/export", requireUser, (req, res) => {
+app.get("/api/auth/export", requireUser, exportLimiter, (req, res) => {
   const db = readDb();
   const user = db.users.find((item) => item.id === req.user.id);
   if (!user) {
@@ -791,7 +875,7 @@ app.get("/api/clans/:id", (req, res) => {
   res.json({ clan: decorateClan(clan, db) });
 });
 
-app.post("/api/clans", requirePoster, listingUpload, (req, res) => {
+app.post("/api/clans", requirePoster, listingLimiter, listingUpload, (req, res) => {
   if (!assertListingFiles(req, res)) return;
   const parsed = parseClanBody(req.body, req.user);
   if (parsed.error) {
@@ -938,7 +1022,7 @@ app.get("/api/alliances/:id", (req, res) => {
   });
 });
 
-app.post("/api/alliances", requirePoster, listingUpload, (req, res) => {
+app.post("/api/alliances", requirePoster, listingLimiter, listingUpload, (req, res) => {
   if (!assertListingFiles(req, res)) return;
   const parsed = parseAllianceBody(req.body);
   if (parsed.error) {
@@ -1090,8 +1174,10 @@ async function attachFrontend() {
 }
 
 let server;
+let sessionSweep;
 
 async function start() {
+  await initStorage();
   const frontend = await attachFrontend();
   server = app.listen(PORT, "0.0.0.0");
   await new Promise((resolve, reject) => {
@@ -1104,6 +1190,16 @@ async function start() {
   if (!discordConfigured()) {
     console.warn("DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET are unset. Discord sign-in is off.");
   }
+  // #8/#12: keep expired sessions from piling up between restarts.
+  sessionSweep = setInterval(() => {
+    writeDb((db) => {
+      const now = Date.now();
+      const sessions = (db.sessions || []).filter((item) => item.expires > now);
+      if (sessions.length === (db.sessions || []).length) return db;
+      return { ...db, sessions };
+    }).catch(() => {});
+  }, 60 * 60 * 1000);
+  sessionSweep.unref();
 }
 
 start().catch((error) => {
@@ -1117,6 +1213,7 @@ start().catch((error) => {
 
 function shutdown(signal) {
   console.log(`Received ${signal}, shutting down`);
+  if (sessionSweep) clearInterval(sessionSweep);
   if (!server) {
     process.exit(0);
     return;
