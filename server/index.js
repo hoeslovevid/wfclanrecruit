@@ -509,6 +509,22 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, name: "WF Clan Recruit" });
 });
 
+// TEMPORARY: the rate limiter keys on req.ip, which does not resolve to a
+// stable client address behind Railway's edge. This reports what the proxy
+// actually sends so trust proxy can be set correctly. Remove after tuning.
+app.get("/api/_proxy-debug", (req, res) => {
+  res.json({
+    reqIp: req.ip,
+    reqIps: req.ips,
+    trustProxySetting: app.get("trust proxy fn") ? "set" : "unset",
+    socketRemoteAddress: req.socket?.remoteAddress || null,
+    xForwardedFor: req.headers["x-forwarded-for"] || null,
+    xRealIp: req.headers["x-real-ip"] || null,
+    xEnvoyExternalAddress: req.headers["x-envoy-external-address"] || null,
+    forwarded: req.headers["forwarded"] || null,
+  });
+});
+
 app.get("/api/auth/me", (req, res) => {
   const user = currentUser(req);
   res.json({
