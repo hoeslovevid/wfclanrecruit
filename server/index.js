@@ -16,6 +16,7 @@ import {
   activityAt as listingActivity,
   applyAllianceRoster,
   listingConflict,
+  whisperName,
   withListingState,
 } from "./listing.js";
 import { aboutTooLong, normalizeAbout, plainTextFromHtml } from "../src/richtext.js";
@@ -562,6 +563,7 @@ function decorateClan(clan, db) {
     ...clan,
     allianceName: alliance?.name || null,
     allianceTag: alliance?.tag || null,
+    whisperName: whisperName(clan, db.users),
   });
 }
 

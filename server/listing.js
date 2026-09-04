@@ -58,3 +58,13 @@ export function applyAllianceRoster(db, allianceId, ownerId, rosterIds) {
   const alliance = (db.alliances || []).find((item) => item.id === allianceId);
   if (alliance) alliance.clanCount = Math.max(alliance.clanCount || 0, allowed.size);
 }
+
+// The whisper a recruit pastes into Warframe targets the leader by their
+// in-game name. Read it off the owner's verified forum profile rather than the
+// listing's free-text `leader` field, so a listing cannot point players at a
+// name its owner never proved they hold.
+export function whisperName(listing, users) {
+  const owner = (users || []).find((user) => user.id === listing.ownerId);
+  if (!owner?.forumVerified) return null;
+  return owner.forumName || null;
+}

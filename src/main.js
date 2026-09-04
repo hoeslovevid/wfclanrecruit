@@ -201,9 +201,30 @@ function bindCards(root = app) {
       if (event.key === "Enter") go(el.dataset.href);
     });
   });
+  bindCopyText(root);
+}
+
+// Copy buttons carry their payload in the attribute, so the same handler
+// serves the whisper on a listing page and the one on every card.
+function bindCopyText(root = app) {
+  root.querySelectorAll("[data-copy-text]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const label = button.textContent;
+      try {
+        await navigator.clipboard.writeText(button.dataset.copyText);
+        button.textContent = "Copied";
+      } catch {
+        button.textContent = "Copy failed";
+      }
+      setTimeout(() => {
+        button.textContent = label;
+      }, 2000);
+    });
+  });
 }
 
 function bindListingPage() {
+  bindCopyText();
   app.querySelector("[data-copy-url]")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     try {

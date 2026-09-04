@@ -128,6 +128,32 @@ function joinDiscord(item, label) {
   return `<a class="btn btn-discord" href="${escapeHtml(item.discord)}" target="_blank" rel="noopener noreferrer" data-stop>${escapeHtml(label)}</a>`;
 }
 
+// Warframe invites are handed out in-game, so the last step of joining is a
+// /w to the leader. Build it from the owner's verified forum name (see
+// whisperName in server/listing.js) and hide it whenever Discord is hidden.
+export function whisperMessage(clan) {
+  if (!clan.whisperName || clan.recruiting === false) return null;
+  return `/w ${clan.whisperName} Hi ${clan.whisperName} I would like to join ${clan.name} (wfclanrecruit)`;
+}
+
+function whisperBox(clan) {
+  const message = whisperMessage(clan);
+  if (!message) return "";
+  return `
+    <div class="whisper">
+      <p class="kicker">Whisper the leader in-game</p>
+      <code class="whisper-text">${escapeHtml(message)}</code>
+      <button class="btn btn-ghost" type="button" data-copy-text="${escapeHtml(message)}">Copy whisper</button>
+    </div>
+  `;
+}
+
+function whisperCardButton(clan) {
+  const message = whisperMessage(clan);
+  if (!message) return "";
+  return `<button class="btn btn-ghost btn-small" type="button" title="Copy the /w message for this clan's leader" data-copy-text="${escapeHtml(message)}">Whisper</button>`;
+}
+
 function reportForm(kind, id) {
   const options = Object.entries(REPORT_REASON_LABELS)
     .map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`)
@@ -193,6 +219,7 @@ export function clanCard(clan) {
       <footer class="card-foot">
         <a class="btn btn-ghost" href="/clans/${escapeHtml(clan.id)}" data-link>View post</a>
         ${joinDiscord(clan, "Join Discord")}
+        ${whisperCardButton(clan)}
       </footer>
     </article>
   `;
@@ -1010,6 +1037,7 @@ export function clanPage(clan, { admin = false } = {}) {
         <div><h2>They offer</h2><ul>${clan.offering.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
         <div><h2>Requirements</h2><ul>${clan.requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
       </div>
+      ${whisperBox(clan)}
       <div class="row listing-actions">
         ${joinDiscord(clan, `Join ${clan.name} on Discord`)}
         <button class="btn btn-ghost" type="button" data-copy-url>Copy link</button>

@@ -1246,6 +1246,34 @@ code {
   margin-top: 16px;
   align-items: center;
 }
+.whisper {
+  margin-top: 20px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--ghost);
+}
+.whisper .kicker { margin-bottom: 10px; }
+.whisper-text {
+  display: block;
+  margin-bottom: 12px;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.6;
+  /* Warframe names and clan names are long and full of punctuation, so let the
+     line wrap rather than push the panel wider than the phone. */
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.btn-small {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+/* The footer stretches its buttons to equal thirds, which wraps every label
+   once a third button joins View post and Join Discord. Let the compact one
+   size to its text instead. */
+.card-foot .btn-small { flex: 0 0 auto; }
+
 .report-box {
   margin-top: 28px;
   padding-top: 18px;
