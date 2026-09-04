@@ -349,17 +349,29 @@ function bindRecruiters() {
     const slot = box.querySelector("[data-roster-slot]");
     const paint = (roster, max) => {
       slot.innerHTML = rosterPanel(roster, max);
-      slot.querySelector(".roster-add")?.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        const input = event.currentTarget.username;
+      const input = slot.querySelector("[data-roster-username]");
+      const invite = async () => {
+        const username = input.value.trim();
+        if (!username) return;
         const note = slot.querySelector("[data-roster-note]");
         try {
-          const { roster: next } = await api.inviteRecruiter(id, input.value.trim());
+          const { roster: next } = await api.inviteRecruiter(id, username);
           paint(next, max);
-          showNote(slot.querySelector("[data-roster-note]"), "Invite sent. They have to accept before their name shows.", "muted");
+          showNote(
+            slot.querySelector("[data-roster-note]"),
+            "Invite sent. They have to accept before their name shows.",
+            "muted"
+          );
         } catch (error) {
           showNote(note, error.message);
         }
+      };
+      slot.querySelector("[data-roster-invite]")?.addEventListener("click", invite);
+      // Enter in the field would otherwise submit the post editor around us.
+      input?.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        invite();
       });
       slot.querySelectorAll("[data-roster-remove]").forEach((button) => {
         button.addEventListener("click", async () => {
@@ -372,19 +384,12 @@ function bindRecruiters() {
         });
       });
     };
-    box.addEventListener(
-      "toggle",
-      async () => {
-        if (!box.open) return;
-        try {
-          const { roster, max } = await api.roster(id);
-          paint(roster, max);
-        } catch (error) {
-          slot.innerHTML = `<p class="muted">${error.message}</p>`;
-        }
-      },
-      { once: true }
-    );
+    api
+      .roster(id)
+      .then(({ roster, max }) => paint(roster, max))
+      .catch((error) => {
+        slot.innerHTML = `<p class="muted">${error.message}</p>`;
+      });
   });
 
   const note = app.querySelector("[data-invite-note]");
@@ -847,6 +852,7 @@ async function render() {
       return;
     }
     app.innerHTML = postView({ user: state.user, alliances: state.alliances, draft: draft || {}, auth: state.auth });
+    bindRecruiters();
     const form = app.querySelector("#post-form");
     // A whisper-only listing needs no invite, so stop the browser demanding one.
     const contact = form?.querySelector("[data-contact]");

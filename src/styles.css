@@ -1328,12 +1328,6 @@ code {
 }
 .listing-stats strong { color: var(--text); }
 
-.roster-box { margin-top: 10px; }
-.roster-box summary {
-  cursor: pointer;
-  color: var(--muted);
-  font-size: 13px;
-}
 .roster-row {
   display: flex;
   flex-wrap: wrap;

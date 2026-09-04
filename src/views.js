@@ -785,6 +785,17 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
               </select>
             </label>
           </div>
+          <fieldset class="fieldset">
+            <legend>Recruiters</legend>
+            ${
+              editing
+                ? `<p class="field-help">Other verified players who share the whispers for this clan. They have to accept before their name appears, and they get no access to edit this post.</p>
+              <div data-roster-for="${escapeHtml(draft.id)}">
+                <div data-roster-slot><p class="muted">Loading…</p></div>
+              </div>`
+                : `<p class="field-help">Publish the clan first, then come back here to invite recruiters.</p>`
+            }
+          </fieldset>
           <fieldset class="fieldset"><legend>Playstyles</legend><div class="checks">${checks("playstyles", PLAYSTYLES, draft.playstyles || [])}</div></fieldset>
         </div>
         <div class="form-block">
@@ -1054,6 +1065,9 @@ function recruitingOnPanel(user) {
   `;
 }
 
+// Deliberately not a <form>: this panel renders inside the post editor's form,
+// and HTML forbids nested forms - the browser drops the inner one, which left
+// the Invite button submitting the listing instead of sending an invite.
 export function rosterPanel(roster = [], max = 5) {
   const rows = roster.length
     ? roster
@@ -1075,10 +1089,10 @@ export function rosterPanel(roster = [], max = 5) {
   return `
     <div class="roster">
       ${rows}
-      <form class="row roster-add">
-        <label class="field"><span class="sr-only">Username</span><input name="username" placeholder="Their username here" maxlength="20" required /></label>
-        <button class="btn btn-ghost" type="submit" ${roster.length >= max ? "disabled" : ""}>Invite</button>
-      </form>
+      <div class="row roster-add">
+        <label class="field"><span class="sr-only">Username</span><input data-roster-username placeholder="Their username here" maxlength="20" /></label>
+        <button class="btn btn-ghost" type="button" data-roster-invite ${roster.length >= max ? "disabled" : ""}>Invite</button>
+      </div>
       <p class="muted" data-roster-note hidden></p>
     </div>
   `;
@@ -1128,14 +1142,6 @@ function listingList(items, kind, emptyText) {
                 <button class="btn btn-ghost" type="button" ${bumpAttr}="${escapeHtml(item.id)}" ${item.canBump ? "" : "disabled"} title="${item.canBump ? "Send this post to the top of the board" : "You can bump once every 12 hours"}">Bump</button>
                 <button class="btn btn-ghost" type="button" ${deleteAttr}="${escapeHtml(item.id)}">Remove</button>
               </div>
-              ${
-                kind === "clan"
-                  ? `<details class="roster-box" data-roster-for="${escapeHtml(item.id)}">
-                <summary>Recruiters</summary>
-                <div data-roster-slot><p class="muted">Loading…</p></div>
-              </details>`
-                  : ""
-              }
             </div>`;
     })
     .join("")}</div>`;
