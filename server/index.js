@@ -10,6 +10,17 @@ import { fileURLToPath } from "node:url";
 import { hashPassword, newToken, verifyPassword } from "./auth.js";
 import { initStorage, paths, postgresEnabled, readDb, storageLabel, writeDb, closePg } from "./db.js";
 import { rateLimit } from "./ratelimit.js";
+import {
+  HEARTBEAT_MS,
+  KEEP_MINUTES,
+  STATUSES,
+  forget as forgetPresence,
+  keepUntil,
+  listingPresence,
+  normalizeStatus,
+  presenceOf,
+  touch as touchPresence,
+} from "./presence.js";
 import { inspectDiscordInvite, listingsNeedingInviteCheck, applyInviteCheck, INVITE_RECHECK_GAP_MS } from "./invite.js";
 import {
   REPORT_REASONS,
@@ -564,12 +575,14 @@ function decorateClan(clan, db) {
     allianceName: alliance?.name || null,
     allianceTag: alliance?.tag || null,
     whisperName: whisperName(clan, db.users),
+    ...listingPresence(clan, db.users),
   });
 }
 
 function decorateAlliance(alliance, db) {
   return withBumpState({
     ...alliance,
+    ...listingPresence(alliance, db.users),
     memberClans: (db.clans || [])
       .filter((clan) => clan.allianceId === alliance.id)
       .map((clan) => decorateClan(clan, db)),
@@ -582,14 +595,57 @@ app.get("/api/health", (_req, res) => {
 
 app.get("/api/auth/me", (req, res) => {
   const user = currentUser(req);
+  const account = publicAccount(user, { isProd });
   res.json({
-    user: publicAccount(user, { isProd }),
+    user: account ? { ...account, presence: presenceOf(user), keepMinutes: KEEP_MINUTES } : null,
     auth: {
       discord: discordConfigured(),
       minAgeDays: DISCORD_MIN_AGE_DAYS,
       passwordRegister: !isProd,
     },
   });
+});
+
+// A heartbeat only writes to the in-memory map in presence.js, so this is
+// cheap enough to allow generously - the limit is here to stop a stuck client
+// from hammering it, not to police normal use.
+const presenceLimiter = rateLimit({
+  name: "presence",
+  limit: 120,
+  windowMs: 10 * 60 * 1000,
+  message: "Too many presence updates. Try again shortly.",
+});
+
+app.post("/api/presence/heartbeat", requireUser, presenceLimiter, (req, res) => {
+  touchPresence(req.user.id);
+  res.json({ presence: presenceOf(req.user), heartbeatMs: HEARTBEAT_MS });
+});
+
+app.post("/api/presence", requireUser, presenceLimiter, async (req, res) => {
+  const status = normalizeStatus(req.body?.status);
+  if (!STATUSES.includes(req.body?.status)) {
+    res.status(400).json({ error: "Pick a status." });
+    return;
+  }
+  const minutes = Number(req.body?.keepMinutes || 0);
+  if (!KEEP_MINUTES.includes(minutes)) {
+    res.status(400).json({ error: "Pick how long to keep that status." });
+    return;
+  }
+  const until = keepUntil(minutes);
+  await writeDb((db) => {
+    const user = db.users.find((item) => item.id === req.user.id);
+    if (user) {
+      user.presenceStatus = status;
+      user.presenceUntil = until;
+    }
+    return db;
+  });
+  // Going invisible should drop the dot immediately rather than linger for a
+  // heartbeat window.
+  if (status === "invisible") forgetPresence(req.user.id);
+  else touchPresence(req.user.id);
+  res.json({ presence: { status, online: status !== "invisible", until } });
 });
 
 app.get("/api/auth/discord", discordStartLimiter, (req, res) => {
@@ -864,6 +920,7 @@ app.post("/api/auth/login", loginIpLimiter, loginLimiter, async (req, res) => {
 
 app.post("/api/auth/logout", (req, res) => {
   const token = req.cookies[COOKIE];
+  forgetPresence(currentUser(req)?.id);
   writeDb((db) => {
     db.sessions = db.sessions.filter((item) => item.token !== token);
     return db;

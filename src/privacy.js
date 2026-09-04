@@ -109,6 +109,7 @@ export function privacyView() {
               <tr><td>Forum profile URL and derived name</td><td>Yes, after you paste a profile link</td><td>No, except you may repeat your in-game name in a public post</td></tr>
               <tr><td>Forum verification code</td><td>Yes, until you verify</td><td>No, except you place it on your Warframe Forum About Me yourself</td></tr>
               <tr><td>Forum verified flag and timestamps</td><td>Yes</td><td>No</td></tr>
+              <tr><td>Online status</td><td>Your choice of status and how long to hold it is stored. Whether you are online right now is held in memory only and is lost when the server restarts.</td><td>Yes. If you own a listing, an online dot can appear on it. Set your status to Invisible to stop this.</td></tr>
               <tr><td>Session token</td><td>Yes, in the database and in an HTTP-only cookie</td><td>No</td></tr>
             </tbody>
           </table>
@@ -231,6 +232,7 @@ export function privacyView() {
         <h2>What is public</h2>
         <p>Treat every listing as public. That includes Discord invite links, leader names, screenshots, video, and the full post. Listing URLs also expose an Open Graph title, description, and image so Discord and similar apps can show a card. Other visitors, scrapers, and archives may copy public pages. Removing a listing from this site does not erase copies someone else already saved.</p>
         <p>Forum verification requires you to put a short code on your Warframe Forum About Me. That code is public on Digital Extremes’ forums until you delete it. After you verify here, you should remove the code from About Me if you do not want it sitting on the forum.</p>
+        <p>While you have the site open, your listing can show an online dot so recruits can tell whether it is worth whispering you. New accounts start as Online; pick Invisible in the status menu to turn it off, and nothing about your presence is published. The status is self-declared, including “Online in game” — we cannot see what you are doing in Warframe.</p>
         <p>Your Discord email, Discord id, password hash, and session tokens are not shown on listing cards.</p>
       </article>
 
@@ -273,6 +275,7 @@ export function privacyView() {
           <li><strong>Sessions</strong> 30 days from issue, or until you sign out. Signing out removes that session token, and expired session records are deleted automatically. Other devices stay signed in until those sessions expire or you delete the account.</li>
           <li><strong>OAuth cookie</strong> 10 minutes.</li>
           <li><strong>Forum verification code</strong> on our side until you verify. The copy on Warframe Forums stays until you edit About Me.</li>
+          <li><strong>Online status</strong> your chosen status until you change it or delete your account. The live “online right now” signal is memory-only: it expires about two and a half minutes after your last heartbeat, and a server restart clears it.</li>
           <li><strong>Theme</strong> in your browser until you clear it.</li>
           <li><strong>Host logs and backups</strong> according to Railway’s systems. A deleted account is removed from the live database we control; a host backup from before deletion might exist until that backup rotates. We do not keep a separate marketing archive.</li>
         </ul>

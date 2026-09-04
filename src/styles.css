@@ -1246,6 +1246,56 @@ code {
   margin-top: 16px;
   align-items: center;
 }
+.presence {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  vertical-align: middle;
+}
+.presence i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--online, #22c55e);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--online, #22c55e) 22%, transparent);
+}
+/* warframe.market separates plain online from in-game; keep the same split so
+   the colour, not just the tooltip, tells them apart. */
+.presence.is-ingame i { --online: #8b5cf6; }
+
+.presence-menu { position: relative; }
+.presence-menu > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--ghost);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  list-style: none;
+}
+.presence-menu > summary::-webkit-details-marker { display: none; }
+.presence-menu > summary:hover { background: var(--ghost-hover); }
+.presence-panel {
+  position: absolute;
+  right: 0;
+  z-index: 20;
+  width: 240px;
+  margin-top: 8px;
+  padding: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--panel, var(--ghost));
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+}
+.presence-panel .field { margin-bottom: 10px; }
+.presence-note { margin: 0; font-size: 12px; }
+
 .whisper {
   margin-top: 20px;
   padding: 14px 16px;

@@ -154,6 +154,66 @@ function whisperCardButton(clan) {
   return `<button class="btn btn-ghost btn-small" type="button" title="Copy the /w message for this clan's leader" data-copy-text="${escapeHtml(message)}">Whisper</button>`;
 }
 
+const PRESENCE_LABELS = {
+  online: "Online",
+  ingame: "Online in game",
+  invisible: "Invisible",
+};
+
+// Self-declared, like warframe.market's: Warframe has no public presence API,
+// so the label says what the leader chose, never what the game reports.
+// `silent` is for the nav, where the visible label sits right beside the dot -
+// repeating it in an sr-only span would read the status out twice, and "Leader"
+// is wrong when the status being shown is your own.
+export function presenceDot(item, { withLabel = false, silent = false } = {}) {
+  if (!item.online) return "";
+  const status = item.presenceStatus === "ingame" ? "ingame" : "online";
+  const label = status === "ingame" ? "Leader online in game" : "Leader online";
+  const text = withLabel
+    ? escapeHtml(label)
+    : silent
+      ? ""
+      : `<span class="sr-only">${escapeHtml(label)}</span>`;
+  return `<span class="presence is-${status}"${
+    silent ? "" : ` title="${escapeHtml(label)}"`
+  }><i aria-hidden="true"></i>${text}</span>`;
+}
+
+export function presenceSummary(status) {
+  const current = PRESENCE_LABELS[status] ? status : "online";
+  return `${presenceDot({ online: current !== "invisible", presenceStatus: current }, { silent: true })}<span>${escapeHtml(
+    PRESENCE_LABELS[current]
+  )}</span>`;
+}
+
+export function presenceControl(user) {
+  const presence = user.presence || {};
+  const current = presence.status || "online";
+  const options = Object.entries(PRESENCE_LABELS)
+    .map(
+      ([value, label]) =>
+        `<option value="${value}" ${value === current ? "selected" : ""}>${escapeHtml(label)}</option>`
+    )
+    .join("");
+  const keeps = (user.keepMinutes || [0, 30, 60, 120, 240])
+    .map(
+      (minutes) =>
+        `<option value="${minutes}">${minutes === 0 ? "While tab is open" : `${minutes < 60 ? `${minutes}m` : `${minutes / 60}h`}`}</option>`
+    )
+    .join("");
+  return `
+    <details class="presence-menu">
+      <summary title="Your status">${presenceSummary(current)}</summary>
+      <div class="presence-panel">
+        <p class="kicker">Select your status</p>
+        <label class="field"><span class="sr-only">Status</span><select data-presence-status>${options}</select></label>
+        <label class="field"><span>And keep status for</span><select data-presence-keep>${keeps}</select></label>
+        <p class="muted presence-note" data-presence-note hidden></p>
+      </div>
+    </details>
+  `;
+}
+
 function reportForm(kind, id) {
   const options = Object.entries(REPORT_REASON_LABELS)
     .map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`)
@@ -190,7 +250,7 @@ export function clanCard(clan) {
         ${photo(clan)}
         <div>
           <p class="kicker">[${escapeHtml(clan.tag)}]${clan.allianceName ? ` · ${escapeHtml(clan.allianceName)}` : ""}</p>
-          <h3>${escapeHtml(clan.name)}</h3>
+          <h3>${escapeHtml(clan.name)} ${presenceDot(clan)}</h3>
           <p class="muted">${escapeHtml(clan.platform)} · ${escapeHtml(clan.tier)} · ${escapeHtml(clan.region)}</p>
         </div>
         <div class="card-pills">
@@ -395,6 +455,9 @@ export function browseView(clans, filters) {
           <label class="field"><span>Region</span><select name="region"><option value="">Any</option>${optionList(REGIONS, filters.region)}</select></label>
           <label class="field"><span>Language</span><select name="language"><option value="">Any</option>${optionList(LANGUAGES, filters.language)}</select></label>
           <label class="field"><span>Status</span><select name="status"><option value="">Any</option>${optionList(STATUSES, filters.status)}</select></label>
+          <label class="check" for="filter-online"><input id="filter-online" type="checkbox" name="online" value="1" ${
+            filters.online ? "checked" : ""
+          } /><span>Online now</span></label>
           <label class="field"><span>Your MR <em id="mr-readout">${filters.mr || 0}</em></span><input type="range" name="mr" min="0" max="36" value="${escapeHtml(filters.mr || "0")}" /></label>
         </form>
       </aside>
@@ -1027,7 +1090,7 @@ export function clanPage(clan, { admin = false } = {}) {
         <div><dt>MR</dt><dd>${clan.mrRequired === 0 ? "Any" : `${clan.mrRequired}+`}</dd></div>
         <div><dt>Region</dt><dd>${escapeHtml(clan.region)}</dd></div>
         <div><dt>Language</dt><dd>${escapeHtml(clan.language)}</dd></div>
-        <div><dt>Leader</dt><dd>${escapeHtml(clan.leader)}</dd></div>
+        <div><dt>Leader</dt><dd>${escapeHtml(clan.leader)} ${presenceDot(clan, { withLabel: true })}</dd></div>
         <div><dt>${postedStat(clan).label}</dt><dd>${timeAgo(postedStat(clan).at)}</dd></div>
       </dl>
       <div class="meter tall"><i style="width:${fillPercent(clan)}%"></i></div>
@@ -1156,6 +1219,7 @@ export function previewAlliance(form, imageUrl = null, videoUrl = null) {
 export function navAccount(user, { discord = false } = {}) {
   if (user) {
     return `
+      ${presenceControl(user)}
       <a class="btn btn-ghost" href="/account" data-link>${escapeHtml(user.username)}</a>
       <button class="btn btn-ghost" type="button" data-logout>Sign out</button>
     `;

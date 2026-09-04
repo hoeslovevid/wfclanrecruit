@@ -24,6 +24,9 @@ export const api = {
     request("/api/auth/forum/start", { method: "POST", body: JSON.stringify({ profileUrl }) }),
   forumCheck: (profileUrl) =>
     request("/api/auth/forum/check", { method: "POST", body: JSON.stringify({ profileUrl }) }),
+  presenceBeat: () => request("/api/presence/heartbeat", { method: "POST", body: "{}" }),
+  setPresence: (status, keepMinutes) =>
+    request("/api/presence", { method: "POST", body: JSON.stringify({ status, keepMinutes }) }),
   clans: () => request("/api/clans"),
   clan: (id) => request(`/api/clans/${id}`),
   createClan: (formData) => request("/api/clans", { method: "POST", body: formData }),

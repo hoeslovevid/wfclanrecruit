@@ -18,6 +18,7 @@ import {
   postView,
   previewAlliance,
   previewClan,
+  presenceSummary,
 } from "./views.js";
 import { privacyView } from "./privacy.js";
 import { aboutTooLong, isSafeHref, plainTextFromHtml, sanitizePostHtml, toEditorHtml } from "./richtext.js";
@@ -112,7 +113,68 @@ async function refresh() {
   state.clans = clansRes.clans;
   state.alliances = alliancesRes.alliances;
   renderNav();
+  startHeartbeat();
 }
+
+// Liveness is in-memory on the server (see server/presence.js), so the tab has
+// to keep saying it is here. Stop while hidden: a backgrounded tab or a closed
+// laptop should read as offline rather than hold the dot on forever.
+const HEARTBEAT_MS = 60 * 1000;
+let heartbeat = null;
+
+async function sendHeartbeat() {
+  if (document.hidden || !state.user) return;
+  try {
+    await api.presenceBeat();
+  } catch {
+    // A dropped heartbeat just ages out the dot; nothing to tell the user.
+  }
+}
+
+function startHeartbeat() {
+  if (heartbeat) clearInterval(heartbeat);
+  heartbeat = null;
+  if (!state.user) return;
+  sendHeartbeat();
+  heartbeat = setInterval(sendHeartbeat, HEARTBEAT_MS);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) sendHeartbeat();
+});
+
+// Repaint the menu in place. Re-rendering the nav would close the open
+// <details> the moment the user picked a status.
+function paintPresence(presence) {
+  document.querySelectorAll(".presence-menu").forEach((menu) => {
+    const summary = menu.querySelector("summary");
+    if (summary) summary.innerHTML = presenceSummary(presence.status);
+    const select = menu.querySelector("[data-presence-status]");
+    if (select) select.value = presence.status;
+  });
+}
+
+document.addEventListener("change", async (event) => {
+  const panel = event.target.closest(".presence-panel");
+  if (!panel) return;
+  const status = panel.querySelector("[data-presence-status]")?.value;
+  const keep = Number(panel.querySelector("[data-presence-keep]")?.value || 0);
+  const note = panel.querySelector("[data-presence-note]");
+  try {
+    const { presence } = await api.setPresence(status, keep);
+    if (state.user) state.user.presence = presence;
+    paintPresence(presence);
+    showNote(
+      note,
+      presence.until
+        ? `Held until ${new Date(presence.until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
+        : "",
+      "muted"
+    );
+  } catch (error) {
+    showNote(note, error.message);
+  }
+});
 
 function platformMatches(value, filter) {
   return value === filter || value === "All Platforms";
@@ -137,6 +199,7 @@ function applyClanFilters(clans, filters) {
     if (filters.region && clan.region !== filters.region) return false;
     if (filters.language && clan.language !== filters.language) return false;
     if (filters.status && clan.status !== filters.status) return false;
+    if (filters.online && !clan.online) return false;
     if (mr > 0 && clan.mrRequired > mr) return false;
     return true;
   });
@@ -186,6 +249,7 @@ function readFilters(form) {
     region: String(data.get("region") || ""),
     language: String(data.get("language") || ""),
     status: String(data.get("status") || ""),
+    online: data.get("online") === "1",
     mr: String(data.get("mr") || "0"),
     sort: String(data.get("sort") || "newest"),
   };
@@ -611,6 +675,7 @@ async function render() {
       region: params.region || "",
       language: params.language || "",
       status: params.status || "",
+      online: params.online === "1",
       mr: "0",
       sort: "newest",
     };
