@@ -100,8 +100,8 @@ export function sitemapXml(origin, { clans = [], alliances = [] } = {}) {
   const staticPages = ["/", "/browse", "/alliances", "/guide", "/privacy"];
   const urls = [
     ...staticPages.map((path) => urlEntry(origin, path)),
-    ...clans.map((item) => urlEntry(origin, `/clans/${item.id}`, item.bumpedAt || item.createdAt)),
-    ...alliances.map((item) => urlEntry(origin, `/alliances/${item.id}`, item.bumpedAt || item.createdAt)),
+    ...clans.filter((item) => !item.hidden).map((item) => urlEntry(origin, `/clans/${item.id}`, item.bumpedAt || item.createdAt)),
+    ...alliances.filter((item) => !item.hidden).map((item) => urlEntry(origin, `/alliances/${item.id}`, item.bumpedAt || item.createdAt)),
   ];
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">

@@ -303,6 +303,22 @@ button { cursor: pointer; }
 .nav-links a.is-active { color: var(--text); }
 
 .nav-actions, .account-slot, .row { display: flex; align-items: center; gap: 8px; }
+.nav-badge {
+  display: inline-flex;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+}
 
 .theme-switch {
   display: inline-flex;
@@ -789,6 +805,19 @@ select {
   background: transparent;
 }
 .check input:checked { background: var(--accent); border-color: var(--accent); }
+.filters .filter-playstyles {
+  max-height: 220px;
+  overflow: auto;
+  padding-right: 2px;
+}
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+.pager .btn[disabled] { opacity: 0.45; }
 
 .empty, .auth-card {
   padding: 48px 24px;

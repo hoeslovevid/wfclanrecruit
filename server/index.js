@@ -11,6 +11,7 @@ import { hashPassword, newToken, verifyPassword } from "./auth.js";
 import { initStorage, paths, postgresEnabled, readDb, storageLabel, writeDb, closePg } from "./db.js";
 import { rateLimit } from "./ratelimit.js";
 import { dropLegacyVideos, parseYouTubeId } from "../src/video.js";
+import { resizeListingImage } from "./image.js";
 import {
   HEARTBEAT_MS,
   KEEP_MINUTES,
@@ -27,6 +28,7 @@ import {
   REPORT_REASONS,
   activityAt as listingActivity,
   applyAllianceRoster,
+  isHidden,
   listingConflict,
   whisperName,
   withListingState,
@@ -258,6 +260,11 @@ function canRemove(user, listing) {
   return Boolean(user.admin) || listing.ownerId === user.id;
 }
 
+function canSeeListing(user, listing) {
+  if (!isHidden(listing)) return true;
+  return Boolean(user && (user.admin || listing.ownerId === user.id));
+}
+
 function publicOrigin(req) {
   if (process.env.PUBLIC_URL) return String(process.env.PUBLIC_URL).replace(/\/$/, "");
   if (process.env.RAILWAY_PUBLIC_DOMAIN) return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
@@ -343,6 +350,21 @@ function nextImage(existing, file) {
   if (!file) return existing ?? null;
   removeStoredFile(existing);
   return savedUpload(file);
+}
+
+async function processListingImage(req, res) {
+  const file = listingFile(req, "image");
+  if (!file) return true;
+  try {
+    const filename = await resizeListingImage(file.path);
+    file.filename = filename;
+    file.path = path.join(paths.uploadDir, filename);
+    return true;
+  } catch {
+    discardUploads(req);
+    res.status(400).json({ error: "That image could not be read. Use a PNG, JPG, WEBP, or GIF." });
+    return false;
+  }
 }
 
 function assertListingFiles(req, res) {
@@ -585,7 +607,7 @@ function decorateClan(clan, db) {
   // already public through `contacts`; a pending one has not agreed to be named
   // yet, so the raw roster never leaves the server.
   // `stats` is the owner's business, not a competitor's.
-  const { recruiters, stats, ...publicClan } = clan;
+  const { recruiters, stats, hiddenBy, hiddenAt, ...publicClan } = clan;
   return withBumpState({
     ...publicClan,
     allianceName: alliance?.name || null,
@@ -616,12 +638,13 @@ function rosterFor(clan, db) {
   });
 }
 
-function decorateAlliance(alliance, db) {
+function decorateAlliance(alliance, db, user = null) {
+  const { hiddenBy, hiddenAt, ...publicAlliance } = alliance;
   return withBumpState({
-    ...alliance,
+    ...publicAlliance,
     ...listingPresence(alliance, db.users),
     memberClans: (db.clans || [])
-      .filter((clan) => clan.allianceId === alliance.id)
+      .filter((clan) => clan.allianceId === alliance.id && canSeeListing(user, clan))
       .map((clan) => decorateClan(clan, db)),
   });
 }
@@ -1073,6 +1096,7 @@ app.get("/api/clans", (req, res) => {
   const db = readDb();
   const user = currentUser(req);
   const clans = db.clans
+    .filter((clan) => canSeeListing(user, clan))
     .map((clan) => withOwnerStats(decorateClan(clan, db), clan, user))
     .sort(sortListings)
     .map(trimListing);
@@ -1082,14 +1106,15 @@ app.get("/api/clans", (req, res) => {
 app.get("/api/clans/:id", (req, res) => {
   const db = readDb();
   const clan = db.clans.find((item) => item.id === req.params.id);
-  if (!clan) {
+  const user = currentUser(req);
+  if (!clan || !canSeeListing(user, clan)) {
     res.status(404).json({ error: "Clan not found." });
     return;
   }
   // Only the detail route returns the post body, so this is a read of the post
   // rather than a card impression.
-  if (!looksLikeBot(req.headers["user-agent"])) countView(clan.id);
-  res.json({ clan: withOwnerStats(decorateClan(clan, db), clan, currentUser(req)) });
+  if (!clan.hidden && !looksLikeBot(req.headers["user-agent"])) countView(clan.id);
+  res.json({ clan: withOwnerStats(decorateClan(clan, db), clan, user) });
 });
 
 app.post("/api/clans/:id/whisper", statsLimiter, (req, res) => {
@@ -1111,6 +1136,7 @@ app.post("/api/clans", requirePoster, listingLimiter, listingUpload, async (req,
     res.status(400).json({ error: invited.error });
     return;
   }
+  if (!(await processListingImage(req, res))) return;
 
   writeDb((db) => {
     const taken = listingTaken(db, invited);
@@ -1160,6 +1186,7 @@ app.put("/api/clans/:id", requirePoster, listingUpload, async (req, res) => {
     res.status(400).json({ error: invited.error });
     return;
   }
+  if (!(await processListingImage(req, res))) return;
 
   writeDb((db) => {
     const clan = db.clans.find((item) => item.id === req.params.id);
@@ -1335,6 +1362,22 @@ app.post("/api/clans/:id/pause", requireUser, (req, res) => {
   });
 });
 
+app.post("/api/clans/:id/hide", requireAdmin, (req, res) => {
+  writeDb((db) => {
+    const clan = db.clans.find((item) => item.id === req.params.id);
+    if (!clan) {
+      res.status(404).json({ error: "Clan not found." });
+      return db;
+    }
+    const hidden = Boolean(req.body.hidden);
+    clan.hidden = hidden;
+    clan.hiddenAt = hidden ? new Date().toISOString() : null;
+    clan.hiddenBy = hidden ? req.user.id : null;
+    res.json({ clan: decorateClan(clan, db) });
+    return db;
+  });
+});
+
 function writeReport(req, res, kind) {
   const reason = String(req.body.reason || "");
   if (!REPORT_REASONS.includes(reason)) {
@@ -1404,10 +1447,12 @@ app.delete("/api/clans/:id", requireUser, (req, res) => {
   });
 });
 
-app.get("/api/alliances", (_req, res) => {
+app.get("/api/alliances", (req, res) => {
   const db = readDb();
+  const user = currentUser(req);
   const alliances = db.alliances
-    .map((alliance) => decorateAlliance(alliance, db))
+    .filter((item) => canSeeListing(user, item))
+    .map((alliance) => decorateAlliance(alliance, db, user))
     .sort(sortListings)
     .map(trimListing);
   res.json({ alliances });
@@ -1415,13 +1460,14 @@ app.get("/api/alliances", (_req, res) => {
 
 app.get("/api/alliances/:id", (req, res) => {
   const db = readDb();
+  const user = currentUser(req);
   const alliance = db.alliances.find((item) => item.id === req.params.id);
-  if (!alliance) {
+  if (!alliance || !canSeeListing(user, alliance)) {
     res.status(404).json({ error: "Alliance not found." });
     return;
   }
   res.json({
-    alliance: decorateAlliance(alliance, db),
+    alliance: decorateAlliance(alliance, db, user),
   });
 });
 
@@ -1440,6 +1486,7 @@ app.post("/api/alliances", requirePoster, listingLimiter, listingUpload, async (
     res.status(400).json({ error: invited.error });
     return;
   }
+  if (!(await processListingImage(req, res))) return;
 
   writeDb((db) => {
     const taken = listingTaken(db, invited);
@@ -1486,6 +1533,7 @@ app.put("/api/alliances/:id", requirePoster, listingUpload, async (req, res) => 
     res.status(400).json({ error: invited.error });
     return;
   }
+  if (!(await processListingImage(req, res))) return;
 
   writeDb((db) => {
     const alliance = db.alliances.find((item) => item.id === req.params.id);
@@ -1566,6 +1614,22 @@ app.post("/api/alliances/:id/pause", requireUser, (req, res) => {
       return db;
     }
     alliance.paused = Boolean(req.body.paused);
+    res.json({ alliance: decorateAlliance(alliance, db) });
+    return db;
+  });
+});
+
+app.post("/api/alliances/:id/hide", requireAdmin, (req, res) => {
+  writeDb((db) => {
+    const alliance = db.alliances.find((item) => item.id === req.params.id);
+    if (!alliance) {
+      res.status(404).json({ error: "Alliance not found." });
+      return db;
+    }
+    const hidden = Boolean(req.body.hidden);
+    alliance.hidden = hidden;
+    alliance.hiddenAt = hidden ? new Date().toISOString() : null;
+    alliance.hiddenBy = hidden ? req.user.id : null;
     res.json({ alliance: decorateAlliance(alliance, db) });
     return db;
   });
@@ -1656,7 +1720,10 @@ async function sendListingPage(req, res, next, vite) {
       : (db.alliances || []).find((item) => item.id === match.id);
   const source = isProd ? path.join(distDir, "index.html") : indexPath;
   let html = fs.readFileSync(source, "utf8");
-  html = applySocialMeta(html, listing ? listingSocial(origin, listing, match.kind) : defaultSocial(origin));
+  html = applySocialMeta(
+    html,
+    listing && !listing.hidden ? listingSocial(origin, listing, match.kind) : defaultSocial(origin)
+  );
   if (vite) html = await vite.transformIndexHtml(req.originalUrl, html);
   res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).end(html);
 }

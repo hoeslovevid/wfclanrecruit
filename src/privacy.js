@@ -123,8 +123,8 @@ export function privacyView() {
           <li>Platform, region, language, status, member counts, MR, clan tier, founded year</li>
           <li>Playstyles you pick, including Warframe-specific tags such as Archon, Eidolon, or Cross-save</li>
           <li>Leader name, Discord invite URL, optional alliance link</li>
-          <li>Uploaded image (up to 2 MB) and an optional YouTube link, of which we store only the video id</li>
-          <li>Created time, last bump time, paused flag, invite check result, and the owner id of the account that posted it</li>
+          <li>Uploaded image (up to 2 MB; we resize it on save and store a WebP) and an optional YouTube link, of which we store only the video id</li>
+          <li>Created time, last bump time, paused flag, hidden flag, invite check result, and the owner id of the account that posted it</li>
         </ul>
         <p>Do not put private phone numbers, home addresses, government IDs, or passwords in a listing. Recruits and search engines can see public posts.</p>
 
@@ -272,7 +272,7 @@ export function privacyView() {
         <p class="kicker">12</p>
         <h2>How long we keep data</h2>
         <ul class="policy-bullets">
-          <li><strong>Public listings</strong> until you or a moderator remove them, or you delete your account (which also removes your listings and uploads).</li>
+          <li><strong>Public listings</strong> until you or a moderator remove them, or you delete your account (which also removes your listings and uploads). A moderator hide takes a listing off the public board but keeps the owner’s record until it is removed.</li>
           <li><strong>Listing reports</strong> until the operator resolves them or the project is shut down. Deleting your account clears your reporter id from reports you filed; the report text can remain for moderation history.</li>
           <li><strong>Account records</strong> until you delete the account, or the operator deletes it for abuse or shutdown.</li>
           <li><strong>Sessions</strong> 30 days from issue, or until you sign out. Signing out removes that session token, and expired session records are deleted automatically. Other devices stay signed in until those sessions expire or you delete the account.</li>
@@ -331,7 +331,7 @@ export function privacyView() {
               <tr><td>Stop this browser from being signed in</td><td>Click Sign out. That clears <code>wfr_session</code> and drops that session from our database.</td></tr>
               <tr><td>See what we store</td><td>Open <a href="/account" data-link>your account</a> and download a JSON copy with Download my data.</td></tr>
               <tr><td>Correct listing text, Discord invite, or images</td><td>Edit the listing from your account page.</td></tr>
-              <tr><td>Take a listing off the board</td><td>Pause recruiting (hides Discord) or remove it from your account page. Removing deletes that post’s uploads.</td></tr>
+              <tr><td>Take a listing off the board</td><td>Pause recruiting (hides Discord) or remove it from your account page. Removing deletes that post’s uploads. A moderator can hide a listing from the public board without deleting it.</td></tr>
               <tr><td>Report a listing</td><td>Open the listing URL and use Report this listing. You do not need an account.</td></tr>
               <tr><td>Stop being verified on a forum URL</td><td>Delete the account, or paste a different profile URL (that resets verification). Also delete the code from Warframe Forum About Me.</td></tr>
               <tr><td>Erase the account</td><td>Delete my account on the account page. This removes your user row, sessions, listings you own, and those uploads. Admin accounts cannot use this button so the board cannot be locked out.</td></tr>
@@ -367,6 +367,7 @@ export function privacyView() {
           <li>Discord invite lookup (reject invalid or expired invites on publish, bump, and a periodic re-check)</li>
           <li>Unique clan/alliance name and tag</li>
           <li>Stale listings (21 days without a bump hide Join Discord)</li>
+          <li>Moderator hide (a listing can be taken off the public board without deleting the owner’s record)</li>
           <li>Listing, bump, report, and forum-check rate limits</li>
         </ul>
         <p>That is anti-abuse gating, not a credit score and not ad targeting. There is no appeal form inside the app. If you believe a check failed in error, sign in with a Discord account that meets the rules, wait the cooldown, or open a GitHub issue without posting secrets.</p>

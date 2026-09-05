@@ -34,6 +34,8 @@ export const api = {
   bumpClan: (id) => request(`/api/clans/${id}/bump`, { method: "POST", body: "{}" }),
   pauseClan: (id, paused) =>
     request(`/api/clans/${id}/pause`, { method: "POST", body: JSON.stringify({ paused }) }),
+  hideClan: (id, hidden) =>
+    request(`/api/clans/${id}/hide`, { method: "POST", body: JSON.stringify({ hidden }) }),
   reportClan: (id, body) => request(`/api/clans/${id}/report`, { method: "POST", body: JSON.stringify(body) }),
   deleteClan: (id) => request(`/api/clans/${id}`, { method: "DELETE" }),
   countWhisper: (id) => request(`/api/clans/${id}/whisper`, { method: "POST", body: "{}" }),
@@ -51,6 +53,8 @@ export const api = {
   bumpAlliance: (id) => request(`/api/alliances/${id}/bump`, { method: "POST", body: "{}" }),
   pauseAlliance: (id, paused) =>
     request(`/api/alliances/${id}/pause`, { method: "POST", body: JSON.stringify({ paused }) }),
+  hideAlliance: (id, hidden) =>
+    request(`/api/alliances/${id}/hide`, { method: "POST", body: JSON.stringify({ hidden }) }),
   reportAlliance: (id, body) =>
     request(`/api/alliances/${id}/report`, { method: "POST", body: JSON.stringify(body) }),
   deleteAlliance: (id) => request(`/api/alliances/${id}`, { method: "DELETE" }),

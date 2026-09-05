@@ -112,6 +112,7 @@ export const REPORT_REASON_LABELS = {
 
 function listingBadges(item) {
   const bits = [];
+  if (item.hidden) bits.push(`<span class="pill is-stale">Hidden</span>`);
   if (item.paused) bits.push(`<span class="pill is-paused">Paused</span>`);
   if (item.stale) bits.push(`<span class="pill is-stale">Stale</span>`);
   if (item.inviteOk === false) bits.push(`<span class="pill is-trial">Invite failed</span>`);
@@ -119,6 +120,7 @@ function listingBadges(item) {
 }
 
 function recruitingNote(item) {
+  if (item.hidden) return "This listing is hidden from the board.";
   if (item.paused) return "Recruiting is paused. Discord is hidden until the leader turns it back on.";
   if (item.inviteOk === false) return "The Discord invite failed a check. The leader needs a working invite.";
   if (item.stale) return "This listing went 21 days without a bump, so Discord is hidden until the leader refreshes it.";
@@ -357,11 +359,13 @@ export function allianceCard(alliance) {
 }
 
 export function homeView({ clans, alliances, user, auth = {} }) {
-  const featuredClans = clans.filter((item) => item.featured).slice(0, 3);
-  const featuredAlliances = alliances.filter((item) => item.featured).slice(0, 2);
-  const homeAlliances = (featuredAlliances.length ? featuredAlliances : alliances).slice(0, 2);
-  const recent = clans.slice(0, 6);
-  const openCount = clans.filter((item) => item.status === "Open").length;
+  const board = (clans || []).filter((item) => !item.hidden);
+  const boardAlliances = (alliances || []).filter((item) => !item.hidden);
+  const featuredClans = board.filter((item) => item.featured).slice(0, 3);
+  const featuredAlliances = boardAlliances.filter((item) => item.featured).slice(0, 2);
+  const homeAlliances = (featuredAlliances.length ? featuredAlliances : boardAlliances).slice(0, 2);
+  const recent = board.slice(0, 6);
+  const openCount = board.filter((item) => item.status === "Open").length;
 
   return `
     <section class="hero">
@@ -373,14 +377,14 @@ export function homeView({ clans, alliances, user, auth = {} }) {
         <button class="btn btn-primary" type="submit">Search</button>
       </form>
       <dl class="hero-stats">
-        <div><dt>Clan posts</dt><dd>${clans.length}</dd></div>
+        <div><dt>Clan posts</dt><dd>${board.length}</dd></div>
         <div><dt>Open now</dt><dd>${openCount}</dd></div>
-        <div><dt>Alliances</dt><dd>${alliances.length}</dd></div>
+        <div><dt>Alliances</dt><dd>${boardAlliances.length}</dd></div>
       </dl>
     </section>
 
     ${
-      !clans.length && !alliances.length
+      !board.length && !boardAlliances.length
         ? `<section class="section">${emptyState()}</section>`
         : ""
     }
@@ -465,8 +469,9 @@ function optionList(values, selected = "") {
     .join("");
 }
 
-export function browseView(clans, filters) {
-  const label = clans.length === 1 ? "1 clan" : `${clans.length} clans`;
+export function browseView(clans, filters, pager) {
+  const total = pager?.total ?? clans.length;
+  const label = total === 1 ? "1 clan" : `${total} clans`;
   return `
     <section class="page-hero">
       <p class="eyebrow">Clans</p>
@@ -480,10 +485,16 @@ export function browseView(clans, filters) {
           <button class="text-link" type="button" data-clear-filters>Reset</button>
         </div>
         <form id="filter-form">
+          <label class="check" for="filter-recruiting"><input id="filter-recruiting" type="checkbox" name="recruiting" value="1" ${
+            filters.recruiting ? "checked" : ""
+          } /><span>Recruiting now</span></label>
           <label class="field"><span>Keyword</span><input type="search" name="q" value="${escapeHtml(filters.q)}" placeholder="Name, tag, playstyle…" /></label>
           <label class="field"><span>Platform</span><select name="platform"><option value="">Any</option>${optionList(PLATFORMS, filters.platform)}</select></label>
           <label class="field"><span>Tier</span><select name="tier"><option value="">Any</option>${optionList(TIERS, filters.tier)}</select></label>
-          <label class="field"><span>Playstyle</span><select name="playstyle"><option value="">Any</option>${optionList(PLAYSTYLES, filters.playstyle)}</select></label>
+          <fieldset class="fieldset">
+            <legend>Playstyles</legend>
+            <div class="checks filter-playstyles">${checks("playstyle", PLAYSTYLES, filters.playstyles || [])}</div>
+          </fieldset>
           <label class="field"><span>Region</span><select name="region"><option value="">Any</option>${optionList(REGIONS, filters.region)}</select></label>
           <label class="field"><span>Language</span><select name="language"><option value="">Any</option>${optionList(LANGUAGES, filters.language)}</select></label>
           <label class="field"><span>Status</span><select name="status"><option value="">Any</option>${optionList(STATUSES, filters.status)}</select></label>
@@ -505,14 +516,15 @@ export function browseView(clans, filters) {
             </select>
           </label>
         </div>
-        <div id="results">${clans.length ? `<div class="grid">${clans.map((clan) => clanCard(clan)).join("")}</div>` : emptyState()}</div>
+        <div id="results">${clanResultsHtml(clans, filters, pager)}</div>
       </div>
     </section>
   `;
 }
 
-export function alliancesView(alliances, filters) {
-  const label = alliances.length === 1 ? "1 alliance" : `${alliances.length} alliances`;
+export function alliancesView(alliances, filters, pager) {
+  const total = pager?.total ?? alliances.length;
+  const label = total === 1 ? "1 alliance" : `${total} alliances`;
   return `
     <section class="page-hero">
       <p class="eyebrow">Alliances</p>
@@ -526,6 +538,9 @@ export function alliancesView(alliances, filters) {
           <button class="text-link" type="button" data-clear-filters>Reset</button>
         </div>
         <form id="filter-form">
+          <label class="check" for="filter-recruiting"><input id="filter-recruiting" type="checkbox" name="recruiting" value="1" ${
+            filters.recruiting ? "checked" : ""
+          } /><span>Recruiting now</span></label>
           <label class="field"><span>Keyword</span><input type="search" name="q" value="${escapeHtml(filters.q)}" /></label>
           <label class="field"><span>Platform</span><select name="platform"><option value="">Any</option>${optionList(PLATFORMS, filters.platform)}</select></label>
           <label class="field"><span>Region</span><select name="region"><option value="">Any</option>${optionList(REGIONS, filters.region)}</select></label>
@@ -533,9 +548,9 @@ export function alliancesView(alliances, filters) {
           <label class="field"><span>Status</span><select name="status"><option value="">Any</option>${optionList(STATUSES, filters.status)}</select></label>
         </form>
       </aside>
-      <div>
-        <p class="muted">${label}</p>
-        ${alliances.length ? `<div class="grid two">${alliances.map((item) => allianceCard(item)).join("")}</div>` : emptyState()}
+      <div class="browse-main">
+        <p class="muted" id="result-count">${label}</p>
+        <div id="results">${allianceResultsHtml(alliances, filters, pager)}</div>
       </div>
     </section>
   `;
@@ -543,6 +558,37 @@ export function alliancesView(alliances, filters) {
 
 export function emptyState(title = "Nothing to see here", detail = "Check back later, or post a listing.") {
   return `<div class="empty"><h3>${escapeHtml(title)}</h3><p class="muted">${escapeHtml(detail)}</p></div>`;
+}
+
+function browseEmpty(kind, filters) {
+  if (filters.recruiting) {
+    return emptyState(
+      "Nothing to see here",
+      `No ${kind} recruiting right now. Uncheck Recruiting now to see paused or stale posts.`
+    );
+  }
+  return emptyState();
+}
+
+function pagerBar(pager, noun) {
+  if (!pager || pager.pages <= 1) return "";
+  return `<nav class="pager" aria-label="${escapeHtml(noun)} pages">
+    <button class="btn btn-ghost" type="button" data-page="${pager.page - 1}" ${pager.page <= 1 ? "disabled" : ""}>Previous</button>
+    <span class="muted">Page ${pager.page} of ${pager.pages}</span>
+    <button class="btn btn-ghost" type="button" data-page="${pager.page + 1}" ${pager.page >= pager.pages ? "disabled" : ""}>Next</button>
+  </nav>`;
+}
+
+export function clanResultsHtml(clans, filters, pager) {
+  const total = pager?.total ?? clans.length;
+  if (!total) return browseEmpty("clans", filters);
+  return `<div class="grid">${clans.map((clan) => clanCard(clan)).join("")}</div>${pagerBar(pager, "Clan")}`;
+}
+
+export function allianceResultsHtml(alliances, filters, pager) {
+  const total = pager?.total ?? alliances.length;
+  if (!total) return browseEmpty("alliances", filters);
+  return `<div class="grid two">${alliances.map((item) => allianceCard(item)).join("")}</div>${pagerBar(pager, "Alliance")}`;
 }
 
 function parseLines(value) {
@@ -975,13 +1021,13 @@ export function accountView({ user, clans, alliances, reports = [] }) {
     </section>
     <section class="section">
       <div class="section-head"><h2>${admin ? "Clan posts" : "Your clans"}</h2><a class="text-link" href="/post" data-link>New clan</a></div>
-      ${listingList(clans, "clan", "You have not posted a clan yet.")}
+      ${listingList(clans, "clan", "You have not posted a clan yet.", { admin })}
     </section>
     ${recruiterInvitesPanel(user)}
     ${recruitingOnPanel(user)}
     <section class="section">
       <div class="section-head"><h2>${admin ? "Alliance posts" : "Your alliances"}</h2><a class="text-link" href="/post-alliance" data-link>New alliance</a></div>
-      ${listingList(alliances, "alliance", "You have not posted an alliance yet.")}
+      ${listingList(alliances, "alliance", "You have not posted an alliance yet.", { admin })}
     </section>
     ${admin ? reportsPanel(reports) : ""}
     <section class="section">
@@ -1109,13 +1155,14 @@ function listingStats(item) {
   </p>`;
 }
 
-function listingList(items, kind, emptyText) {
+function listingList(items, kind, emptyText, { admin = false } = {}) {
   if (!items.length) return `<p class="muted">${emptyText}</p>`;
   const editPath = kind === "clan" ? "/post" : "/post-alliance";
   const openPath = kind === "clan" ? "/clans" : "/alliances";
   const bumpAttr = kind === "clan" ? "data-bump-clan" : "data-bump-alliance";
   const deleteAttr = kind === "clan" ? "data-delete-clan" : "data-delete-alliance";
   const pauseAttr = kind === "clan" ? "data-pause-clan" : "data-pause-alliance";
+  const hideAttr = kind === "clan" ? "data-hide-clan" : "data-hide-alliance";
   return `<div class="list">${items
     .map((item) => {
       const badges = listingBadges(item);
@@ -1133,6 +1180,13 @@ function listingList(items, kind, emptyText) {
                 <button class="btn btn-ghost" type="button" ${pauseAttr}="${escapeHtml(item.id)}" data-paused="${item.paused ? "0" : "1"}">${
                   item.paused ? "Resume" : "Pause"
                 }</button>
+                ${
+                  admin
+                    ? `<button class="btn btn-ghost" type="button" ${hideAttr}="${escapeHtml(item.id)}" data-hidden="${item.hidden ? "0" : "1"}">${
+                        item.hidden ? "Unhide" : "Hide"
+                      }</button>`
+                    : ""
+                }
                 <button class="btn btn-ghost" type="button" ${bumpAttr}="${escapeHtml(item.id)}" ${item.canBump ? "" : "disabled"} title="${item.canBump ? "Send this post to the top of the board" : "You can bump once every 12 hours"}">Bump</button>
                 <button class="btn btn-ghost" type="button" ${deleteAttr}="${escapeHtml(item.id)}">Remove</button>
               </div>
@@ -1209,7 +1263,7 @@ export function guideView() {
           <li>Clan names and tags are unique. Do not post someone else’s name.</li>
           <li>Be exact about MR, trials, and behavior rules.</li>
           <li>Bump at least every 21 days or the listing goes stale and Discord is hidden.</li>
-          <li>You can pause recruiting or remove your own posts from the account page.</li>
+          <li>You can pause recruiting or remove your own posts from the account page. Moderators can hide a listing from the board without deleting it.</li>
           <li>The <a href="/privacy" data-link>privacy policy</a> lists what we store and how to download or delete it.</li>
         </ul>
       </article>
@@ -1263,7 +1317,8 @@ export function clanPage(clan, { admin = false } = {}) {
       <div class="row listing-actions">
         ${joinDiscord(clan, `Join ${clan.name} on Discord`)}
         <button class="btn btn-ghost" type="button" data-copy-url>Copy link</button>
-        ${admin ? `<button class="btn btn-ghost" type="button" data-delete-clan="${escapeHtml(clan.id)}">Remove listing</button>` : ""}
+        ${admin ? `<button class="btn btn-ghost" type="button" data-hide-clan="${escapeHtml(clan.id)}" data-hidden="${clan.hidden ? "0" : "1"}">${clan.hidden ? "Unhide listing" : "Hide listing"}</button>
+        <button class="btn btn-ghost" type="button" data-delete-clan="${escapeHtml(clan.id)}">Remove listing</button>` : ""}
       </div>
       ${reportForm("clan", clan.id)}
     </article>
@@ -1314,7 +1369,8 @@ export function alliancePage(alliance, { admin = false } = {}) {
       <div class="row listing-actions">
         ${joinDiscord(alliance, `Join ${alliance.name} on Discord`)}
         <button class="btn btn-ghost" type="button" data-copy-url>Copy link</button>
-        ${admin ? `<button class="btn btn-ghost" type="button" data-delete-alliance="${escapeHtml(alliance.id)}">Remove listing</button>` : ""}
+        ${admin ? `<button class="btn btn-ghost" type="button" data-hide-alliance="${escapeHtml(alliance.id)}" data-hidden="${alliance.hidden ? "0" : "1"}">${alliance.hidden ? "Unhide listing" : "Hide listing"}</button>
+        <button class="btn btn-ghost" type="button" data-delete-alliance="${escapeHtml(alliance.id)}">Remove listing</button>` : ""}
       </div>
       ${reportForm("alliance", alliance.id)}
     </article>
@@ -1378,9 +1434,13 @@ export function previewAlliance(form, imageUrl = null, videoId = null) {
 
 export function navAccount(user, { discord = false } = {}) {
   if (user) {
+    const invites = (user.invites || []).length;
+    const badge = invites
+      ? `<span class="nav-badge" aria-label="${invites} recruiter invite${invites === 1 ? "" : "s"}">${invites}</span>`
+      : "";
     return `
       ${presenceControl(user)}
-      <a class="btn btn-ghost" href="/account" data-link>${escapeHtml(user.username)}</a>
+      <a class="btn btn-ghost" href="/account" data-link>${escapeHtml(user.username)}${badge}</a>
       <button class="btn btn-ghost" type="button" data-logout>Sign out</button>
     `;
   }

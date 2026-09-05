@@ -1,16 +1,16 @@
-import { TIER_CAPS } from "./data.js";
 import { api } from "./api.js";
 import {
   accountView,
   allianceCard,
   alliancePage,
   alliancePostView,
+  allianceResultsHtml,
   alliancesView,
   authView,
   browseView,
   clanCard,
   clanPage,
-  emptyState,
+  clanResultsHtml,
   guideView,
   homeView,
   navAccount,
@@ -24,6 +24,14 @@ import {
 import { privacyView } from "./privacy.js";
 import { aboutTooLong, isSafeHref, plainTextFromHtml, sanitizePostHtml, toEditorHtml } from "./richtext.js";
 import { parseYouTubeId } from "./video.js";
+import {
+  applyAllianceFilters,
+  applyClanFilters,
+  defaultFilters,
+  filtersFromSearch,
+  filtersToSearch,
+  paginate,
+} from "./browse.js";
 
 const app = document.querySelector("#app");
 const nav = document.querySelector("#site-nav");
@@ -178,80 +186,18 @@ document.addEventListener("change", async (event) => {
   }
 });
 
-function platformMatches(value, filter) {
-  return value === filter || value === "All Platforms";
-}
-
-function alliancePlatformMatches(platforms, filter) {
-  const list = platforms || [];
-  return list.includes(filter) || list.includes("All Platforms");
-}
-
-function applyClanFilters(clans, filters) {
-  const q = filters.q.toLowerCase();
-  const mr = Number(filters.mr || 0);
-  let list = clans.filter((clan) => {
-    const hay = [clan.name, clan.tag, clan.headline, clan.summary, clan.playstyles.join(" "), clan.allianceName || ""]
-      .join(" ")
-      .toLowerCase();
-    if (q && !hay.includes(q)) return false;
-    if (filters.platform && !platformMatches(clan.platform, filters.platform)) return false;
-    if (filters.tier && clan.tier !== filters.tier) return false;
-    if (filters.playstyle && !clan.playstyles.includes(filters.playstyle)) return false;
-    if (filters.region && clan.region !== filters.region) return false;
-    if (filters.language && clan.language !== filters.language) return false;
-    if (filters.status && clan.status !== filters.status) return false;
-    if (filters.online && !clan.online) return false;
-    if (mr > 0 && clan.mrRequired > mr) return false;
-    return true;
-  });
-  if (filters.sort === "open") {
-    const rank = { Open: 0, Selective: 1, "Trial Required": 2 };
-    list.sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9));
-  } else if (filters.sort === "space") {
-    list.sort((a, b) => TIER_CAPS[b.tier] - b.members - (TIER_CAPS[a.tier] - a.members));
-  } else if (filters.sort === "mr") {
-    list.sort((a, b) => a.mrRequired - b.mrRequired);
-  } else {
-    list.sort((a, b) => {
-      if (a.recruiting !== b.recruiting) return a.recruiting ? -1 : 1;
-      return new Date(b.bumpedAt || b.createdAt) - new Date(a.bumpedAt || a.createdAt);
-    });
-  }
-  return list;
-}
-
-function applyAllianceFilters(alliances, filters) {
-  const q = filters.q.toLowerCase();
-  return alliances
-    .filter((item) => {
-      const hay = [item.name, item.tag, item.headline, item.summary, (item.platforms || []).join(" ")]
-        .join(" ")
-        .toLowerCase();
-      if (q && !hay.includes(q)) return false;
-      if (filters.platform && !alliancePlatformMatches(item.platforms, filters.platform)) return false;
-      if (filters.region && item.region !== filters.region) return false;
-      if (filters.language && item.language !== filters.language) return false;
-      if (filters.status && item.status !== filters.status) return false;
-      return true;
-    })
-    .sort((a, b) => {
-      if (a.recruiting !== b.recruiting) return a.recruiting ? -1 : 1;
-      return new Date(b.bumpedAt || b.createdAt) - new Date(a.bumpedAt || a.createdAt);
-    });
-}
-
 function readFilters(form) {
   const data = new FormData(form);
   return {
     q: String(data.get("q") || "").trim(),
     platform: String(data.get("platform") || ""),
     tier: String(data.get("tier") || ""),
-    playstyle: String(data.get("playstyle") || ""),
+    playstyles: data.getAll("playstyle"),
     region: String(data.get("region") || ""),
     language: String(data.get("language") || ""),
     status: String(data.get("status") || ""),
     online: data.get("online") === "1",
+    recruiting: data.get("recruiting") === "1",
     mr: String(data.get("mr") || "0"),
     sort: String(data.get("sort") || "newest"),
   };
@@ -729,71 +675,95 @@ async function render() {
             : "WF Clan Recruit — Warframe Clans & Alliances";
 
   if (path === "/browse") {
-    const filters = {
-      q: params.q || "",
-      platform: params.platform || "",
-      tier: "",
-      playstyle: params.playstyle || "",
-      region: params.region || "",
-      language: params.language || "",
-      status: params.status || "",
-      online: params.online === "1",
-      mr: "0",
-      sort: "newest",
-    };
-    const filtered = applyClanFilters(state.clans, filters);
-    app.innerHTML = browseView(filtered, filters);
+    const { filters: initial, page: startPage } = filtersFromSearch(window.location.search);
+    let page = startPage;
+    const windowed = paginate(applyClanFilters(state.clans, initial), page);
+    page = windowed.page;
+    app.innerHTML = browseView(windowed.items, initial, windowed);
     const form = app.querySelector("#filter-form");
-    const refreshList = () => {
+    const paint = (nextPage = 1) => {
       const next = readFilters(form);
       const list = applyClanFilters(state.clans, next);
+      const windowedNext = paginate(list, nextPage);
+      page = windowedNext.page;
       const mr = app.querySelector("#mr-readout");
       if (mr) mr.textContent = next.mr;
       const count = app.querySelector("#result-count");
-      if (count) count.textContent = list.length === 1 ? "1 clan" : `${list.length} clans`;
+      if (count) count.textContent = windowedNext.total === 1 ? "1 clan" : `${windowedNext.total} clans`;
       const results = app.querySelector("#results");
-      results.innerHTML = list.length
-        ? `<div class="grid">${list.map((clan) => clanCard(clan)).join("")}</div>`
-        : emptyState();
+      results.innerHTML = clanResultsHtml(windowedNext.items, next, windowedNext);
       bindCards(results);
+      const qs = filtersToSearch(next, page);
+      const nextUrl = `/browse${qs}`;
+      if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+        history.replaceState({}, "", nextUrl);
+      }
     };
-    app.querySelector(".browse")?.addEventListener("input", refreshList);
-    app.querySelector(".browse")?.addEventListener("change", refreshList);
+    form?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      paint(1);
+    });
+    app.querySelector(".browse")?.addEventListener("input", () => paint(1));
+    app.querySelector(".browse")?.addEventListener("change", () => paint(1));
     app.querySelector("[data-clear-filters]")?.addEventListener("click", () => {
+      const fresh = defaultFilters();
       form.reset();
       form.mr.value = "0";
-      refreshList();
+      form.querySelector("[name='recruiting']").checked = fresh.recruiting;
+      form.querySelectorAll("[name='playstyle']").forEach((input) => {
+        input.checked = false;
+      });
+      paint(1);
+    });
+    app.querySelector("#results")?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-page]");
+      if (!button || button.disabled) return;
+      paint(Number(button.dataset.page));
+      app.querySelector("#results")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
     bindCards();
     return;
   }
 
   if (path === "/alliances") {
-    const filters = {
-      q: params.q || "",
-      platform: params.platform || "",
-      region: params.region || "",
-      language: params.language || "",
-      status: params.status || "",
-    };
-    app.innerHTML = alliancesView(applyAllianceFilters(state.alliances, filters), filters);
+    const { filters: initial, page: startPage } = filtersFromSearch(window.location.search);
+    let page = startPage;
+    const windowed = paginate(applyAllianceFilters(state.alliances, initial), page);
+    page = windowed.page;
+    app.innerHTML = alliancesView(windowed.items, initial, windowed);
     const form = app.querySelector("#filter-form");
-    const refreshList = () => {
+    const paint = (nextPage = 1) => {
       const next = readFilters(form);
       const list = applyAllianceFilters(state.alliances, next);
-      const host = app.querySelector(".browse > div:last-child");
-      host.innerHTML = `<p class="muted">${list.length === 1 ? "1 alliance" : `${list.length} alliances`}</p>${
-        list.length
-          ? `<div class="grid two">${list.map((item) => allianceCard(item)).join("")}</div>`
-          : emptyState()
-      }`;
-      bindCards(host);
+      const windowedNext = paginate(list, nextPage);
+      page = windowedNext.page;
+      const count = app.querySelector("#result-count");
+      if (count) count.textContent = windowedNext.total === 1 ? "1 alliance" : `${windowedNext.total} alliances`;
+      const results = app.querySelector("#results");
+      results.innerHTML = allianceResultsHtml(windowedNext.items, next, windowedNext);
+      bindCards(results);
+      const qs = filtersToSearch(next, page);
+      const nextUrl = `/alliances${qs}`;
+      if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+        history.replaceState({}, "", nextUrl);
+      }
     };
-    app.querySelector(".browse")?.addEventListener("input", refreshList);
-    app.querySelector(".browse")?.addEventListener("change", refreshList);
+    form?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      paint(1);
+    });
+    app.querySelector(".browse")?.addEventListener("input", () => paint(1));
+    app.querySelector(".browse")?.addEventListener("change", () => paint(1));
     app.querySelector("[data-clear-filters]")?.addEventListener("click", () => {
       form.reset();
-      refreshList();
+      form.querySelector("[name='recruiting']").checked = true;
+      paint(1);
+    });
+    app.querySelector("#results")?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-page]");
+      if (!button || button.disabled) return;
+      paint(Number(button.dataset.page));
+      app.querySelector("#results")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
     bindCards();
     return;
@@ -1088,6 +1058,34 @@ document.addEventListener("click", async (event) => {
     event.preventDefault();
     try {
       await api.pauseAlliance(pauseAlliance.dataset.pauseAlliance, pauseAlliance.dataset.paused === "1");
+      await refresh();
+      render();
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
+  const hideClan = event.target.closest("[data-hide-clan]");
+  if (hideClan) {
+    event.preventDefault();
+    const hide = hideClan.dataset.hidden === "1";
+    if (hide && !confirm("Hide this listing from the board? The owner keeps it, and you can unhide it later.")) return;
+    try {
+      await api.hideClan(hideClan.dataset.hideClan, hide);
+      await refresh();
+      render();
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
+  const hideAlliance = event.target.closest("[data-hide-alliance]");
+  if (hideAlliance) {
+    event.preventDefault();
+    const hide = hideAlliance.dataset.hidden === "1";
+    if (hide && !confirm("Hide this listing from the board? The owner keeps it, and you can unhide it later.")) return;
+    try {
+      await api.hideAlliance(hideAlliance.dataset.hideAlliance, hide);
       await refresh();
       render();
     } catch (error) {

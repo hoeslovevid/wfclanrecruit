@@ -11,8 +11,12 @@ export function isStale(item) {
   return Date.now() - at > STALE_AFTER_MS;
 }
 
+export function isHidden(item) {
+  return Boolean(item?.hidden);
+}
+
 export function isRecruiting(item) {
-  return !item.paused && !isStale(item) && item.inviteOk !== false;
+  return !isHidden(item) && !item.paused && !isStale(item) && item.inviteOk !== false;
 }
 
 export function nameKey(value) {
@@ -35,10 +39,12 @@ export function listingConflict(list, { name, tag, id }) {
 export function withListingState(item) {
   const stale = isStale(item);
   const paused = Boolean(item.paused);
+  const hidden = isHidden(item);
   return {
     ...item,
     stale,
     paused,
+    hidden,
     recruiting: isRecruiting(item),
   };
 }
