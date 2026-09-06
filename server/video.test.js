@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { dropLegacyVideos, parseYouTubeId, youTubeEmbedUrl } from "../src/video.js";
+import { dropLegacyVideos, parseVideoList, parseYouTubeId, videoList, youTubeEmbedUrl } from "../src/video.js";
 
 const ID = "dQw4w9WgXcQ";
 
@@ -117,4 +117,50 @@ test("dropLegacyVideos is a no-op the second time", () => {
 test("dropLegacyVideos survives missing input", () => {
   assert.deepEqual(dropLegacyVideos(), []);
   assert.deepEqual(dropLegacyVideos([null, undefined]), []);
+});
+
+const ID2 = "abcdefghijk";
+const ID3 = "ABCDEFGHIJK";
+
+test("videoList reads the new array and falls back to the legacy field", () => {
+  assert.deepEqual(videoList({ videos: [ID, ID2] }), [ID, ID2]);
+  assert.deepEqual(videoList({ video: ID }), [ID], "a listing written before the gallery still plays");
+  assert.deepEqual(videoList({ videos: [], video: ID }), [ID], "an empty array is not a choice to have no video");
+  assert.deepEqual(videoList({}), []);
+  assert.deepEqual(videoList(), []);
+});
+
+test("videoList drops anything that is not an eleven-character id", () => {
+  assert.deepEqual(videoList({ videos: [ID, "/uploads/clip.mp4", "", null] }), [ID]);
+  assert.deepEqual(videoList({ video: "/uploads/clip.mp4" }), []);
+});
+
+test("parseVideoList takes several links, skips blanks, and dedupes", () => {
+  const result = parseVideoList([
+    `https://youtu.be/${ID}`,
+    "",
+    `https://www.youtube.com/watch?v=${ID2}`,
+    `https://www.youtube.com/watch?v=${ID}`,
+  ]);
+  assert.deepEqual(result, { videos: [ID, ID2] });
+});
+
+test("parseVideoList caps the list and names the row that failed", () => {
+  assert.deepEqual(parseVideoList([ID, ID2, ID3, ID, ID2], 2), { videos: [ID, ID2] });
+  const bad = parseVideoList([ID, "https://vimeo.com/12345"]);
+  assert.match(bad.error, /^Video 2 /);
+  assert.equal(bad.videos, undefined, "a bad row must not publish a partial list");
+});
+
+test("parseVideoList treats an empty form as no video rather than an error", () => {
+  assert.deepEqual(parseVideoList([]), { videos: [] });
+  assert.deepEqual(parseVideoList(["", "  "]), { videos: [] });
+});
+
+test("dropLegacyVideos sweeps uploaded clips out of the videos array too", () => {
+  const listings = [{ id: "a", videos: ["/uploads/1712-abc.mp4", ID], video: "/uploads/1712-abc.mp4" }];
+  assert.deepEqual(dropLegacyVideos(listings), ["/uploads/1712-abc.mp4", "/uploads/1712-abc.mp4"]);
+  assert.deepEqual(listings[0].videos, [ID]);
+  assert.equal(listings[0].video, null);
+  assert.deepEqual(dropLegacyVideos(listings), [], "the sweep stays idempotent");
 });

@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { hashPassword, newToken, verifyPassword } from "./auth.js";
 import { initStorage, paths, postgresEnabled, readDb, storageLabel, writeDb, closePg } from "./db.js";
 import { rateLimit } from "./ratelimit.js";
-import { dropLegacyVideos, parseYouTubeId } from "../src/video.js";
+import { dropLegacyVideos, parseVideoList } from "../src/video.js";
 import { resizeListingImage } from "./image.js";
 import {
   HEARTBEAT_MS,
@@ -33,8 +33,16 @@ import {
   whisperName,
   withListingState,
 } from "./listing.js";
-import { aboutTooLong, normalizeAbout, plainTextFromHtml } from "../src/richtext.js";
-import { normalizeContact, wantsDiscord } from "../src/data.js";
+import { aboutTooLong, isSafeHref, normalizeAbout, plainTextFromHtml } from "../src/richtext.js";
+import {
+  LINK_MAX,
+  TAG_MAX,
+  VIDEO_MAX,
+  normalizeContact,
+  normalizeLinks,
+  wantsDiscord,
+  wantsWhisper,
+} from "../src/data.js";
 import {
   FLUSH_MS,
   addStats,
@@ -379,12 +387,40 @@ function assertListingFiles(req, res) {
 
 // A blank box means "no video"; anything else must reduce to a YouTube id, so a
 // typo is reported now rather than rendering an empty frame on the public post.
-function parseListingVideo(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return { video: null };
-  const id = parseYouTubeId(raw);
-  if (!id) return { error: "Paste a YouTube link, or leave the video box empty." };
-  return { video: id };
+function parseListingVideos(value) {
+  return parseVideoList(asArray(value), VIDEO_MAX);
+}
+
+// The composer sends the links as one JSON array so an empty row disappears
+// rather than arriving as a blank pair. Everything after this point can trust
+// that each entry is a known kind and an http/https URL.
+function parseListingLinks(value) {
+  let rows = [];
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    if (Array.isArray(parsed)) rows = parsed;
+  } catch {
+    return { error: "Could not read the links list." };
+  }
+  const supplied = rows.filter((row) => String(row?.url || "").trim());
+  const links = normalizeLinks(supplied, isSafeHref);
+  if (supplied.length && !links.length) {
+    return { error: "Links must start with http:// or https://." };
+  }
+  if (supplied.length > LINK_MAX) {
+    return { error: `You can add up to ${LINK_MAX} links.` };
+  }
+  return { links };
+}
+
+// Every listing has to leave a recruit somewhere to go. Discord used to be the
+// only route and so was mandatory; now that it is optional, this is what stops
+// a post going live with no way to reach anyone at all.
+function contactRouteError({ contact, discord, links }, user) {
+  if (wantsDiscord({ contact }) && discord) return null;
+  if (wantsWhisper({ contact }) && user?.forumName) return null;
+  if ((links || []).length) return null;
+  return "Give recruits at least one way to reach you: a Discord invite, a verified forum name, or a link.";
 }
 
 function parseClanBody(body, user) {
@@ -407,27 +443,29 @@ function parseClanBody(body, user) {
     return { error: "Pick at least one playstyle." };
   }
   const contact = normalizeContact(body.contact);
-  if (wantsDiscord({ contact }) && !validateDiscord(body.discord)) {
+  // The invite is optional now, so an empty box is fine - but anything typed
+  // into it still has to be a real invite rather than a clan's homepage.
+  const discord = wantsDiscord({ contact }) ? String(body.discord || "").trim() : "";
+  if (discord && !validateDiscord(discord)) {
     return { error: "Use a discord.gg or discord.com/invite link." };
   }
-  // A whisper-only listing whose owner has no verified forum name would show no
-  // way to reach anyone at all.
-  if (!wantsDiscord({ contact }) && !user.forumName) {
-    return { error: "Verify your Warframe Forum profile before you post a whisper-only listing." };
-  }
+  const parsedLinks = parseListingLinks(body.links);
+  if (parsedLinks.error) return { error: parsedLinks.error };
+  const routeError = contactRouteError({ contact, discord, links: parsedLinks.links }, user);
+  if (routeError) return { error: routeError };
   if (!TIER_CAPS[tier]) {
     return { error: "Choose a valid clan tier." };
   }
   if (!Number.isFinite(members) || members < 1 || members > TIER_CAPS[tier]) {
     return { error: `${tier} clans cap at ${TIER_CAPS[tier]} members.` };
   }
-  const video = parseListingVideo(body.video);
+  const video = parseListingVideos(body.video);
   if (video.error) return { error: video.error };
 
   return {
     fields: {
       name: String(body.name).slice(0, 48),
-      tag: String(body.tag).toUpperCase().slice(0, 5),
+      tag: String(body.tag).toUpperCase().slice(0, TAG_MAX),
       platform: String(body.platform || "PC"),
       tier,
       members,
@@ -438,21 +476,24 @@ function parseClanBody(body, user) {
       status: String(body.status || "Open"),
       leader: String(body.leader || user.forumName || user.username).slice(0, 32),
       contact,
-      discord: wantsDiscord({ contact }) ? String(body.discord) : "",
+      discord,
+      links: parsedLinks.links,
       paused: String(body.paused || "") === "1" || body.paused === true || body.paused === "true",
       founded: String(body.founded || new Date().getFullYear()),
       allianceId,
-      video: video.video,
+      videos: video.videos,
+      video: video.videos[0] || null,
       headline: String(body.headline).slice(0, 90),
       summary: String(body.summary).slice(0, 220),
       about,
       offering: lines(body.offering),
       requirements: lines(body.requirements),
+      howToJoin: lines(body.howToJoin),
     },
   };
 }
 
-function parseAllianceBody(body) {
+function parseAllianceBody(body, user) {
   const platforms = asArray(body.platforms);
   const clanCount = Number(body.clanCount);
   const members = Number(body.members);
@@ -469,34 +510,44 @@ function parseAllianceBody(body) {
   if (platforms.length === 0) {
     return { error: "Pick at least one platform." };
   }
-  if (!validateDiscord(body.discord)) {
+  const discord = String(body.discord || "").trim();
+  if (discord && !validateDiscord(discord)) {
     return { error: "Use a discord.gg or discord.com/invite link." };
   }
+  const parsedLinks = parseListingLinks(body.links);
+  if (parsedLinks.error) return { error: parsedLinks.error };
+  // An alliance page has no whisper box, so its only routes are the invite and
+  // the links row.
+  const routeError = contactRouteError({ contact: "discord", discord, links: parsedLinks.links }, user);
+  if (routeError) return { error: routeError };
   if (!Number.isFinite(clanCount) || clanCount < 1) {
     return { error: "Enter how many clans are in the alliance." };
   }
-  const video = parseListingVideo(body.video);
+  const video = parseListingVideos(body.video);
   if (video.error) return { error: video.error };
 
   return {
     fields: {
       name: String(body.name).slice(0, 48),
-      tag: String(body.tag).toUpperCase().slice(0, 5),
+      tag: String(body.tag).toUpperCase().slice(0, TAG_MAX),
       platforms,
       region: String(body.region || "Global"),
       language: String(body.language || "English"),
       status: String(body.status || "Open"),
       clanCount,
       members: Number.isFinite(members) ? members : 0,
-      discord: String(body.discord),
+      discord,
+      links: parsedLinks.links,
       paused: String(body.paused || "") === "1" || body.paused === true || body.paused === "true",
       rosterIds: asArray(body.rosterIds),
-      video: video.video,
+      videos: video.videos,
+      video: video.videos[0] || null,
       headline: String(body.headline).slice(0, 90),
       summary: String(body.summary).slice(0, 220),
       about,
       offering: lines(body.offering),
       requirements: lines(body.requirements),
+      howToJoin: lines(body.howToJoin),
     },
   };
 }
@@ -1083,7 +1134,7 @@ app.delete("/api/auth/account", requireUser, (req, res) => {
 // `about` for every listing meant every visitor downloaded every full post on
 // every page load, so list responses carry only what a card and the filters
 // read. The detail route still returns the whole record.
-const HEAVY_FIELDS = ["about", "offering", "requirements", "video"];
+const HEAVY_FIELDS = ["about", "offering", "requirements", "howToJoin", "video", "videos", "links"];
 
 function trimListing(item) {
   const out = { ...item };
@@ -1473,7 +1524,7 @@ app.get("/api/alliances/:id", (req, res) => {
 
 app.post("/api/alliances", requirePoster, listingLimiter, listingUpload, async (req, res) => {
   if (!assertListingFiles(req, res)) return;
-  const parsed = parseAllianceBody(req.body);
+  const parsed = parseAllianceBody(req.body, req.user);
   if (parsed.error) {
     discardUploads(req);
     res.status(400).json({ error: parsed.error });
@@ -1520,7 +1571,7 @@ app.post("/api/alliances", requirePoster, listingLimiter, listingUpload, async (
 
 app.put("/api/alliances/:id", requirePoster, listingUpload, async (req, res) => {
   if (!assertListingFiles(req, res)) return;
-  const parsed = parseAllianceBody(req.body);
+  const parsed = parseAllianceBody(req.body, req.user);
   if (parsed.error) {
     discardUploads(req);
     res.status(400).json({ error: parsed.error });

@@ -61,6 +61,37 @@ export function youTubeEmbedUrl(id) {
   return ID.test(String(id || "")) ? `https://www.youtube-nocookie.com/embed/${id}` : null;
 }
 
+export function youTubeThumbUrl(id) {
+  return ID.test(String(id || "")) ? `https://i.ytimg.com/vi/${id}/mqdefault.jpg` : null;
+}
+
+// Listings written before the gallery carry one `video` string. Rather than
+// rewrite every stored row, every reader goes through here: `videos` wins when
+// it exists, the legacy field is the fallback, and both shapes come out as the
+// same array.
+export function videoList(item) {
+  if (Array.isArray(item?.videos) && item.videos.length) {
+    return item.videos.filter((id) => ID.test(String(id || "")));
+  }
+  return ID.test(String(item?.video || "")) ? [item.video] : [];
+}
+
+// One bad link fails the whole save, and says which one, so a leader who
+// pasted a channel URL into the third row is not left hunting for it.
+export function parseVideoList(values, max = 4) {
+  const out = [];
+  const rows = Array.isArray(values) ? values : [values];
+  for (const [index, value] of rows.entries()) {
+    const raw = String(value ?? "").trim();
+    if (!raw) continue;
+    const id = parseYouTubeId(raw);
+    if (!id) return { error: `Video ${index + 1} is not a YouTube link. Paste a link or clear the box.` };
+    if (!out.includes(id)) out.push(id);
+    if (out.length >= max) break;
+  }
+  return { videos: out };
+}
+
 export { ID as YOUTUBE_ID };
 
 // The upload path is gone, so a stored "/uploads/....mp4" can never play again.
@@ -72,6 +103,16 @@ export function dropLegacyVideos(listings = []) {
     if (typeof item?.video === "string" && item.video.startsWith("/uploads/")) {
       files.push(item.video);
       item.video = null;
+    }
+    if (Array.isArray(item?.videos)) {
+      const kept = item.videos.filter((value) => {
+        if (typeof value === "string" && value.startsWith("/uploads/")) {
+          files.push(value);
+          return false;
+        }
+        return true;
+      });
+      if (kept.length !== item.videos.length) item.videos = kept;
     }
   }
   return files;

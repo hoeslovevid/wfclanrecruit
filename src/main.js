@@ -1,3 +1,4 @@
+import { LINK_MAX, VIDEO_MAX } from "./data.js";
 import { api } from "./api.js";
 import {
   accountView,
@@ -19,6 +20,7 @@ import {
   previewAlliance,
   previewClan,
   presenceSummary,
+  readLinkRows,
   rosterPanel,
 } from "./views.js";
 import { privacyView } from "./privacy.js";
@@ -237,8 +239,27 @@ function bindCopyText(root = app) {
   });
 }
 
+// Extra videos swap into the single iframe rather than each getting their own,
+// so a four-video listing still loads one player.
+function bindVideoGallery() {
+  const gallery = app.querySelector("[data-video-gallery]");
+  const frame = app.querySelector("[data-video-frame]");
+  if (!gallery || !frame) return;
+  gallery.addEventListener("click", (event) => {
+    const pick = event.target.closest("[data-video-pick]");
+    if (!pick) return;
+    frame.src = pick.dataset.videoPick;
+    gallery.querySelectorAll("[data-video-pick]").forEach((button) => {
+      const active = button === pick;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+  });
+}
+
 function bindListingPage() {
   bindCopyText();
+  bindVideoGallery();
   app.querySelector("[data-copy-url]")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     try {
@@ -460,41 +481,133 @@ function bindImagePicker(form, initialUrl, onUrl) {
   });
 }
 
-// The video is a YouTube id now, not a file, so this binds a text box rather
-// than a picker: parse on every keystroke, show the poster frame as proof the
-// link resolved, and place the [video] marker the moment one does.
-function bindVideoInput(form, initialId, onId) {
-  const input = form.video;
-  const wrap = form.querySelector("[data-video-input]");
-  const thumb = wrap?.querySelector("[data-video-thumb]");
-  const image = wrap?.querySelector("[data-video-thumb-img]");
-  const error = wrap?.querySelector("[data-video-error]");
-  let current = parseYouTubeId(initialId);
+// Videos, links, and the plain-text lists are all "a stack of rows you can add
+// to and remove from". One binding drives all three: clone the last row to add,
+// never drop below one row for the lists that need a starting point, and hand
+// the caller a callback whenever the set changes.
+function bindRowList(list, { max = Infinity, min = 0, onChange } = {}) {
+  if (!list) return;
+  const items = list.querySelector("[data-row-items]");
+  const add = list.querySelector("[data-row-add]");
+  const empty = list.querySelector("[data-row-empty]");
+  const template = list.querySelector("[data-row-template]");
 
-  function show(id, message) {
+  function blankRow() {
+    return template?.content.firstElementChild?.cloneNode(true) || null;
+  }
+
+  function sync() {
+    const count = items?.children.length || 0;
+    if (add) add.hidden = count >= max;
+    if (empty) empty.hidden = count > 0;
+    list.querySelectorAll("[data-row-remove]").forEach((button) => {
+      button.hidden = count <= min;
+    });
+    onChange?.();
+  }
+
+  add?.addEventListener("click", () => {
+    if ((items?.children.length || 0) >= max) return;
+    const row = blankRow();
+    if (!row) return;
+    items.append(row);
+    row.querySelector("input")?.focus();
+    sync();
+  });
+
+  list.addEventListener("click", (event) => {
+    const remove = event.target.closest("[data-row-remove]");
+    if (!remove || !list.contains(remove)) return;
+    const row = remove.closest("[data-row]");
+    if (!row) return;
+    if ((items?.children.length || 0) <= min) {
+      row.querySelectorAll("input").forEach((input) => {
+        input.value = "";
+      });
+    } else {
+      row.remove();
+    }
+    sync();
+  });
+
+  sync();
+}
+
+// The video is a YouTube id now, not a file, so this binds text boxes rather
+// than a picker: parse on every keystroke, show the poster frame as proof the
+// link resolved, and place the [video] marker the moment the first one does.
+function bindVideoInputs(form, onIds) {
+  const list = form.querySelector("[data-row-list='video']");
+  let seenFirst = false;
+
+  function readRow(row) {
+    const input = row.querySelector("input[name='video']");
+    const raw = String(input?.value || "").trim();
+    const id = parseYouTubeId(raw);
+    const thumb = row.querySelector("[data-video-thumb]");
+    const image = row.querySelector("[data-video-thumb-img]");
+    const error = row.querySelector("[data-video-error]");
+    const message = raw && !id ? "That is not a YouTube link." : "";
     if (thumb) thumb.hidden = !id;
     if (image) image.src = id ? `https://i.ytimg.com/vi/${id}/mqdefault.jpg` : "";
     if (error) {
       error.hidden = !message;
-      error.textContent = message || "";
+      error.textContent = message;
     }
-    wrap?.classList.toggle("has-video", Boolean(id));
-    wrap?.classList.toggle("has-error", Boolean(message));
+    row.classList.toggle("has-video", Boolean(id));
+    row.classList.toggle("has-error", Boolean(message));
+    return id;
   }
 
   function sync() {
-    const raw = String(input?.value || "").trim();
-    const id = parseYouTubeId(raw);
-    show(id, raw && !id ? "That is not a YouTube link." : "");
-    if (id && id !== current) ensureVideoMarker(form.querySelector("[data-rich-editor]"));
-    current = id;
-    onId(id);
+    const ids = [];
+    for (const row of list?.querySelectorAll("[data-row]") || []) {
+      const id = readRow(row);
+      if (id && !ids.includes(id)) ids.push(id);
+    }
+    // Only the first clip is placed in the post body; the rest ride in the
+    // strip beneath it, so a second link must not move the marker.
+    if (ids.length && !seenFirst) {
+      seenFirst = true;
+      ensureVideoMarker(form.querySelector("[data-rich-editor]"));
+    }
+    if (!ids.length) seenFirst = false;
+    onIds(ids);
   }
 
-  show(current, "");
-  onId(current);
-  input?.addEventListener("input", sync);
-  input?.addEventListener("change", sync);
+  bindRowList(list, { max: VIDEO_MAX, min: 1, onChange: sync });
+  list?.addEventListener("input", sync);
+  list?.addEventListener("change", sync);
+  // A draft that opened with a video already has its marker in the body.
+  seenFirst = Boolean(list?.querySelector("input[name='video']")?.value.trim());
+  sync();
+}
+
+function bindLinkRows(form, onChange) {
+  const list = form.querySelector("[data-row-list='link']");
+  bindRowList(list, { max: LINK_MAX, min: 0, onChange });
+  list?.addEventListener("input", onChange);
+  list?.addEventListener("change", onChange);
+}
+
+// Each line is its own input, but the wire format stays a newline-joined
+// textarea so the server's `lines()` parsing never had to learn a new shape.
+function bindLineLists(form, onChange) {
+  form.querySelectorAll("[data-line-list]").forEach((field) => {
+    const textarea = field.querySelector("textarea");
+    const list = field.querySelector("[data-row-list]");
+    const sync = () => {
+      if (!textarea) return;
+      textarea.value = [...field.querySelectorAll("[data-line]")]
+        .map((input) => input.value.trim())
+        .filter(Boolean)
+        .join("\n");
+      onChange?.();
+    };
+    bindRowList(list, { min: 1, onChange: sync });
+    list?.addEventListener("input", sync);
+    sync();
+  });
 }
 
 function insertVideoAtEditor(editor) {
@@ -614,20 +727,38 @@ function bindRichText(form, onChange) {
   });
 }
 
-function bindListingComposer(form, { imageUrl = null, videoId = null, onChange }) {
-  const media = { image: imageUrl, video: videoId };
+function bindListingComposer(form, { imageUrl = null, onChange }) {
+  const media = { image: imageUrl, videos: [] };
   const refresh = () => onChange(media);
   bindRichText(form, refresh);
   bindImagePicker(form, imageUrl, (url) => {
     media.image = url;
     refresh();
   });
-  bindVideoInput(form, videoId, (id) => {
-    media.video = id;
+  bindVideoInputs(form, (ids) => {
+    media.videos = ids;
     refresh();
   });
+  bindLinkRows(form, refresh);
+  bindLineLists(form, refresh);
   form.addEventListener("input", refresh);
   refresh();
+}
+
+// The list fields sync into hidden textareas, and a hidden `required` control
+// makes reportValidity throw rather than point at anything, so they are checked
+// by hand. "How to join" is genuinely optional and so is left out.
+const REQUIRED_LISTS = { offering: "What you offer", requirements: "Requirements" };
+
+function listFieldError(form) {
+  for (const [name, label] of Object.entries(REQUIRED_LISTS)) {
+    const field = form.querySelector(`[data-line-list="${name}"]`);
+    if (!field) continue;
+    if (!String(field.querySelector("textarea")?.value || "").trim()) {
+      return `Add at least one line under "${label}".`;
+    }
+  }
+  return null;
 }
 
 function aboutError(form) {
@@ -639,11 +770,31 @@ function mediaTooLarge(form) {
   if (form.image?.files?.[0] && form.image.files[0].size > IMAGE_MAX) {
     return "Image must be 2 MB or smaller.";
   }
-  const video = String(form.video?.value || "").trim();
-  if (video && !parseYouTubeId(video)) {
-    return "Paste a YouTube link, or leave the video box empty.";
+  const rows = [...form.querySelectorAll("input[name='video']")];
+  for (const [index, input] of rows.entries()) {
+    const raw = String(input.value || "").trim();
+    if (raw && !parseYouTubeId(raw)) {
+      return `Video ${index + 1} is not a YouTube link. Paste a link or clear the box.`;
+    }
+  }
+  for (const input of form.querySelectorAll("[data-link-url]")) {
+    const raw = String(input.value || "").trim();
+    if (raw && !isSafeHref(raw)) return "Links must start with http:// or https://.";
   }
   return null;
+}
+
+// Says the same thing the server does, but before a round trip, so a leader
+// who cleared the invite finds out here rather than on submit.
+function contactRouteMissing(form, user, { whisper = true } = {}) {
+  const contact = form.contact?.value || "both";
+  const discord = String(form.discord?.value || "").trim();
+  if (discord && contact !== "whisper") return null;
+  if (whisper && contact !== "discord" && user?.forumName) return null;
+  if (readLinkRows(form).some((link) => isSafeHref(link.url))) return null;
+  return whisper
+    ? "Give recruits at least one way to reach you: a Discord invite, a verified forum name, or a link."
+    : "Give recruits at least one way to reach you: a Discord invite or a link.";
 }
 
 function packForm(form, ...listFields) {
@@ -653,6 +804,9 @@ function packForm(form, ...listFields) {
     fd.delete(listField);
     fd.set(listField, JSON.stringify(values));
   }
+  // The link rows are unnamed inputs, so they never reach FormData on their
+  // own; the hidden `links` field carries them as one JSON payload.
+  fd.set("links", JSON.stringify(readLinkRows(form).filter((link) => link.url.trim())));
   return fd;
 }
 
@@ -785,14 +939,17 @@ async function render() {
     app.innerHTML = postView({ user: state.user, alliances: state.alliances, draft: draft || {}, auth: state.auth });
     bindRecruiters();
     const form = app.querySelector("#post-form");
-    // A whisper-only listing needs no invite, so stop the browser demanding one.
+    // The invite is optional everywhere now, so this only relabels the box: a
+    // whisper-only listing does not publish one at all.
     const contact = form?.querySelector("[data-contact]");
     const syncContact = () => {
-      const discord = form.querySelector("[name='discord']");
       const hint = form.querySelector("[data-discord-hint]");
-      const needed = contact.value !== "whisper";
-      discord.required = needed;
-      if (hint) hint.textContent = needed ? "permanent invite, we check it" : "not shown on this listing";
+      const used = contact.value !== "whisper";
+      if (hint) {
+        hint.textContent = used
+          ? "optional, permanent invite — we check it"
+          : "not shown on this listing";
+      }
     };
     contact?.addEventListener("change", syncContact);
     if (contact) syncContact();
@@ -805,11 +962,10 @@ async function render() {
     const mr = app.querySelector("#post-mr");
     bindListingComposer(form, {
       imageUrl: draft?.image || null,
-      videoId: draft?.video || null,
       onChange: (media) => {
         if (mr) mr.textContent = form.mrRequired.value;
         if (form.tag) form.tag.value = form.tag.value.toUpperCase();
-        preview.innerHTML = `${clanCard(previewClan(form, media.image, media.video))}<div class="preview-about"><p class="kicker">Post body</p>${postBodyHtml(form.about.value, media.video, { placeholder: true })}</div>`;
+        preview.innerHTML = `${clanCard(previewClan(form, media.image, media.videos))}<div class="preview-about"><p class="kicker">Post body</p>${postBodyHtml(form.about.value, media.videos, { placeholder: true })}</div>`;
       },
     });
     form.addEventListener("submit", async (event) => {
@@ -819,7 +975,8 @@ async function render() {
         form.reportValidity();
         return;
       }
-      const tooBig = mediaTooLarge(form) || aboutError(form);
+      const tooBig =
+        mediaTooLarge(form) || aboutError(form) || contactRouteMissing(form, state.user) || listFieldError(form);
       if (tooBig) {
         showNote(note, tooBig);
         return;
@@ -863,10 +1020,9 @@ async function render() {
     const note = app.querySelector("#form-note");
     bindListingComposer(form, {
       imageUrl: draft?.image || null,
-      videoId: draft?.video || null,
       onChange: (media) => {
         if (form.tag) form.tag.value = form.tag.value.toUpperCase();
-        preview.innerHTML = `${allianceCard(previewAlliance(form, media.image, media.video))}<div class="preview-about"><p class="kicker">Post body</p>${postBodyHtml(form.about.value, media.video, { placeholder: true })}</div>`;
+        preview.innerHTML = `${allianceCard(previewAlliance(form, media.image, media.videos))}<div class="preview-about"><p class="kicker">Post body</p>${postBodyHtml(form.about.value, media.videos, { placeholder: true })}</div>`;
       },
     });
     form.addEventListener("submit", async (event) => {
@@ -876,7 +1032,11 @@ async function render() {
         form.reportValidity();
         return;
       }
-      const tooBig = mediaTooLarge(form) || aboutError(form);
+      const tooBig =
+        mediaTooLarge(form) ||
+        aboutError(form) ||
+        contactRouteMissing(form, state.user, { whisper: false }) ||
+        listFieldError(form);
       if (tooBig) {
         showNote(note, tooBig);
         return;

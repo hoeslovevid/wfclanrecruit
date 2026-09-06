@@ -2,18 +2,25 @@ import {
   CONTACT_LABELS,
   CONTACT_MODES,
   LANGUAGES,
+  LINK_KINDS,
+  LINK_MAX,
   PLAYSTYLES,
+  PLAYSTYLE_GROUPS,
   PLATFORMS,
   REGIONS,
   STATUSES,
+  TAG_MAX,
   TIER_CAPS,
   TIERS,
+  VIDEO_MAX,
+  groupOf,
   normalizeContact,
+  normalizeLinks,
   wantsDiscord,
   wantsWhisper,
 } from "./data.js";
-import { sanitizePostHtml, splitVideoHtml, toEditorHtml } from "./richtext.js";
-import { youTubeEmbedUrl } from "./video.js";
+import { isSafeHref, sanitizePostHtml, splitVideoHtml, toEditorHtml } from "./richtext.js";
+import { videoList, youTubeEmbedUrl, youTubeThumbUrl } from "./video.js";
 
 export function escapeHtml(value) {
   return String(value ?? "")
@@ -58,8 +65,19 @@ function statusClass(status) {
   return "is-trial";
 }
 
+// The group is carried into the markup so a card's chips read as playstyle /
+// social / content at a glance rather than as one undifferentiated row.
 function chipList(items = []) {
-  return items.map((item) => `<span class="chip">${escapeHtml(item)}</span>`).join("");
+  return items
+    .map((item) => `<span class="chip" data-group="${escapeHtml(groupOf(item))}">${escapeHtml(item)}</span>`)
+    .join("");
+}
+
+// Ordered by group, then by the order the group lists them, so two clans that
+// picked the same tags always show them in the same order.
+function orderedPlaystyles(items = []) {
+  const rank = new Map(PLAYSTYLES.map((tag, index) => [tag, index]));
+  return [...items].sort((a, b) => (rank.get(a) ?? Infinity) - (rank.get(b) ?? Infinity));
 }
 
 function hueFrom(seed) {
@@ -68,30 +86,117 @@ function hueFrom(seed) {
   return Math.abs(hash) % 360;
 }
 
-export function postBodyHtml(about, video, { placeholder = false } = {}) {
+// The first clip plays where the leader put the [video] marker. Any others sit
+// in a strip under the post and swap into that same frame on click, so a clan
+// with four contest entries shows all four without four iframes on the page.
+function videoGallery(ids = []) {
+  if (ids.length < 2) return "";
+  const items = ids
+    .map((id, index) => {
+      const thumb = youTubeThumbUrl(id);
+      const src = youTubeEmbedUrl(id);
+      if (!thumb || !src) return "";
+      return `
+        <button
+          class="video-pick${index === 0 ? " is-active" : ""}"
+          type="button"
+          data-stop
+          data-video-pick="${escapeHtml(src)}"
+          aria-pressed="${index === 0 ? "true" : "false"}"
+        >
+          <img src="${escapeHtml(thumb)}" alt="" loading="lazy" width="160" height="90" />
+          <span class="video-pick-index">${index + 1}</span>
+        </button>`;
+    })
+    .join("");
+  if (!items) return "";
+  return `
+    <div class="video-gallery" data-video-gallery>
+      <p class="kicker">${ids.length} videos</p>
+      <div class="video-strip">${items}</div>
+    </div>
+  `;
+}
+
+export function postBodyHtml(about, videos, { placeholder = false } = {}) {
+  const ids = Array.isArray(videos) ? videos.filter(Boolean) : videoList({ video: videos });
   const html = sanitizePostHtml(toEditorHtml(about));
   const { before, after, hasMarker } = splitVideoHtml(html);
   // youTubeEmbedUrl returns null for anything that is not an eleven-character
   // id, so a hand-edited or pre-switch value can never reach the src.
-  const src = youTubeEmbedUrl(video);
+  const src = youTubeEmbedUrl(ids[0]);
   const showSlot = placeholder && (Boolean(src) || hasMarker);
   const player = showSlot
-    ? `<div class="post-video-slot">Video appears here</div>`
+    ? `<div class="post-video-slot">${ids.length > 1 ? `${ids.length} videos appear here` : "Video appears here"}</div>`
     : src
-      ? `<div class="post-video" data-stop><iframe src="${escapeHtml(src)}" title="Clan video" loading="lazy" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture"></iframe></div>`
+      ? `<div class="post-video" data-stop><iframe src="${escapeHtml(src)}" title="Clan video" loading="lazy" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" data-video-frame></iframe></div>`
       : "";
+  const gallery = showSlot ? "" : videoGallery(ids);
+  const media = player ? `${player}${gallery}` : "";
 
-  if (!player) {
+  if (!media) {
     return before || after ? `<div class="post-body muted">${before}${after}</div>` : "";
   }
 
   if (!hasMarker) {
-    return `${html ? `<div class="post-body muted">${html}</div>` : ""}${player}`;
+    return `${html ? `<div class="post-body muted">${html}</div>` : ""}${media}`;
   }
 
-  return `${before ? `<div class="post-body muted">${before}</div>` : ""}${player}${
+  return `${before ? `<div class="post-body muted">${before}</div>` : ""}${media}${
     after ? `<div class="post-body muted">${after}</div>` : ""
   }`;
+}
+
+// Small, single-path glyphs: the row sits beside body text, so anything with
+// interior detail turns to mud at 14px.
+const LINK_ICONS = {
+  Website: `<path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Zm0 0c1.8 1.6 2.8 4 2.8 6.5S9.8 12.9 8 14.5m0-13C6.2 3.1 5.2 5.5 5.2 8S6.2 12.9 8 14.5M1.9 6h12.2M1.9 10h12.2"/>`,
+  YouTube: `<path d="M14.4 5.2a1.9 1.9 0 0 0-1.3-1.3C11.9 3.5 8 3.5 8 3.5s-3.9 0-5.1.4A1.9 1.9 0 0 0 1.6 5.2 19 19 0 0 0 1.3 8c0 1 .1 1.9.3 2.8a1.9 1.9 0 0 0 1.3 1.3c1.2.4 5.1.4 5.1.4s3.9 0 5.1-.4a1.9 1.9 0 0 0 1.3-1.3c.2-.9.3-1.8.3-2.8s-.1-1.9-.3-2.8Z"/><path d="m6.7 9.9 3.2-1.9-3.2-1.9v3.8Z" fill="currentColor" stroke="none"/>`,
+  Twitch: `<path d="M3 1.5h11v8.2l-3.1 3.1H8.4l-2 1.7v-1.7H3V1.5Z"/><path d="M7.4 5v3.3M10.7 5v3.3"/>`,
+  TikTok: `<path d="M10 1.7v7.9a3 3 0 1 1-2.4-2.9"/><path d="M10 1.7a3.6 3.6 0 0 0 3.6 3.5"/>`,
+  X: `<path d="m2.6 2.4 6.6 8.6 4.3 4.6M13.4 2.4 2.6 15.6" stroke-linecap="round"/>`,
+  Instagram: `<rect x="2.2" y="2.2" width="11.6" height="11.6" rx="3.4"/><circle cx="8" cy="8" r="2.8"/><circle cx="11.6" cy="4.4" r=".85" fill="currentColor" stroke="none"/>`,
+  Steam: `<circle cx="8" cy="8" r="6.5"/><circle cx="10.3" cy="6" r="2"/><circle cx="5.6" cy="10.3" r="1.6"/><path d="m7 9.2 1.8-1.5"/>`,
+  Reddit: `<circle cx="8" cy="9" r="5.3"/><path d="M8 3.7 9 1.4l2.6.6"/><circle cx="11.6" cy="2" r=".9" fill="currentColor" stroke="none"/><path d="M6.2 8.6h.01M9.8 8.6h.01" stroke-width="1.8" stroke-linecap="round"/><path d="M6.1 11c1.1.8 2.7.8 3.8 0"/>`,
+  Other: `<path d="M6.6 9.4a2.6 2.6 0 0 0 3.9.3l2-2a2.6 2.6 0 0 0-3.7-3.7l-1.1 1.1"/><path d="M9.4 6.6a2.6 2.6 0 0 0-3.9-.3l-2 2a2.6 2.6 0 0 0 3.7 3.7l1.1-1.1"/>`,
+};
+
+function linkIcon(kind) {
+  return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true">${
+    LINK_ICONS[kind] || LINK_ICONS.Other
+  }</svg>`;
+}
+
+// Renders whatever survives normalizeLinks, so a hand-edited record with a
+// javascript: URL drops out here rather than reaching the page.
+export function linkRow(item) {
+  const links = normalizeLinks(item?.links, isSafeHref);
+  if (!links.length) return "";
+  return `
+    <div class="listing-links">
+      ${links
+        .map(
+          (link) =>
+            `<a class="link-pill" href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer nofollow" data-stop>${linkIcon(
+              link.kind
+            )}<span>${escapeHtml(link.kind)}</span></a>`
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+// Some clans filter in the recruitment process itself - a form, a trial run, an
+// interview. Numbered rather than bulleted because it is a sequence.
+function joinSteps(item) {
+  const steps = (item?.howToJoin || []).filter(Boolean);
+  if (!steps.length) return "";
+  return `
+    <section class="join-steps">
+      <h2>How to join</h2>
+      <ol>${steps.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ol>
+    </section>
+  `;
 }
 
 export function photo(item, size = 56) {
@@ -129,7 +234,9 @@ function recruitingNote(item) {
 
 function joinDiscord(item, label) {
   // A whisper-only listing has no invite to offer, and says so by omission.
-  if (!wantsDiscord(item)) return "";
+  // The invite is optional now, so a listing that reaches recruits some other
+  // way is in the same position: no button, no note about a missing one.
+  if (!wantsDiscord(item) || !item.discord) return "";
   if (item.recruiting === false) {
     return `<p class="muted join-note">${escapeHtml(recruitingNote(item))}</p>`;
   }
@@ -294,7 +401,7 @@ export function clanCard(clan) {
       </header>
       <p class="headline">${escapeHtml(clan.headline)}</p>
       <p class="muted">${escapeHtml(clan.summary)}</p>
-      <div class="chips">${chipList(clan.playstyles.slice(0, 3))}</div>
+      <div class="chips">${chipList(orderedPlaystyles(clan.playstyles).slice(0, 4))}</div>
       <div class="stats">
         <div>
           <span>Roster</span>
@@ -493,7 +600,7 @@ export function browseView(clans, filters, pager) {
           <label class="field"><span>Tier</span><select name="tier"><option value="">Any</option>${optionList(TIERS, filters.tier)}</select></label>
           <fieldset class="fieldset">
             <legend>Playstyles</legend>
-            <div class="checks filter-playstyles">${checks("playstyle", PLAYSTYLES, filters.playstyles || [])}</div>
+            <div class="filter-groups">${filterPlaystyleGroups(filters.playstyles || [])}</div>
           </fieldset>
           <label class="field"><span>Region</span><select name="region"><option value="">Any</option>${optionList(REGIONS, filters.region)}</select></label>
           <label class="field"><span>Language</span><select name="language"><option value="">Any</option>${optionList(LANGUAGES, filters.language)}</select></label>
@@ -598,6 +705,15 @@ function parseLines(value) {
     .filter(Boolean);
 }
 
+// The link rows are not named form fields - they are packed into one hidden
+// JSON field on submit - so the live preview reads them straight off the DOM.
+export function readLinkRows(form) {
+  return [...form.querySelectorAll("[data-row-list='link'] [data-row]")].map((row) => ({
+    kind: row.querySelector("[data-link-kind]")?.value || "Other",
+    url: row.querySelector("[data-link-url]")?.value || "",
+  }));
+}
+
 function checks(name, values, selected = []) {
   return values
     .map((value) => {
@@ -635,27 +751,150 @@ function imagePicker(label) {
   `;
 }
 
-function videoPicker(draft = {}) {
+// One repeatable-row language for the three lists a composer now carries:
+// videos, links, and the plain-text lists. Each row is markup the browser can
+// clone, so main.js adds and removes rows without rebuilding the section.
+// `blank` is what an added row is cloned from. It is carried separately rather
+// than cloned off the first rendered row, because a list can legitimately start
+// empty - the links list does - and then there is nothing to copy.
+function rowList(kind, { rows, blank, addLabel, empty = "" }) {
   return `
-    <div class="field">
-      <span>YouTube video <small class="field-optional">optional</small></span>
-      <div class="video-input" data-video-input>
-        <input
-          name="video"
-          type="text"
-          inputmode="url"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="https://youtube.com/watch?v=..."
-          value="${escapeHtml(draft.video || "")}"
-        />
-        <div class="video-thumb" data-video-thumb hidden>
-          <img alt="" data-video-thumb-img />
-        </div>
-        <p class="video-error" data-video-error role="alert" hidden></p>
-      </div>
+    <div class="row-list" data-row-list="${escapeHtml(kind)}">
+      <div class="row-list-items" data-row-items>${rows.join("")}</div>
+      ${empty ? `<p class="row-list-empty" data-row-empty${rows.length ? " hidden" : ""}>${escapeHtml(empty)}</p>` : ""}
+      <button class="row-add" type="button" data-row-add>
+        <span aria-hidden="true">+</span> ${escapeHtml(addLabel)}
+      </button>
+      <template data-row-template>${blank}</template>
     </div>
   `;
+}
+
+function videoRow(value = "") {
+  return `
+    <div class="row-item video-input" data-row data-video-input>
+      <span class="row-handle" aria-hidden="true">▶</span>
+      <div class="video-thumb" data-video-thumb hidden><img alt="" data-video-thumb-img /></div>
+      <input
+        name="video"
+        type="text"
+        inputmode="url"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="https://youtube.com/watch?v=..."
+        value="${escapeHtml(value)}"
+      />
+      <button class="row-remove" type="button" data-row-remove aria-label="Remove this video">×</button>
+      <p class="video-error" data-video-error role="alert" hidden></p>
+    </div>
+  `;
+}
+
+function videoPicker(draft = {}) {
+  const ids = videoList(draft);
+  const rows = (ids.length ? ids : [""]).slice(0, VIDEO_MAX).map((id) => videoRow(id));
+  return `
+    <div class="field">
+      <span>YouTube videos <small class="field-optional">optional · up to ${VIDEO_MAX}</small></span>
+      ${rowList("video", { rows, blank: videoRow(), addLabel: "Add another video" })}
+      <small class="field-help">The first video plays inside the post. The rest appear as a strip under it.</small>
+    </div>
+  `;
+}
+
+function linkRowField(link = {}) {
+  return `
+    <div class="row-item link-input" data-row>
+      <select data-link-kind aria-label="Link type">
+        ${LINK_KINDS.map(
+          (kind) => `<option value="${escapeHtml(kind)}" ${kind === link.kind ? "selected" : ""}>${escapeHtml(kind)}</option>`
+        ).join("")}
+      </select>
+      <input
+        data-link-url
+        type="url"
+        inputmode="url"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="https://"
+        value="${escapeHtml(link.url || "")}"
+      />
+      <button class="row-remove" type="button" data-row-remove aria-label="Remove this link">×</button>
+    </div>
+  `;
+}
+
+function linksField(draft = {}) {
+  const links = normalizeLinks(draft.links, isSafeHref);
+  const rows = links.length ? links.map((link) => linkRowField(link)) : [];
+  return `
+    <div class="field">
+      <span>Other links <small class="field-optional">optional · up to ${LINK_MAX}</small></span>
+      ${rowList("link", {
+        rows,
+        blank: linkRowField(),
+        addLabel: "Add a link",
+        empty: "Website, YouTube channel, Twitch, TikTok — anywhere else the clan lives.",
+      })}
+      <input type="hidden" name="links" value="" />
+    </div>
+  `;
+}
+
+function lineRow(value = "", placeholder = "") {
+  return `
+    <div class="row-item line-input" data-row>
+      <span class="row-handle" aria-hidden="true">⠿</span>
+      <input
+        data-line
+        type="text"
+        maxlength="120"
+        autocomplete="off"
+        placeholder="${escapeHtml(placeholder)}"
+        value="${escapeHtml(value)}"
+      />
+      <button class="row-remove" type="button" data-row-remove aria-label="Remove this line">×</button>
+    </div>
+  `;
+}
+
+// A textarea gave no hint that each newline became a bullet, so leaders wrote
+// paragraphs and got one very long bullet. One input per bullet says it
+// outright. The hidden textarea keeps the newline-joined wire format, so the
+// server's `lines()` parsing is untouched.
+function lineListField(name, label, values = [], { placeholder = "", hint = "", optional = false } = {}) {
+  const rows = (values.length ? values : [""]).map((value) => lineRow(value, placeholder));
+  return `
+    <div class="field" data-line-list="${escapeHtml(name)}">
+      <span>${escapeHtml(label)}${optional ? ` <small class="field-optional">optional</small>` : ""}</span>
+      ${rowList(`line-${name}`, { rows, blank: lineRow("", placeholder), addLabel: "Add a line" })}
+      ${hint ? `<small class="field-help">${escapeHtml(hint)}</small>` : ""}
+      <textarea name="${escapeHtml(name)}" hidden>${escapeHtml(values.join("\n"))}</textarea>
+    </div>
+  `;
+}
+
+// The browse sidebar is narrow, so the groups get a small rail and a label
+// rather than the composer's full fieldset-per-group. The input name stays
+// `playstyle`, so the multi-select filter reads them exactly as before.
+function filterPlaystyleGroups(selected = []) {
+  return PLAYSTYLE_GROUPS.map(
+    (group) => `
+      <div class="filter-group" data-group="${escapeHtml(group.id)}">
+        <p class="filter-group-label">${escapeHtml(group.label)}</p>
+        <div class="checks">${checks("playstyle", group.tags, selected)}</div>
+      </div>`
+  ).join("");
+}
+
+function playstyleGroups(selected = []) {
+  return PLAYSTYLE_GROUPS.map(
+    (group) => `
+      <fieldset class="fieldset playstyle-group" data-group="${escapeHtml(group.id)}">
+        <legend>${escapeHtml(group.label)} <small>${escapeHtml(group.hint)}</small></legend>
+        <div class="checks">${checks("playstyles", group.tags, selected)}</div>
+      </fieldset>`
+  ).join("");
 }
 
 function aboutComposer(draft = {}) {
@@ -791,7 +1030,7 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
           <h2>Identity</h2>
           <div class="two-col">
             <label class="field"><span>Clan name</span><input name="name" required maxlength="48" value="${escapeHtml(draft.name || "")}" /></label>
-            <label class="field"><span>Tag</span><input name="tag" required maxlength="5" value="${escapeHtml(draft.tag || "")}" /></label>
+            <label class="field"><span>Tag</span><input name="tag" required maxlength="${TAG_MAX}" value="${escapeHtml(draft.tag || "")}" /></label>
             <label class="field"><span>In-game leader</span><input name="leader" required maxlength="32" value="${escapeHtml(draft.leader || user.forumName || user.username)}" /></label>
             <label class="field"><span>Founded</span><input name="founded" maxlength="8" value="${escapeHtml(draft.founded || "")}" placeholder="2019" /></label>
           </div>
@@ -814,9 +1053,7 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
                   CONTACT_LABELS[mode]
                 )}</option>`
             ).join("")}</select></label>
-            <label class="field"><span>Discord invite <small data-discord-hint>permanent invite, we check it</small></span><input name="discord" type="url" ${
-              wantsDiscord(draft) ? "required" : ""
-            } placeholder="https://discord.gg/yourclan" value="${escapeHtml(draft.discord || "")}" /></label>
+            <label class="field"><span>Discord invite <small data-discord-hint>optional, permanent invite — we check it</small></span><input name="discord" type="url" placeholder="https://discord.gg/yourclan" value="${escapeHtml(draft.discord || "")}" /></label>
             <label class="field">
               <span>Alliance</span>
               <select name="allianceId">
@@ -825,6 +1062,8 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
               </select>
             </label>
           </div>
+          ${linksField(draft)}
+          <p class="field-help">Recruits need at least one route: a Discord invite, a verified forum name for whispers, or a link.</p>
           <fieldset class="fieldset">
             <legend>Recruiters</legend>
             ${
@@ -836,7 +1075,7 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
                 : `<p class="field-help">Publish the clan first, then come back here to invite recruiters.</p>`
             }
           </fieldset>
-          <fieldset class="fieldset"><legend>Playstyles</legend><div class="checks">${checks("playstyles", PLAYSTYLES, draft.playstyles || [])}</div></fieldset>
+          <div class="playstyle-groups">${playstyleGroups(draft.playstyles || [])}</div>
         </div>
         <div class="form-block">
           <h2>The post</h2>
@@ -844,9 +1083,18 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
           <label class="field"><span>Short summary</span><textarea name="summary" required maxlength="220" rows="3">${escapeHtml(draft.summary || "")}</textarea></label>
           ${aboutComposer(draft)}
           <div class="two-col">
-            <label class="field"><span>What you offer <small>one per line</small></span><textarea name="offering" required rows="5" placeholder="Fully researched Moon clan">${escapeHtml((draft.offering || []).join("\n"))}</textarea></label>
-            <label class="field"><span>Requirements <small>one per line</small></span><textarea name="requirements" required rows="5" placeholder="MR 10+">${escapeHtml((draft.requirements || []).join("\n"))}</textarea></label>
+            ${lineListField("offering", "What you offer", draft.offering || [], {
+              placeholder: "Fully researched Moon clan",
+            })}
+            ${lineListField("requirements", "Requirements", draft.requirements || [], {
+              placeholder: "MR 10+",
+            })}
           </div>
+          ${lineListField("howToJoin", "How to join", draft.howToJoin || [], {
+            placeholder: "Post an intro in #recruitment",
+            hint: "Numbered on the listing. Use it if you filter recruits before the invite.",
+            optional: true,
+          })}
         </div>
         <div class="form-actions">
           <button class="btn btn-primary" type="submit">${editing ? "Save changes" : "Publish clan"}</button>
@@ -886,7 +1134,7 @@ export function alliancePostView({ user, draft = {}, auth = {}, clans = [] }) {
           <h2>Identity</h2>
           <div class="two-col">
             <label class="field"><span>Alliance name</span><input name="name" required maxlength="48" value="${escapeHtml(draft.name || "")}" /></label>
-            <label class="field"><span>Tag</span><input name="tag" required maxlength="5" value="${escapeHtml(draft.tag || "")}" /></label>
+            <label class="field"><span>Tag</span><input name="tag" required maxlength="${TAG_MAX}" value="${escapeHtml(draft.tag || "")}" /></label>
             <label class="field"><span>Clans in alliance</span><input name="clanCount" type="number" min="1" required value="${escapeHtml(draft.clanCount || "")}" /></label>
             <label class="field"><span>Approx. players</span><input name="members" type="number" min="1" required value="${escapeHtml(draft.members || "")}" /></label>
           </div>
@@ -899,8 +1147,10 @@ export function alliancePostView({ user, draft = {}, auth = {}, clans = [] }) {
             <label class="field"><span>Region</span><select name="region" required>${optionList(REGIONS, draft.region || "Global")}</select></label>
             <label class="field"><span>Language</span><select name="language" required>${optionList(LANGUAGES, draft.language)}</select></label>
             <label class="field"><span>Status</span><select name="status" required>${optionList(STATUSES, draft.status)}</select></label>
-            <label class="field"><span>Discord invite <small>permanent invite, we check it</small></span><input name="discord" type="url" required placeholder="https://discord.gg/youralliance" value="${escapeHtml(draft.discord || "")}" /></label>
+            <label class="field"><span>Discord invite <small>optional, permanent invite — we check it</small></span><input name="discord" type="url" placeholder="https://discord.gg/youralliance" value="${escapeHtml(draft.discord || "")}" /></label>
           </div>
+          ${linksField(draft)}
+          <p class="field-help">An alliance needs a Discord invite or at least one link — that is how recruits reach you.</p>
           <fieldset class="fieldset"><legend>Platforms</legend><div class="checks">${checks("platforms", PLATFORMS, draft.platforms || [])}</div></fieldset>
           <fieldset class="fieldset">
             <legend>Clan roster</legend>
@@ -918,9 +1168,18 @@ export function alliancePostView({ user, draft = {}, auth = {}, clans = [] }) {
           <label class="field"><span>Short summary</span><textarea name="summary" required maxlength="220" rows="3">${escapeHtml(draft.summary || "")}</textarea></label>
           ${aboutComposer(draft)}
           <div class="two-col">
-            <label class="field"><span>What you offer</span><textarea name="offering" required rows="5">${escapeHtml((draft.offering || []).join("\n"))}</textarea></label>
-            <label class="field"><span>Requirements</span><textarea name="requirements" required rows="5">${escapeHtml((draft.requirements || []).join("\n"))}</textarea></label>
+            ${lineListField("offering", "What you offer", draft.offering || [], {
+              placeholder: "Shared Discord and events",
+            })}
+            ${lineListField("requirements", "Requirements", draft.requirements || [], {
+              placeholder: "Active clan with 20+ members",
+            })}
           </div>
+          ${lineListField("howToJoin", "How to join", draft.howToJoin || [], {
+            placeholder: "Have your clan leader open a ticket",
+            hint: "Numbered on the listing. Use it if you filter clans before they join.",
+            optional: true,
+          })}
         </div>
         <div class="form-actions">
           <button class="btn btn-primary" type="submit">${editing ? "Save changes" : "Publish alliance"}</button>
@@ -1293,7 +1552,8 @@ export function clanPage(clan, { admin = false } = {}) {
           </div>
           <h1 id="clan-title">${escapeHtml(clan.name)}</h1>
           <p class="headline">${escapeHtml(clan.headline)}</p>
-          <div class="chips">${chipList(clan.playstyles)}</div>
+          <div class="chips">${chipList(orderedPlaystyles(clan.playstyles))}</div>
+          ${linkRow(clan)}
         </div>
       </div>
       <dl class="detail-stats">
@@ -1308,11 +1568,12 @@ export function clanPage(clan, { admin = false } = {}) {
       </dl>
       <div class="meter tall"><i style="width:${fillPercent(clan)}%"></i></div>
       <h2>About</h2>
-      ${postBodyHtml(clan.about, clan.video)}
-      <div class="two-col">
-        <div><h2>They offer</h2><ul>${clan.offering.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
-        <div><h2>Requirements</h2><ul>${clan.requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
+      ${postBodyHtml(clan.about, videoList(clan))}
+      <div class="two-col detail-lists">
+        <section class="detail-list"><h2>They offer</h2><ul>${clan.offering.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>
+        <section class="detail-list"><h2>Requirements</h2><ul>${clan.requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>
       </div>
+      ${joinSteps(clan)}
       ${whisperBox(clan)}
       <div class="row listing-actions">
         ${joinDiscord(clan, `Join ${clan.name} on Discord`)}
@@ -1340,6 +1601,7 @@ export function alliancePage(alliance, { admin = false } = {}) {
           </div>
           <h1 id="alliance-title">${escapeHtml(alliance.name)}</h1>
           <p class="headline">${escapeHtml(alliance.headline)}</p>
+          ${linkRow(alliance)}
         </div>
       </div>
       <dl class="detail-stats">
@@ -1351,11 +1613,12 @@ export function alliancePage(alliance, { admin = false } = {}) {
         <div><dt>${postedStat(alliance).label}</dt><dd>${timeAgo(postedStat(alliance).at)}</dd></div>
       </dl>
       <h2>About</h2>
-      ${postBodyHtml(alliance.about, alliance.video)}
-      <div class="two-col">
-        <div><h2>They offer</h2><ul>${alliance.offering.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
-        <div><h2>Requirements</h2><ul>${alliance.requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
+      ${postBodyHtml(alliance.about, videoList(alliance))}
+      <div class="two-col detail-lists">
+        <section class="detail-list"><h2>They offer</h2><ul>${alliance.offering.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>
+        <section class="detail-list"><h2>Requirements</h2><ul>${alliance.requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>
       </div>
+      ${joinSteps(alliance)}
       ${
         clans.length
           ? `<h2>Clans on this board</h2><div class="mini-clans">${clans
@@ -1377,7 +1640,7 @@ export function alliancePage(alliance, { admin = false } = {}) {
   `;
 }
 
-export function previewClan(form, imageUrl = null, videoId = null) {
+export function previewClan(form, imageUrl = null, videoIds = []) {
   const data = new FormData(form);
   const playstyles = data.getAll("playstyles");
   return {
@@ -1385,7 +1648,9 @@ export function previewClan(form, imageUrl = null, videoId = null) {
     name: data.get("name") || "Your clan name",
     tag: String(data.get("tag") || "TAG").toUpperCase(),
     image: imageUrl,
-    video: videoId,
+    videos: videoIds,
+    links: readLinkRows(form),
+    howToJoin: parseLines(data.get("howToJoin") || ""),
     platform: data.get("platform") || "PC",
     tier: data.get("tier") || "Ghost",
     members: Number(data.get("members") || 1),
@@ -1396,7 +1661,7 @@ export function previewClan(form, imageUrl = null, videoId = null) {
     status: data.get("status") || "Open",
     leader: data.get("leader") || "Leader",
     contact: data.get("contact") || "both",
-    discord: data.get("discord") || "https://discord.gg/warframe",
+    discord: data.get("discord") || "",
     allianceName: null,
     headline: data.get("headline") || "Your headline appears here.",
     summary: data.get("summary") || "A short summary shows under the headline.",
@@ -1407,21 +1672,23 @@ export function previewClan(form, imageUrl = null, videoId = null) {
   };
 }
 
-export function previewAlliance(form, imageUrl = null, videoId = null) {
+export function previewAlliance(form, imageUrl = null, videoIds = []) {
   const data = new FormData(form);
   return {
     id: "preview",
     name: data.get("name") || "Your alliance",
     tag: String(data.get("tag") || "TAG").toUpperCase(),
     image: imageUrl,
-    video: videoId,
+    videos: videoIds,
+    links: readLinkRows(form),
+    howToJoin: parseLines(data.get("howToJoin") || ""),
     platforms: data.getAll("platforms").length ? data.getAll("platforms") : ["PC"],
     region: data.get("region") || "Global",
     language: data.get("language") || "English",
     status: data.get("status") || "Open",
     clanCount: Number(data.get("clanCount") || 1),
     members: Number(data.get("members") || 1),
-    discord: data.get("discord") || "https://discord.gg/warframe",
+    discord: data.get("discord") || "",
     headline: data.get("headline") || "Your headline appears here.",
     summary: data.get("summary") || "A short summary shows under the headline.",
     about: data.get("about") || "",

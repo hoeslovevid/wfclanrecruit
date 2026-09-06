@@ -41,6 +41,11 @@
   --scroll-thumb: #2a3140;
   --check-border: #3a4254;
   --backdrop: rgba(0, 0, 0, 0.72);
+  /* One hue per playstyle group. Chosen to sit apart from the status pills
+     (open / selective / trial) so a card never reads two scales as one. */
+  --group-playstyle: #e0b45c;
+  --group-social: #6dcaa0;
+  --group-content: #8fb0ff;
   --radius: 14px;
   --nav: 76px;
   --font: "IBM Plex Sans", "Segoe UI", sans-serif;
@@ -88,6 +93,9 @@
   --scroll-track: #e8ebf2;
   --scroll-thumb: #b8c0d0;
   --check-border: #b8c0d0;
+  --group-playstyle: #9a6d12;
+  --group-social: #1f7a4d;
+  --group-content: #3358d4;
   --backdrop: rgba(22, 28, 45, 0.45);
 }
 
@@ -805,11 +813,37 @@ select {
   background: transparent;
 }
 .check input:checked { background: var(--accent); border-color: var(--accent); }
-.filters .filter-playstyles {
-  max-height: 220px;
+/* The scroll cap belongs to the whole playstyle block, not to each group:
+   three separately scrolling boxes in a narrow sidebar is unusable. */
+.filters .filter-groups {
+  max-height: 340px;
   overflow: auto;
   padding-right: 2px;
 }
+/* The sidebar is ~240px wide. At the form's check size every tag takes its own
+   row, which turned three labelled groups into a long scroll; shrunk, they pack
+   two or three to a row and the whole set is visible at once. */
+.filters .checks { gap: 6px; }
+.filters .check {
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+.filters .check input { width: 13px; height: 13px; }
+.filter-group + .filter-group { margin-top: 10px; }
+.filter-group-label {
+  margin: 0 0 6px;
+  padding-left: 8px;
+  border-left: 2px solid var(--group);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.filter-group[data-group="playstyle"] { --group: var(--group-playstyle); }
+.filter-group[data-group="social"] { --group: var(--group-social); }
+.filter-group[data-group="content"] { --group: var(--group-content); }
 .pager {
   display: flex;
   align-items: center;
@@ -1477,20 +1511,129 @@ code {
   font-size: 12px;
   font-weight: 500;
 }
-.video-input {
+/* ---------------------------------------------------------------------------
+   Repeatable rows
+
+   Videos, links, and the offer / requirements / how-to-join lists are all the
+   same shape: a stack of rows with a quiet add button under it. They share one
+   visual language so a composer full of them still reads as one form.
+   --------------------------------------------------------------------------- */
+.row-list {
   display: grid;
   gap: 8px;
+}
+.row-list-items {
+  display: grid;
+  gap: 8px;
+}
+.row-item {
+  display: grid;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--input);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.row-item:focus-within {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+/* The rows already sit in their own bordered shell, so the inner control drops
+   its box and reads as text on the row rather than a field inside a field. */
+.row-item input:not([type="file"]),
+.row-item select {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+.row-item input:focus,
+.row-item select:focus {
+  border-color: transparent;
+  box-shadow: none;
+}
+.row-handle {
+  width: 20px;
+  text-align: center;
+  color: var(--placeholder);
+  font-size: 12px;
+  user-select: none;
+}
+.row-remove {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.row-remove:hover,
+.row-remove:focus-visible {
+  color: var(--danger);
+  background: var(--ghost-hover);
+}
+.row-add {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.row-add:hover,
+.row-add:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--ghost);
+}
+.row-add span {
+  font-family: var(--mono);
+  color: var(--accent);
+}
+.row-list-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.line-input {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+.link-input {
+  grid-template-columns: 130px minmax(0, 1fr) auto;
+}
+.link-input select {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.video-input {
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
 }
 .video-input input {
   font-family: inherit;
 }
-.video-input.has-error input {
+.video-input.has-error {
   border-color: var(--danger);
 }
 .video-thumb {
-  width: 160px;
+  width: 84px;
   aspect-ratio: 16 / 9;
-  border-radius: 8px;
+  border-radius: 6px;
   overflow: hidden;
   background: #000;
   border: 1px solid var(--line);
@@ -1502,7 +1645,221 @@ code {
   display: block;
 }
 .video-error {
-  margin: 0;
+  grid-column: 1 / -1;
+  margin: 0 0 0 6px;
   color: var(--danger);
   font-size: 12px;
+}
+
+/* ---------------------------------------------------------------------------
+   Playstyle groups
+   --------------------------------------------------------------------------- */
+.playstyle-groups {
+  display: grid;
+  gap: 12px;
+}
+.playstyle-group {
+  border-left: 2px solid var(--group);
+}
+.playstyle-group legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.playstyle-group legend small {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.playstyle-group[data-group="playstyle"] { --group: var(--group-playstyle); }
+.playstyle-group[data-group="social"] { --group: var(--group-social); }
+.playstyle-group[data-group="content"] { --group: var(--group-content); }
+
+/* A card shows three or four chips. Tinting them by group is what turns that
+   row from a bag of words into "hardcore, friendly, runs Eidolons". */
+.chip[data-group] {
+  padding-left: 16px;
+  position: relative;
+}
+.chip[data-group]::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: var(--group, var(--chip-text));
+}
+.chip[data-group="playstyle"] { --group: var(--group-playstyle); }
+.chip[data-group="social"] { --group: var(--group-social); }
+.chip[data-group="content"] { --group: var(--group-content); }
+
+/* ---------------------------------------------------------------------------
+   Links, how-to-join, and the video strip
+   --------------------------------------------------------------------------- */
+.listing-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.link-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--ghost);
+  color: var(--muted);
+  font-size: 12.5px;
+  text-decoration: none;
+  transition: color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.link-pill:hover,
+.link-pill:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+.link-pill svg { flex: none; color: var(--accent); }
+
+.detail-lists { align-items: start; }
+.detail-list {
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+/* These sit inside their own card, so the page-level h2 scale shouts. Drop
+   them to the kicker voice the composer already uses for section labels. */
+.detail-list h2,
+.join-steps h2 {
+  margin: 0 0 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.detail-list ul { margin: 0; padding-left: 18px; }
+.detail-list li + li { margin-top: 6px; }
+
+/* A sequence, not a set: the steps are what a recruit does in order, so they
+   are numbered on the rail rather than bulleted. */
+.join-steps {
+  margin-top: 18px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.join-steps ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: join;
+}
+.join-steps li {
+  counter-increment: join;
+  position: relative;
+  padding-left: 34px;
+  min-height: 22px;
+}
+.join-steps li + li { margin-top: 10px; }
+.join-steps li::before {
+  content: counter(join);
+  position: absolute;
+  left: 0;
+  top: -1px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--chip);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.video-gallery { margin-top: 12px; }
+.video-gallery .kicker { margin-bottom: 8px; }
+.video-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.video-pick {
+  position: relative;
+  width: 112px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.video-pick img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+}
+.video-pick:hover,
+.video-pick:focus-visible {
+  opacity: 1;
+  transform: translateY(-1px);
+}
+.video-pick.is-active {
+  opacity: 1;
+  border-color: var(--accent);
+}
+.video-pick-index {
+  position: absolute;
+  left: 5px;
+  bottom: 5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+/* ---------------------------------------------------------------------------
+   Composer
+
+   The form carries three more sections than it used to. Numbering the blocks
+   gives a leader somewhere to be in it, and a sticky preview means the card
+   they are writing stays on screen while they scroll.
+   --------------------------------------------------------------------------- */
+.composer form { counter-reset: block; }
+.form-block > h2 {
+  counter-increment: block;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.form-block > h2::before {
+  content: counter(block, decimal-leading-zero);
+  color: var(--accent);
+  font-family: var(--mono);
+}
+
+@media (max-width: 720px) {
+  .link-input { grid-template-columns: 108px minmax(0, 1fr) auto; }
+  .video-input { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .video-input .video-thumb { display: none; }
+  .detail-lists { grid-template-columns: 1fr; }
 }
