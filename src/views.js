@@ -12,7 +12,6 @@ import {
   TAG_MAX,
   TIER_CAPS,
   TIERS,
-  VIDEO_MAX,
   groupOf,
   normalizeContact,
   normalizeLinks,
@@ -27,7 +26,8 @@ import {
   splitVideoHtml,
   toEditorHtml,
 } from "./richtext.js";
-import { videoList, youTubeEmbedUrl, youTubeThumbUrl } from "./video.js";
+import { youTubeEmbedUrl, youTubeThumbUrl } from "./video.js";
+import { MEDIA_MAX, isUploadedImage, mediaList } from "./media.js";
 
 export function escapeHtml(value) {
   return String(value ?? "")
@@ -96,60 +96,106 @@ function hueFrom(seed) {
 // The first clip plays where the leader put the [video] marker. Any others sit
 // in a strip under the post and swap into that same frame on click, so a clan
 // with four contest entries shows all four without four iframes on the page.
-function videoGallery(ids = []) {
-  if (ids.length < 2) return "";
-  const items = ids
-    .map((id, index) => {
-      const thumb = youTubeThumbUrl(id);
-      const src = youTubeEmbedUrl(id);
-      if (!thumb || !src) return "";
-      return `
-        <button
-          class="video-pick${index === 0 ? " is-active" : ""}"
-          type="button"
-          data-stop
-          data-video-pick="${escapeHtml(src)}"
-          aria-pressed="${index === 0 ? "true" : "false"}"
-        >
-          <img src="${escapeHtml(thumb)}" alt="" loading="lazy" width="160" height="90" />
-          <span class="video-pick-index">${index + 1}</span>
-        </button>`;
-    })
-    .join("");
-  if (!items) return "";
+// One stage, one strip. The stage holds both an iframe and an img and shows
+// whichever the active entry needs, because a YouTube embed and a still cannot
+// be swapped by changing a single src.
+function mediaStage(media) {
+  const first = media[0];
+  if (!first) return "";
+  const videoSrc = first.kind === "video" ? youTubeEmbedUrl(first.id) : "";
+  const imageSrc = first.kind === "image" ? first.url : "";
   return `
-    <div class="video-gallery" data-video-gallery>
-      <p class="kicker">${ids.length} videos</p>
-      <div class="video-strip">${items}</div>
+    <div class="post-media" data-stop data-media-stage>
+      <iframe
+        ${videoSrc ? `src="${escapeHtml(videoSrc)}"` : ""}
+        title="Clan video"
+        loading="lazy"
+        allowfullscreen
+        referrerpolicy="strict-origin-when-cross-origin"
+        allow="accelerometer; encrypted-media; gyroscope; picture-in-picture"
+        data-media-frame
+        ${videoSrc ? "" : "hidden"}
+      ></iframe>
+      <img
+        ${imageSrc ? `src="${escapeHtml(imageSrc)}"` : ""}
+        alt=""
+        loading="lazy"
+        referrerpolicy="no-referrer"
+        data-media-image
+        ${imageSrc ? "" : "hidden"}
+      />
     </div>
   `;
 }
 
-export function postBodyHtml(about, videos, { placeholder = false } = {}) {
-  const ids = Array.isArray(videos) ? videos.filter(Boolean) : videoList({ video: videos });
+function mediaThumb(entry) {
+  return entry.kind === "video" ? youTubeThumbUrl(entry.id) : entry.url;
+}
+
+function mediaStrip(media) {
+  if (media.length < 2) return "";
+  const items = media
+    .map((entry, index) => {
+      const thumb = mediaThumb(entry);
+      if (!thumb) return "";
+      const src = entry.kind === "video" ? youTubeEmbedUrl(entry.id) : entry.url;
+      if (!src) return "";
+      return `
+        <button
+          class="media-pick${index === 0 ? " is-active" : ""}"
+          type="button"
+          data-stop
+          data-media-kind="${escapeHtml(entry.kind)}"
+          data-media-src="${escapeHtml(src)}"
+          aria-pressed="${index === 0 ? "true" : "false"}"
+          aria-label="${entry.kind === "video" ? "Play video" : "Show image"} ${index + 1}"
+        >
+          <img src="${escapeHtml(thumb)}" alt="" loading="lazy" referrerpolicy="no-referrer" width="160" height="90" />
+          ${entry.kind === "video" ? `<span class="media-pick-badge" aria-hidden="true">▶</span>` : ""}
+          <span class="media-pick-index">${index + 1}</span>
+        </button>`;
+    })
+    .join("");
+  if (!items) return "";
+  const videos = media.filter((entry) => entry.kind === "video").length;
+  const images = media.length - videos;
+  const label = [videos && `${videos} video${videos > 1 ? "s" : ""}`, images && `${images} image${images > 1 ? "s" : ""}`]
+    .filter(Boolean)
+    .join(" · ");
+  return `
+    <div class="media-gallery" data-media-gallery>
+      <p class="kicker">${escapeHtml(label)}</p>
+      <div class="media-strip">${items}</div>
+    </div>
+  `;
+}
+
+export function postBodyHtml(about, media, { placeholder = false } = {}) {
+  // Accepts the media list, or anything older that reduces to one: an array of
+  // YouTube ids, or a single id string.
+  const entries = Array.isArray(media)
+    ? media.every((entry) => typeof entry === "string")
+      ? mediaList({ videos: media })
+      : mediaList({ media })
+    : mediaList({ video: media });
+
   const html = sanitizePostHtml(toEditorHtml(about));
   const { before, after, hasMarker } = splitVideoHtml(html);
-  // youTubeEmbedUrl returns null for anything that is not an eleven-character
-  // id, so a hand-edited or pre-switch value can never reach the src.
-  const src = youTubeEmbedUrl(ids[0]);
-  const showSlot = placeholder && (Boolean(src) || hasMarker);
-  const player = showSlot
-    ? `<div class="post-video-slot">${ids.length > 1 ? `${ids.length} videos appear here` : "Video appears here"}</div>`
-    : src
-      ? `<div class="post-video" data-stop><iframe src="${escapeHtml(src)}" title="Clan video" loading="lazy" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" data-video-frame></iframe></div>`
-      : "";
-  const gallery = showSlot ? "" : videoGallery(ids);
-  const media = player ? `${player}${gallery}` : "";
+  const showSlot = placeholder && (entries.length > 0 || hasMarker);
+  const stage = showSlot
+    ? `<div class="post-video-slot">${
+        entries.length > 1 ? `${entries.length} items appear here` : "Media appears here"
+      }</div>`
+    : mediaStage(entries);
+  const band = showSlot ? stage : stage ? `${stage}${mediaStrip(entries)}` : "";
 
-  if (!media) {
+  if (!band) {
     return before || after ? `<div class="post-body muted">${before}${after}</div>` : "";
   }
-
   if (!hasMarker) {
-    return `${html ? `<div class="post-body muted">${html}</div>` : ""}${media}`;
+    return `${html ? `<div class="post-body muted">${html}</div>` : ""}${band}`;
   }
-
-  return `${before ? `<div class="post-body muted">${before}</div>` : ""}${media}${
+  return `${before ? `<div class="post-body muted">${before}</div>` : ""}${band}${
     after ? `<div class="post-body muted">${after}</div>` : ""
   }`;
 }
@@ -769,47 +815,90 @@ function imagePicker(label) {
 // `blank` is what an added row is cloned from. It is carried separately rather
 // than cloned off the first rendered row, because a list can legitimately start
 // empty - the links list does - and then there is nothing to copy.
-function rowList(kind, { rows, blank, addLabel, empty = "" }) {
+function rowList(kind, { rows, blank, addLabel, empty = "", extra = "", extraLabel = "" }) {
   return `
     <div class="row-list" data-row-list="${escapeHtml(kind)}">
       <div class="row-list-items" data-row-items>${rows.join("")}</div>
       ${empty ? `<p class="row-list-empty" data-row-empty${rows.length ? " hidden" : ""}>${escapeHtml(empty)}</p>` : ""}
-      <button class="row-add" type="button" data-row-add>
-        <span aria-hidden="true">+</span> ${escapeHtml(addLabel)}
-      </button>
+      <div class="row-adds">
+        <button class="row-add" type="button" data-row-add>
+          <span aria-hidden="true">+</span> ${escapeHtml(addLabel)}
+        </button>
+        ${
+          extra
+            ? `<button class="row-add" type="button" data-row-add-extra>
+                 <span aria-hidden="true">+</span> ${escapeHtml(extraLabel)}
+               </button>`
+            : ""
+        }
+      </div>
       <template data-row-template>${blank}</template>
+      ${extra ? `<template data-row-template-extra>${extra}</template>` : ""}
     </div>
   `;
 }
 
-function videoRow(value = "") {
+// A link row takes either a YouTube link or an image link; which one it is gets
+// decided as the leader types, so there is no type to choose up front.
+function mediaLinkRow(value = "") {
   return `
-    <div class="row-item video-input" data-row data-video-input>
-      <span class="row-handle" aria-hidden="true">▶</span>
-      <div class="video-thumb" data-video-thumb hidden><img alt="" data-video-thumb-img /></div>
+    <div class="row-item media-input" data-row data-media-row="link">
+      <span class="media-badge" data-media-badge aria-hidden="true">🔗</span>
+      <div class="media-thumb" data-media-thumb hidden><img alt="" referrerpolicy="no-referrer" data-media-thumb-img /></div>
       <input
-        name="video"
+        data-media-url
         type="text"
         inputmode="url"
         autocomplete="off"
         spellcheck="false"
-        placeholder="https://youtube.com/watch?v=..."
+        placeholder="YouTube link, or an image link"
         value="${escapeHtml(value)}"
       />
-      <button class="row-remove" type="button" data-row-remove aria-label="Remove this video">×</button>
-      <p class="video-error" data-video-error role="alert" hidden></p>
+      <button class="row-remove" type="button" data-row-remove aria-label="Remove this item">×</button>
+      <p class="media-error" data-media-error role="alert" hidden></p>
     </div>
   `;
 }
 
+// An upload row holds the file itself until submit. Once saved it comes back as
+// a /uploads/ URL and renders as a thumbnail with nothing to type.
+function mediaUploadRow(url = "") {
+  return `
+    <div class="row-item media-input" data-row data-media-row="upload" data-media-url-value="${escapeHtml(url)}">
+      <span class="media-badge" data-media-badge aria-hidden="true">🖼</span>
+      <div class="media-thumb" data-media-thumb ${url ? "" : "hidden"}>
+        <img alt="" ${url ? `src="${escapeHtml(url)}"` : ""} data-media-thumb-img />
+      </div>
+      <input class="media-file" type="file" name="mediaImage" accept="image/png,image/jpeg,image/webp,image/gif" ${url ? "hidden" : ""} />
+      <span class="media-name" data-media-name>${url ? "Uploaded image" : ""}</span>
+      <button class="row-remove" type="button" data-row-remove aria-label="Remove this item">×</button>
+      <p class="media-error" data-media-error role="alert" hidden></p>
+    </div>
+  `;
+}
+
+function mediaRow(entry) {
+  if (entry?.kind === "image" && isUploadedImage(entry.url)) return mediaUploadRow(entry.url);
+  if (entry?.kind === "image") return mediaLinkRow(entry.url);
+  if (entry?.kind === "video") return mediaLinkRow(`https://youtu.be/${entry.id}`);
+  return mediaLinkRow();
+}
+
 function videoPicker(draft = {}) {
-  const ids = videoList(draft);
-  const rows = (ids.length ? ids : [""]).slice(0, VIDEO_MAX).map((id) => videoRow(id));
+  const entries = mediaList(draft);
+  const rows = (entries.length ? entries : [null]).map((entry) => mediaRow(entry));
   return `
     <div class="field">
-      <span>YouTube videos <small class="field-optional">optional · up to ${VIDEO_MAX}</small></span>
-      ${rowList("video", { rows, blank: videoRow(), addLabel: "Add another video" })}
-      <small class="field-help">The first video plays inside the post. The rest appear as a strip under it.</small>
+      <span>Media <small class="field-optional">optional · up to ${MEDIA_MAX}</small></span>
+      ${rowList("media", {
+        rows,
+        blank: mediaLinkRow(),
+        extra: mediaUploadRow(),
+        addLabel: "Add a link",
+        extraLabel: "Upload an image",
+      })}
+      <input type="hidden" name="media" value="" />
+      <small class="field-help">The first item shows inside the post; the rest become a strip under it. Uploads are resized here. Pasted image links must come from a host that allows it — Discord links expire, so upload those.</small>
     </div>
   `;
 }
@@ -920,7 +1009,7 @@ function aboutComposer(draft = {}) {
   return `
     ${richTextField("about", "Full post", draft.about || "", { video: true })}
     ${videoPicker(draft)}
-    <small class="field-help">Select text to format. Click in the post, then Video to place the clip. Insert again to move it.</small>
+    <small class="field-help">Select text to format. Click in the post, then Video to place the media band. Insert again to move it.</small>
   `;
 }
 
@@ -1569,7 +1658,7 @@ export function clanPage(clan, { admin = false } = {}) {
       </dl>
       <div class="meter tall"><i style="width:${fillPercent(clan)}%"></i></div>
       <h2>About</h2>
-      ${postBodyHtml(clan.about, videoList(clan))}
+      ${postBodyHtml(clan.about, mediaList(clan))}
       ${listingSections(clan)}
       ${whisperBox(clan)}
       <div class="row listing-actions">
@@ -1610,7 +1699,7 @@ export function alliancePage(alliance, { admin = false } = {}) {
         <div><dt>${postedStat(alliance).label}</dt><dd>${timeAgo(postedStat(alliance).at)}</dd></div>
       </dl>
       <h2>About</h2>
-      ${postBodyHtml(alliance.about, videoList(alliance))}
+      ${postBodyHtml(alliance.about, mediaList(alliance))}
       ${listingSections(alliance)}
       ${
         clans.length
@@ -1633,7 +1722,7 @@ export function alliancePage(alliance, { admin = false } = {}) {
   `;
 }
 
-export function previewClan(form, imageUrl = null, videoIds = []) {
+export function previewClan(form, imageUrl = null, mediaEntries = []) {
   const data = new FormData(form);
   const playstyles = data.getAll("playstyles");
   return {
@@ -1641,7 +1730,7 @@ export function previewClan(form, imageUrl = null, videoIds = []) {
     name: data.get("name") || "Your clan name",
     tag: String(data.get("tag") || "TAG").toUpperCase(),
     image: imageUrl,
-    videos: videoIds,
+    media: mediaEntries,
     links: readLinkRows(form),
     howToJoin: data.get("howToJoin") || "",
     platform: data.get("platform") || "PC",
@@ -1665,14 +1754,14 @@ export function previewClan(form, imageUrl = null, videoIds = []) {
   };
 }
 
-export function previewAlliance(form, imageUrl = null, videoIds = []) {
+export function previewAlliance(form, imageUrl = null, mediaEntries = []) {
   const data = new FormData(form);
   return {
     id: "preview",
     name: data.get("name") || "Your alliance",
     tag: String(data.get("tag") || "TAG").toUpperCase(),
     image: imageUrl,
-    videos: videoIds,
+    media: mediaEntries,
     links: readLinkRows(form),
     howToJoin: data.get("howToJoin") || "",
     platforms: data.getAll("platforms").length ? data.getAll("platforms") : ["PC"],
