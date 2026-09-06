@@ -24,7 +24,14 @@ import {
   rosterPanel,
 } from "./views.js";
 import { privacyView } from "./privacy.js";
-import { aboutTooLong, isSafeHref, plainTextFromHtml, sanitizePostHtml, toEditorHtml } from "./richtext.js";
+import {
+  aboutTooLong,
+  isSafeHref,
+  plainTextFromHtml,
+  sanitizePostHtml,
+  sectionTooLong,
+  toEditorHtml,
+} from "./richtext.js";
 import { parseYouTubeId } from "./video.js";
 import {
   applyAllianceFilters,
@@ -569,7 +576,7 @@ function bindVideoInputs(form, onIds) {
     // strip beneath it, so a second link must not move the marker.
     if (ids.length && !seenFirst) {
       seenFirst = true;
-      ensureVideoMarker(form.querySelector("[data-rich-editor]"));
+      ensureVideoMarker(aboutEditor(form));
     }
     if (!ids.length) seenFirst = false;
     onIds(ids);
@@ -590,24 +597,10 @@ function bindLinkRows(form, onChange) {
   list?.addEventListener("change", onChange);
 }
 
-// Each line is its own input, but the wire format stays a newline-joined
-// textarea so the server's `lines()` parsing never had to learn a new shape.
-function bindLineLists(form, onChange) {
-  form.querySelectorAll("[data-line-list]").forEach((field) => {
-    const textarea = field.querySelector("textarea");
-    const list = field.querySelector("[data-row-list]");
-    const sync = () => {
-      if (!textarea) return;
-      textarea.value = [...field.querySelectorAll("[data-line]")]
-        .map((input) => input.value.trim())
-        .filter(Boolean)
-        .join("\n");
-      onChange?.();
-    };
-    bindRowList(list, { min: 1, onChange: sync });
-    list?.addEventListener("input", sync);
-    sync();
-  });
+// The form holds four editors now, and only the post body can take a clip.
+// Name it rather than trusting it to be the first one in the markup.
+function aboutEditor(form) {
+  return form.querySelector('[data-rich-field="about"] [data-rich-editor]');
 }
 
 function insertVideoAtEditor(editor) {
@@ -648,21 +641,30 @@ function ensureVideoMarker(editor) {
   if (!editor || editor.querySelector("[data-video]")) return;
   insertVideoAtEditor(editor);
   decorateVideoMarks(editor);
-  const textarea = editor.closest("form")?.about;
+  const textarea = editor.closest("[data-rich-field]")?.querySelector("textarea");
   if (textarea) {
     textarea.value = sanitizePostHtml(editor.innerHTML);
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
   }
 }
 
-function bindRichText(form, onChange) {
-  const editor = form.querySelector("[data-rich-editor]");
-  const toolbar = form.querySelector(".richtext-toolbar");
-  const textarea = form.about;
+// The composer now carries four of these - the post body and the three
+// optional boxes - so this binds one editor rather than reaching for the form's
+// single `about` field. The video marker only exists in the post body, which is
+// the one field whose editor has a Video button.
+function bindRichTextField(field, onChange) {
+  const editor = field.querySelector("[data-rich-editor]");
+  const toolbar = field.querySelector(".richtext-toolbar");
+  const textarea = field.querySelector("textarea");
   if (!editor || !textarea) return;
+  const hasVideo = Boolean(toolbar?.querySelector("[data-insert-video]"));
+
+  function paintPlaceholder() {
+    editor.classList.toggle("is-empty", !plainTextFromHtml(editor.innerHTML).trim());
+  }
 
   function sync() {
-    decorateVideoMarks(editor);
+    if (hasVideo) decorateVideoMarks(editor);
     editor.querySelectorAll("a").forEach((link) => {
       const safe = isSafeHref(link.getAttribute("href"));
       if (!safe) {
@@ -674,12 +676,14 @@ function bindRichText(form, onChange) {
       link.setAttribute("rel", "noopener noreferrer");
     });
     textarea.value = sanitizePostHtml(editor.innerHTML);
+    paintPlaceholder();
     onChange?.();
   }
 
   editor.innerHTML = toEditorHtml(textarea.value);
-  decorateVideoMarks(editor);
+  if (hasVideo) decorateVideoMarks(editor);
   textarea.value = sanitizePostHtml(editor.innerHTML);
+  paintPlaceholder();
 
   toolbar?.addEventListener("mousedown", (event) => {
     if (event.target.closest("button")) event.preventDefault();
@@ -701,6 +705,7 @@ function bindRichText(form, onChange) {
     if (cmd === "italic") document.execCommand("italic");
     if (cmd === "underline") document.execCommand("underline");
     if (cmd === "ulist") document.execCommand("insertUnorderedList");
+    if (cmd === "olist") document.execCommand("insertOrderedList");
     if (cmd === "link") {
       const current = window.getSelection()?.toString() || "";
       const url = window.prompt("Link URL", current.startsWith("http") ? current : "https://");
@@ -712,6 +717,7 @@ function bindRichText(form, onChange) {
   });
 
   editor.addEventListener("input", sync);
+  editor.addEventListener("blur", paintPlaceholder);
   editor.addEventListener("click", (event) => {
     if (event.target.closest("a")) event.preventDefault();
   });
@@ -727,6 +733,10 @@ function bindRichText(form, onChange) {
   });
 }
 
+function bindRichText(form, onChange) {
+  form.querySelectorAll("[data-rich-field]").forEach((field) => bindRichTextField(field, onChange));
+}
+
 function bindListingComposer(form, { imageUrl = null, onChange }) {
   const media = { image: imageUrl, videos: [] };
   const refresh = () => onChange(media);
@@ -740,7 +750,6 @@ function bindListingComposer(form, { imageUrl = null, onChange }) {
     refresh();
   });
   bindLinkRows(form, refresh);
-  bindLineLists(form, refresh);
   form.addEventListener("input", refresh);
   refresh();
 }
@@ -748,15 +757,21 @@ function bindListingComposer(form, { imageUrl = null, onChange }) {
 // The list fields sync into hidden textareas, and a hidden `required` control
 // makes reportValidity throw rather than point at anything, so they are checked
 // by hand. "How to join" is genuinely optional and so is left out.
-const REQUIRED_LISTS = { offering: "What you offer", requirements: "Requirements" };
+// Offer, requirements and how-to-join are optional: an empty one is a section
+// the listing does not show. Length is the only thing left that can fail, and
+// it names the box so the leader knows which one to cut.
+const SECTION_LABELS = {
+  offering: "What you offer",
+  requirements: "Requirements",
+  howToJoin: "How to join",
+};
 
-function listFieldError(form) {
-  for (const [name, label] of Object.entries(REQUIRED_LISTS)) {
-    const field = form.querySelector(`[data-line-list="${name}"]`);
-    if (!field) continue;
-    if (!String(field.querySelector("textarea")?.value || "").trim()) {
-      return `Add at least one line under "${label}".`;
-    }
+function sectionError(form) {
+  for (const [name, label] of Object.entries(SECTION_LABELS)) {
+    const value = form.elements[name]?.value;
+    if (value === undefined) continue;
+    const tooLong = sectionTooLong(value, `"${label}"`);
+    if (tooLong) return tooLong;
   }
   return null;
 }
@@ -976,7 +991,7 @@ async function render() {
         return;
       }
       const tooBig =
-        mediaTooLarge(form) || aboutError(form) || contactRouteMissing(form, state.user) || listFieldError(form);
+        mediaTooLarge(form) || aboutError(form) || contactRouteMissing(form, state.user) || sectionError(form);
       if (tooBig) {
         showNote(note, tooBig);
         return;
@@ -1036,7 +1051,7 @@ async function render() {
         mediaTooLarge(form) ||
         aboutError(form) ||
         contactRouteMissing(form, state.user, { whisper: false }) ||
-        listFieldError(form);
+        sectionError(form);
       if (tooBig) {
         showNote(note, tooBig);
         return;

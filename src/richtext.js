@@ -1,5 +1,10 @@
 const ABOUT_MAX = 4000;
 const PLAIN_MAX = 1500;
+// The offer / requirements / how-to-join boxes take the same formatting as the
+// full post, but they sit beside it rather than replacing it. A smaller cap
+// keeps them the summary they are meant to be.
+const SECTION_MAX = 1500;
+const SECTION_PLAIN_MAX = 600;
 const VOID = new Set(["br"]);
 const SKIP = new Set(["script", "style", "iframe", "object", "embed", "link", "meta", "svg"]);
 const ALLOWED = {
@@ -196,6 +201,37 @@ export function aboutTooLong(html) {
   return null;
 }
 
+// These three boxes used to be a string array, one bullet per entry. Rather
+// than rewrite every stored listing, every reader comes through here: an array
+// becomes the bullet list it always rendered as, and anything already written
+// as HTML passes through the same editor normalisation as the post body.
+export function sectionToHtml(value) {
+  if (Array.isArray(value)) {
+    const items = value.map((item) => String(item ?? "").trim()).filter(Boolean);
+    if (!items.length) return "";
+    return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+  }
+  return toEditorHtml(value);
+}
+
+// Optional, so an empty box is a section the listing simply does not show -
+// never an error.
+export function normalizeSection(value) {
+  const html = sanitizePostHtml(sectionToHtml(value));
+  return html.length > SECTION_MAX ? html.slice(0, SECTION_MAX) : html;
+}
+
+export function sectionTooLong(html, label = "That section") {
+  if (String(html || "").length > SECTION_MAX) return `${label} is too long.`;
+  if (plainTextFromHtml(html).length > SECTION_PLAIN_MAX) return `${label} is too long.`;
+  return null;
+}
+
+// A section that holds nothing but empty markup is not a section.
+export function sectionIsEmpty(html) {
+  return !plainTextFromHtml(html).trim();
+}
+
 const VIDEO_MARK = /<span\b[^>]*\bdata-video\b[^>]*>([\s\S]*?)<\/span>/i;
 
 export function splitVideoHtml(html) {
@@ -210,4 +246,4 @@ export function splitVideoHtml(html) {
   };
 }
 
-export { ABOUT_MAX, PLAIN_MAX };
+export { ABOUT_MAX, PLAIN_MAX, SECTION_MAX, SECTION_PLAIN_MAX };

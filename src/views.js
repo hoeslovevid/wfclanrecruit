@@ -19,7 +19,14 @@ import {
   wantsDiscord,
   wantsWhisper,
 } from "./data.js";
-import { isSafeHref, sanitizePostHtml, splitVideoHtml, toEditorHtml } from "./richtext.js";
+import {
+  isSafeHref,
+  sanitizePostHtml,
+  sectionIsEmpty,
+  sectionToHtml,
+  splitVideoHtml,
+  toEditorHtml,
+} from "./richtext.js";
 import { videoList, youTubeEmbedUrl, youTubeThumbUrl } from "./video.js";
 
 export function escapeHtml(value) {
@@ -186,17 +193,29 @@ export function linkRow(item) {
   `;
 }
 
-// Some clans filter in the recruitment process itself - a form, a trial run, an
-// interview. Numbered rather than bulleted because it is a sequence.
-function joinSteps(item) {
-  const steps = (item?.howToJoin || []).filter(Boolean);
-  if (!steps.length) return "";
+// The three boxes are optional and stack full width: side by side they forced
+// every leader to write two lists of matching length, and a long one against an
+// empty one looked broken. Each renders only when it holds something.
+function listingSection(item, name, heading, { accent = false } = {}) {
+  const html = sanitizePostHtml(sectionToHtml(item?.[name]));
+  if (sectionIsEmpty(html)) return "";
   return `
-    <section class="join-steps">
-      <h2>How to join</h2>
-      <ol>${steps.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ol>
+    <section class="detail-list${accent ? " is-accent" : ""}">
+      <h2>${escapeHtml(heading)}</h2>
+      <div class="post-body">${html}</div>
     </section>
   `;
+}
+
+// Some clans filter in the recruitment process itself - a form, a trial run, an
+// interview. Accented because it is the last thing a recruit reads before
+// acting on the listing.
+function listingSections(item) {
+  return [
+    listingSection(item, "offering", "They offer"),
+    listingSection(item, "requirements", "Requirements"),
+    listingSection(item, "howToJoin", "How to join", { accent: true }),
+  ].join("");
 }
 
 export function photo(item, size = 56) {
@@ -698,13 +717,6 @@ export function allianceResultsHtml(alliances, filters, pager) {
   return `<div class="grid two">${alliances.map((item) => allianceCard(item)).join("")}</div>${pagerBar(pager, "Alliance")}`;
 }
 
-function parseLines(value) {
-  return String(value || "")
-    .split(/\r?\n/)
-    .map((item) => item.trim().replace(/^[-*•]\s+/, ""))
-    .filter(Boolean);
-}
-
 // The link rows are not named form fields - they are packed into one hidden
 // JSON field on submit - so the live preview reads them straight off the DOM.
 export function readLinkRows(form) {
@@ -841,37 +853,44 @@ function linksField(draft = {}) {
   `;
 }
 
-function lineRow(value = "", placeholder = "") {
+// One editor shared by the post body and the three optional boxes. The toolbar
+// is the same everywhere except the video button, which only means anything in
+// the post body - the boxes have nowhere to put a clip.
+function richTextField(name, label, value, { hint = "", optional = false, video = false, placeholder = "" } = {}) {
   return `
-    <div class="row-item line-input" data-row>
-      <span class="row-handle" aria-hidden="true">⠿</span>
-      <input
-        data-line
-        type="text"
-        maxlength="120"
-        autocomplete="off"
-        placeholder="${escapeHtml(placeholder)}"
-        value="${escapeHtml(value)}"
-      />
-      <button class="row-remove" type="button" data-row-remove aria-label="Remove this line">×</button>
+    <div class="field" data-rich-field="${escapeHtml(name)}">
+      <span>${escapeHtml(label)}${optional ? ` <small class="field-optional">optional</small>` : ""}</span>
+      <div class="richtext">
+        <div class="richtext-toolbar" role="toolbar" aria-label="${escapeHtml(label)} formatting">
+          <button class="richtext-btn" type="button" data-rt="bold" title="Bold"><strong>B</strong></button>
+          <button class="richtext-btn" type="button" data-rt="italic" title="Italic"><em>I</em></button>
+          <button class="richtext-btn" type="button" data-rt="underline" title="Underline"><u>U</u></button>
+          <button class="richtext-btn" type="button" data-rt="ulist" title="Bullet list">List</button>
+          <button class="richtext-btn" type="button" data-rt="olist" title="Numbered list">1.</button>
+          <button class="richtext-btn" type="button" data-rt="link" title="Add link">Link</button>
+          ${video ? `<button class="richtext-btn" type="button" data-insert-video title="Insert video at cursor">Video</button>` : ""}
+        </div>
+        <div
+          class="richtext-editor${video ? "" : " is-compact"}"
+          data-rich-editor
+          contenteditable="true"
+          role="textbox"
+          aria-multiline="true"
+          aria-label="${escapeHtml(label)}"
+          data-placeholder="${escapeHtml(placeholder)}"
+        ></div>
+        <textarea name="${escapeHtml(name)}" hidden>${escapeHtml(toEditorHtml(value || ""))}</textarea>
+      </div>
+      ${hint ? `<small class="field-help">${escapeHtml(hint)}</small>` : ""}
     </div>
   `;
 }
 
-// A textarea gave no hint that each newline became a bullet, so leaders wrote
-// paragraphs and got one very long bullet. One input per bullet says it
-// outright. The hidden textarea keeps the newline-joined wire format, so the
-// server's `lines()` parsing is untouched.
-function lineListField(name, label, values = [], { placeholder = "", hint = "", optional = false } = {}) {
-  const rows = (values.length ? values : [""]).map((value) => lineRow(value, placeholder));
-  return `
-    <div class="field" data-line-list="${escapeHtml(name)}">
-      <span>${escapeHtml(label)}${optional ? ` <small class="field-optional">optional</small>` : ""}</span>
-      ${rowList(`line-${name}`, { rows, blank: lineRow("", placeholder), addLabel: "Add a line" })}
-      ${hint ? `<small class="field-help">${escapeHtml(hint)}</small>` : ""}
-      <textarea name="${escapeHtml(name)}" hidden>${escapeHtml(values.join("\n"))}</textarea>
-    </div>
-  `;
+// A listing written before these boxes took formatting still holds a string
+// array. sectionToHtml turns it back into the bullet list it always rendered
+// as, so opening an old post in the editor shows what the page shows.
+function sectionField(name, label, value, options = {}) {
+  return richTextField(name, label, sectionToHtml(value), { optional: true, ...options });
 }
 
 // The browse sidebar is narrow, so the groups get a small rail and a label
@@ -899,21 +918,7 @@ function playstyleGroups(selected = []) {
 
 function aboutComposer(draft = {}) {
   return `
-    <div class="field">
-      <span>Full post</span>
-      <div class="richtext">
-        <div class="richtext-toolbar" role="toolbar" aria-label="Post formatting">
-          <button class="richtext-btn" type="button" data-rt="bold" title="Bold"><strong>B</strong></button>
-          <button class="richtext-btn" type="button" data-rt="italic" title="Italic"><em>I</em></button>
-          <button class="richtext-btn" type="button" data-rt="underline" title="Underline"><u>U</u></button>
-          <button class="richtext-btn" type="button" data-rt="ulist" title="Bullet list">List</button>
-          <button class="richtext-btn" type="button" data-rt="link" title="Add link">Link</button>
-          <button class="richtext-btn" type="button" data-insert-video title="Insert video at cursor">Video</button>
-        </div>
-        <div class="richtext-editor" data-rich-editor contenteditable="true" role="textbox" aria-multiline="true" aria-label="Full post"></div>
-        <textarea name="about" hidden>${escapeHtml(toEditorHtml(draft.about || ""))}</textarea>
-      </div>
-    </div>
+    ${richTextField("about", "Full post", draft.about || "", { video: true })}
     ${videoPicker(draft)}
     <small class="field-help">Select text to format. Click in the post, then Video to place the clip. Insert again to move it.</small>
   `;
@@ -1082,19 +1087,17 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
           <label class="field"><span>Headline</span><input name="headline" required maxlength="90" value="${escapeHtml(draft.headline || "")}" /></label>
           <label class="field"><span>Short summary</span><textarea name="summary" required maxlength="220" rows="3">${escapeHtml(draft.summary || "")}</textarea></label>
           ${aboutComposer(draft)}
-          <div class="two-col">
-            ${lineListField("offering", "What you offer", draft.offering || [], {
-              placeholder: "Fully researched Moon clan",
-            })}
-            ${lineListField("requirements", "Requirements", draft.requirements || [], {
-              placeholder: "MR 10+",
-            })}
-          </div>
-          ${lineListField("howToJoin", "How to join", draft.howToJoin || [], {
-            placeholder: "Post an intro in #recruitment",
-            hint: "Numbered on the listing. Use it if you filter recruits before the invite.",
-            optional: true,
+          ${sectionField("offering", "What you offer", draft.offering, {
+            placeholder: "Fully researched Moon clan, weekly events, free forma…",
           })}
+          ${sectionField("requirements", "Requirements", draft.requirements, {
+            placeholder: "MR 10+, voice on for hunts…",
+          })}
+          ${sectionField("howToJoin", "How to join", draft.howToJoin, {
+            placeholder: "Post an intro in #recruitment…",
+            hint: "Use it if you filter recruits before the invite. A numbered list works well here.",
+          })}
+          <small class="field-help">These three are optional. Leave one empty and the listing simply will not show that section.</small>
         </div>
         <div class="form-actions">
           <button class="btn btn-primary" type="submit">${editing ? "Save changes" : "Publish clan"}</button>
@@ -1167,19 +1170,17 @@ export function alliancePostView({ user, draft = {}, auth = {}, clans = [] }) {
           <label class="field"><span>Headline</span><input name="headline" required maxlength="90" value="${escapeHtml(draft.headline || "")}" /></label>
           <label class="field"><span>Short summary</span><textarea name="summary" required maxlength="220" rows="3">${escapeHtml(draft.summary || "")}</textarea></label>
           ${aboutComposer(draft)}
-          <div class="two-col">
-            ${lineListField("offering", "What you offer", draft.offering || [], {
-              placeholder: "Shared Discord and events",
-            })}
-            ${lineListField("requirements", "Requirements", draft.requirements || [], {
-              placeholder: "Active clan with 20+ members",
-            })}
-          </div>
-          ${lineListField("howToJoin", "How to join", draft.howToJoin || [], {
-            placeholder: "Have your clan leader open a ticket",
-            hint: "Numbered on the listing. Use it if you filter clans before they join.",
-            optional: true,
+          ${sectionField("offering", "What you offer", draft.offering, {
+            placeholder: "Shared Discord, cross-clan events…",
           })}
+          ${sectionField("requirements", "Requirements", draft.requirements, {
+            placeholder: "Active clan with 20+ members…",
+          })}
+          ${sectionField("howToJoin", "How to join", draft.howToJoin, {
+            placeholder: "Have your clan leader open a ticket…",
+            hint: "Use it if you filter clans before they join. A numbered list works well here.",
+          })}
+          <small class="field-help">These three are optional. Leave one empty and the listing simply will not show that section.</small>
         </div>
         <div class="form-actions">
           <button class="btn btn-primary" type="submit">${editing ? "Save changes" : "Publish alliance"}</button>
@@ -1569,11 +1570,7 @@ export function clanPage(clan, { admin = false } = {}) {
       <div class="meter tall"><i style="width:${fillPercent(clan)}%"></i></div>
       <h2>About</h2>
       ${postBodyHtml(clan.about, videoList(clan))}
-      <div class="two-col detail-lists">
-        <section class="detail-list"><h2>They offer</h2><ul>${clan.offering.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>
-        <section class="detail-list"><h2>Requirements</h2><ul>${clan.requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>
-      </div>
-      ${joinSteps(clan)}
+      ${listingSections(clan)}
       ${whisperBox(clan)}
       <div class="row listing-actions">
         ${joinDiscord(clan, `Join ${clan.name} on Discord`)}
@@ -1614,11 +1611,7 @@ export function alliancePage(alliance, { admin = false } = {}) {
       </dl>
       <h2>About</h2>
       ${postBodyHtml(alliance.about, videoList(alliance))}
-      <div class="two-col detail-lists">
-        <section class="detail-list"><h2>They offer</h2><ul>${alliance.offering.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>
-        <section class="detail-list"><h2>Requirements</h2><ul>${alliance.requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>
-      </div>
-      ${joinSteps(alliance)}
+      ${listingSections(alliance)}
       ${
         clans.length
           ? `<h2>Clans on this board</h2><div class="mini-clans">${clans
@@ -1650,7 +1643,7 @@ export function previewClan(form, imageUrl = null, videoIds = []) {
     image: imageUrl,
     videos: videoIds,
     links: readLinkRows(form),
-    howToJoin: parseLines(data.get("howToJoin") || ""),
+    howToJoin: data.get("howToJoin") || "",
     platform: data.get("platform") || "PC",
     tier: data.get("tier") || "Ghost",
     members: Number(data.get("members") || 1),
@@ -1666,8 +1659,8 @@ export function previewClan(form, imageUrl = null, videoIds = []) {
     headline: data.get("headline") || "Your headline appears here.",
     summary: data.get("summary") || "A short summary shows under the headline.",
     about: data.get("about") || "",
-    offering: parseLines(data.get("offering") || "Your offering"),
-    requirements: parseLines(data.get("requirements") || "Your requirements"),
+    offering: data.get("offering") || "",
+    requirements: data.get("requirements") || "",
     createdAt: new Date().toISOString(),
   };
 }
@@ -1681,7 +1674,7 @@ export function previewAlliance(form, imageUrl = null, videoIds = []) {
     image: imageUrl,
     videos: videoIds,
     links: readLinkRows(form),
-    howToJoin: parseLines(data.get("howToJoin") || ""),
+    howToJoin: data.get("howToJoin") || "",
     platforms: data.getAll("platforms").length ? data.getAll("platforms") : ["PC"],
     region: data.get("region") || "Global",
     language: data.get("language") || "English",
@@ -1692,8 +1685,8 @@ export function previewAlliance(form, imageUrl = null, videoIds = []) {
     headline: data.get("headline") || "Your headline appears here.",
     summary: data.get("summary") || "A short summary shows under the headline.",
     about: data.get("about") || "",
-    offering: parseLines(data.get("offering") || "Your offering"),
-    requirements: parseLines(data.get("requirements") || "Your requirements"),
+    offering: data.get("offering") || "",
+    requirements: data.get("requirements") || "",
     memberClans: [],
     createdAt: new Date().toISOString(),
   };

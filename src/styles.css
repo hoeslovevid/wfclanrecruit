@@ -1008,6 +1008,19 @@ select {
   padding: 11px 12px;
   outline: none;
 }
+/* The three optional boxes are summaries, not the post body. Start them short
+   so a composer with four editors does not read as four full-page fields. */
+.richtext-editor.is-compact {
+  min-height: 92px;
+  max-height: 260px;
+}
+/* contenteditable has no placeholder attribute, and an empty optional box needs
+   to say what belongs in it more than a required one does. */
+.richtext-editor.is-empty::before {
+  content: attr(data-placeholder);
+  color: var(--placeholder);
+  pointer-events: none;
+}
 .richtext-editor ul,
 .post-body ul {
   margin: 0.4em 0 0.7em;
@@ -1610,9 +1623,6 @@ code {
   font-size: 12px;
 }
 
-.line-input {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-}
 .link-input {
   grid-template-columns: 130px minmax(0, 1fr) auto;
 }
@@ -1729,25 +1739,27 @@ code {
 }
 .link-pill svg { flex: none; color: var(--accent); }
 
-/* The listing page is a stack of self-contained blocks now (lists, how to
-   join, whisper). One rhythm between them, rather than each carrying its own. */
-.detail-lists,
-.join-steps,
+/* The listing page is a stack of self-contained blocks. Offer, requirements and
+   how-to-join used to sit two-up, which forced every leader to write two lists
+   of matching length - a long one beside an empty one just looked broken. Full
+   width, stacked, and each one appears only if it was filled in. */
+.detail-list,
 .listing-page .whisper {
-  margin-top: 22px;
+  margin-top: 18px;
 }
-.detail-lists { align-items: start; }
 .detail-list {
   padding: 16px 18px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-2);
 }
+/* How to join is the last thing read before acting on the listing, so it keeps
+   the accent rail the numbered steps used to carry. */
+.detail-list.is-accent { border-left: 2px solid var(--accent); }
 /* These sit inside their own card, so the page-level h2 scale shouts. Drop
    them to the kicker voice the composer already uses for section labels. */
-.detail-list h2,
-.join-steps h2 {
-  margin: 0 0 12px;
+.detail-list h2 {
+  margin: 0 0 10px;
   font-family: var(--mono);
   font-size: 12px;
   font-weight: 500;
@@ -1755,46 +1767,12 @@ code {
   text-transform: uppercase;
   color: var(--muted);
 }
-.detail-list ul { margin: 0; padding-left: 18px; }
+.detail-list .post-body { color: var(--text); }
+.detail-list ul,
+.detail-list ol { margin: 0; padding-left: 20px; }
 .detail-list li + li { margin-top: 6px; }
-
-/* A sequence, not a set: the steps are what a recruit does in order, so they
-   are numbered on the rail rather than bulleted. */
-.join-steps {
-  padding: 16px 18px;
-  border: 1px solid var(--line);
-  border-left: 2px solid var(--accent);
-  border-radius: var(--radius);
-  background: var(--surface-2);
-}
-.join-steps ol {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  counter-reset: join;
-}
-.join-steps li {
-  counter-increment: join;
-  position: relative;
-  padding-left: 34px;
-  min-height: 22px;
-}
-.join-steps li + li { margin-top: 10px; }
-.join-steps li::before {
-  content: counter(join);
-  position: absolute;
-  left: 0;
-  top: -1px;
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--chip);
-  color: var(--accent);
-  font-family: var(--mono);
-  font-size: 11px;
-}
+.detail-list :first-child { margin-top: 0; }
+.detail-list :last-child { margin-bottom: 0; }
 
 /* The strip closes the media band, so it needs room before the blocks that
    follow it - without this the thumbnails sit flush against the cards. */
@@ -1876,5 +1854,4 @@ code {
   .link-input { grid-template-columns: 108px minmax(0, 1fr) auto; }
   .video-input { grid-template-columns: auto minmax(0, 1fr) auto; }
   .video-input .video-thumb { display: none; }
-  .detail-lists { grid-template-columns: 1fr; }
 }
