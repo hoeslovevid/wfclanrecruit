@@ -1729,6 +1729,13 @@ code {
 }
 .link-pill svg { flex: none; color: var(--accent); }
 
+/* The listing page is a stack of self-contained blocks now (lists, how to
+   join, whisper). One rhythm between them, rather than each carrying its own. */
+.detail-lists,
+.join-steps,
+.listing-page .whisper {
+  margin-top: 22px;
+}
 .detail-lists { align-items: start; }
 .detail-list {
   padding: 16px 18px;
@@ -1754,7 +1761,6 @@ code {
 /* A sequence, not a set: the steps are what a recruit does in order, so they
    are numbered on the rail rather than bulleted. */
 .join-steps {
-  margin-top: 18px;
   padding: 16px 18px;
   border: 1px solid var(--line);
   border-left: 2px solid var(--accent);
@@ -1790,7 +1796,12 @@ code {
   font-size: 11px;
 }
 
-.video-gallery { margin-top: 12px; }
+/* The strip closes the media band, so it needs room before the blocks that
+   follow it - without this the thumbnails sit flush against the cards. */
+.video-gallery {
+  margin-top: 12px;
+  margin-bottom: 28px;
+}
 .video-gallery .kicker { margin-bottom: 8px; }
 .video-strip {
   display: flex;
@@ -1828,13 +1839,17 @@ code {
 .video-pick-index {
   position: absolute;
   left: 5px;
-  bottom: 5px;
+  top: 5px;
   padding: 1px 6px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.7);
+  /* It lands on whatever the video's artwork happens to be, so it carries its
+     own ground rather than relying on the thumbnail being dark there. */
+  background: rgba(0, 0, 0, 0.82);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
   color: #fff;
   font-family: var(--mono);
   font-size: 10px;
+  line-height: 1.5;
 }
 
 /* ---------------------------------------------------------------------------
