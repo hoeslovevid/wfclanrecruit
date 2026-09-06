@@ -33,7 +33,14 @@ import {
   whisperName,
   withListingState,
 } from "./listing.js";
-import { aboutTooLong, isSafeHref, normalizeAbout, plainTextFromHtml } from "../src/richtext.js";
+import {
+  aboutTooLong,
+  isSafeHref,
+  normalizeAbout,
+  normalizeSection,
+  plainTextFromHtml,
+  sectionTooLong,
+} from "../src/richtext.js";
 import {
   LINK_MAX,
   TAG_MAX,
@@ -413,6 +420,26 @@ function parseListingLinks(value) {
   return { links };
 }
 
+// The offer / requirements / how-to-join boxes are all optional rich text now:
+// an empty one is a section the listing does not show. Length is the only thing
+// that can fail, and it says which box was too long.
+const SECTION_LABELS = {
+  offering: "What you offer",
+  requirements: "Requirements",
+  howToJoin: "How to join",
+};
+
+function parseListingSections(body) {
+  const out = {};
+  for (const [name, label] of Object.entries(SECTION_LABELS)) {
+    const html = normalizeSection(body[name]);
+    const tooLong = sectionTooLong(html, `"${label}"`);
+    if (tooLong) return { error: tooLong };
+    out[name] = html;
+  }
+  return { sections: out };
+}
+
 // Every listing has to leave a recruit somewhere to go. Discord used to be the
 // only route and so was mandatory; now that it is optional, this is what stops
 // a post going live with no way to reach anyone at all.
@@ -461,6 +488,9 @@ function parseClanBody(body, user) {
   }
   const video = parseListingVideos(body.video);
   if (video.error) return { error: video.error };
+  const parsedSections = parseListingSections(body);
+  if (parsedSections.error) return { error: parsedSections.error };
+  const sections = parsedSections.sections;
 
   return {
     fields: {
@@ -486,9 +516,9 @@ function parseClanBody(body, user) {
       headline: String(body.headline).slice(0, 90),
       summary: String(body.summary).slice(0, 220),
       about,
-      offering: lines(body.offering),
-      requirements: lines(body.requirements),
-      howToJoin: lines(body.howToJoin),
+      offering: sections.offering,
+      requirements: sections.requirements,
+      howToJoin: sections.howToJoin,
     },
   };
 }
@@ -525,6 +555,9 @@ function parseAllianceBody(body, user) {
   }
   const video = parseListingVideos(body.video);
   if (video.error) return { error: video.error };
+  const parsedSections = parseListingSections(body);
+  if (parsedSections.error) return { error: parsedSections.error };
+  const sections = parsedSections.sections;
 
   return {
     fields: {
@@ -545,9 +578,9 @@ function parseAllianceBody(body, user) {
       headline: String(body.headline).slice(0, 90),
       summary: String(body.summary).slice(0, 220),
       about,
-      offering: lines(body.offering),
-      requirements: lines(body.requirements),
-      howToJoin: lines(body.howToJoin),
+      offering: sections.offering,
+      requirements: sections.requirements,
+      howToJoin: sections.howToJoin,
     },
   };
 }
@@ -601,13 +634,6 @@ function slugify(name) {
     .replace(/^-+|-+$/g, "")
     .slice(0, 40);
   return `${base || "listing"}-${Date.now().toString(36)}`;
-}
-
-function lines(value) {
-  return String(value || "")
-    .split(/\r?\n/)
-    .map((item) => item.trim().replace(/^[-*•]\s+/, ""))
-    .filter(Boolean);
 }
 
 function asArray(value) {
