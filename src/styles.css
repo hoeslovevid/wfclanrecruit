@@ -1050,11 +1050,12 @@ select {
   text-align: center;
   user-select: none;
 }
-.rt-video-mark:empty::before { content: "Video appears here"; }
+.rt-video-mark:empty::before { content: "Media appears here"; }
 .post-body {
   margin: 0 0 18px;
 }
 .post-body:empty { display: none; }
+.post-media,
 .post-video,
 .post-video-slot {
   display: block;
@@ -1068,6 +1069,27 @@ select {
   aspect-ratio: 16 / 9;
   overflow: hidden;
 }
+.post-media {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+}
+/* Both live in the stage and only one shows at a time. They are positioned
+   rather than stacked so swapping cannot reflow the page, and the [hidden]
+   rule is explicit: `display: block` here would otherwise beat the attribute's
+   UA `display: none` and paint an empty iframe over the image. */
+.post-media iframe,
+.post-media img {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.post-media iframe[hidden],
+.post-media img[hidden] { display: none; }
+.post-media img { object-fit: contain; }
 .post-video iframe {
   position: absolute;
   inset: 0;
@@ -1631,16 +1653,19 @@ code {
   color: var(--muted);
 }
 
-.video-input {
+.media-input {
   grid-template-columns: auto auto minmax(0, 1fr) auto;
 }
-.video-input input {
-  font-family: inherit;
+.media-input input[type="text"] { font-family: inherit; }
+.media-input.has-error { border-color: var(--danger); }
+.media-badge {
+  width: 20px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  user-select: none;
 }
-.video-input.has-error {
-  border-color: var(--danger);
-}
-.video-thumb {
+.media-thumb {
   width: 84px;
   aspect-ratio: 16 / 9;
   border-radius: 6px;
@@ -1648,17 +1673,31 @@ code {
   background: #000;
   border: 1px solid var(--line);
 }
-.video-thumb img {
+.media-thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
 }
-.video-error {
+.media-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 13px;
+}
+.media-file { min-width: 0; font-size: 13px; color: var(--muted); }
+.media-error {
   grid-column: 1 / -1;
   margin: 0 0 0 6px;
   color: var(--danger);
   font-size: 12px;
+}
+.row-adds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 /* ---------------------------------------------------------------------------
@@ -1776,17 +1815,17 @@ code {
 
 /* The strip closes the media band, so it needs room before the blocks that
    follow it - without this the thumbnails sit flush against the cards. */
-.video-gallery {
+.media-gallery {
   margin-top: 12px;
   margin-bottom: 28px;
 }
-.video-gallery .kicker { margin-bottom: 8px; }
-.video-strip {
+.media-gallery .kicker { margin-bottom: 8px; }
+.media-strip {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
-.video-pick {
+.media-pick {
   position: relative;
   width: 112px;
   padding: 0;
@@ -1798,23 +1837,34 @@ code {
   opacity: 0.6;
   transition: opacity 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
-.video-pick img {
+.media-pick img {
   display: block;
   width: 100%;
   height: auto;
   aspect-ratio: 16 / 9;
   object-fit: cover;
 }
-.video-pick:hover,
-.video-pick:focus-visible {
+.media-pick:hover,
+.media-pick:focus-visible {
   opacity: 1;
   transform: translateY(-1px);
 }
-.video-pick.is-active {
+.media-pick.is-active {
   opacity: 1;
   border-color: var(--accent);
 }
-.video-pick-index {
+.media-pick-badge {
+  position: absolute;
+  right: 5px;
+  bottom: 4px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.82);
+  color: #fff;
+  font-size: 9px;
+  line-height: 1.7;
+}
+.media-pick-index {
   position: absolute;
   left: 5px;
   top: 5px;
@@ -1852,6 +1902,6 @@ code {
 
 @media (max-width: 720px) {
   .link-input { grid-template-columns: 108px minmax(0, 1fr) auto; }
-  .video-input { grid-template-columns: auto minmax(0, 1fr) auto; }
-  .video-input .video-thumb { display: none; }
+  .media-input { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .media-input .media-thumb { display: none; }
 }

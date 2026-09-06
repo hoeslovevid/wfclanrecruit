@@ -10,7 +10,8 @@ import { fileURLToPath } from "node:url";
 import { hashPassword, newToken, verifyPassword } from "./auth.js";
 import { initStorage, paths, postgresEnabled, readDb, storageLabel, writeDb, closePg } from "./db.js";
 import { rateLimit } from "./ratelimit.js";
-import { dropLegacyVideos, parseVideoList } from "../src/video.js";
+import { dropLegacyVideos } from "../src/video.js";
+import { MEDIA_MAX, mediaList, normalizeMedia, uploadedUrls, videoIdsOf } from "../src/media.js";
 import { resizeListingImage } from "./image.js";
 import {
   HEARTBEAT_MS,
@@ -154,10 +155,10 @@ const cappedStorage = {
 
 const upload = multer({
   storage: cappedStorage,
-  limits: { fileSize: IMAGE_MAX, files: 1 },
+  limits: { fileSize: IMAGE_MAX, files: 1 + MEDIA_MAX },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname || "").toLowerCase();
-    if (file.fieldname === "image") {
+    if (file.fieldname === "image" || file.fieldname === "mediaImage") {
       const ok = IMAGE_TYPES.has(file.mimetype) && IMAGE_EXTS.has(ext);
       cb(ok ? null : new Error("Image must be PNG, JPG, WEBP, or GIF."), ok);
       return;
@@ -166,7 +167,10 @@ const upload = multer({
   },
 });
 
-const listingUpload = upload.fields([{ name: "image", maxCount: 1 }]);
+const listingUpload = upload.fields([
+  { name: "image", maxCount: 1 },
+  { name: "mediaImage", maxCount: MEDIA_MAX },
+]);
 
 const app = express();
 app.set("trust proxy", 1);
@@ -361,41 +365,93 @@ function savedUpload(file) {
   return file ? `/uploads/${file.filename}` : null;
 }
 
+// Removing an image from the strip should reclaim the volume, and so should
+// deleting the listing. Compare what the listing used to point at against what
+// it points at now; anything dropped is ours to delete because we wrote it.
+function dropUnusedMedia(before, after = []) {
+  const kept = new Set(uploadedUrls(after));
+  for (const url of uploadedUrls(mediaList(before))) {
+    if (!kept.has(url)) removeStoredFile(url);
+  }
+}
+
 function nextImage(existing, file) {
   if (!file) return existing ?? null;
   removeStoredFile(existing);
   return savedUpload(file);
 }
 
-async function processListingImage(req, res) {
-  const file = listingFile(req, "image");
-  if (!file) return true;
-  try {
-    const filename = await resizeListingImage(file.path);
-    file.filename = filename;
-    file.path = path.join(paths.uploadDir, filename);
-    return true;
-  } catch {
-    discardUploads(req);
-    res.status(400).json({ error: "That image could not be read. Use a PNG, JPG, WEBP, or GIF." });
-    return false;
+// Every uploaded image - the listing photo and each one in the strip - is
+// resized to a ~960px WebP before anything records its name. Serving a raw
+// phone screenshot is what made hosting media expensive in the first place;
+// resized, an image costs about two orders of magnitude less per view than the
+// clips that drove video off this server.
+//
+// This runs before the body is parsed, because resizing renames the file and
+// the media list stores that name.
+async function processListingImages(req, res) {
+  const files = [listingFile(req, "image"), ...(req.files?.mediaImage || [])].filter(Boolean);
+  for (const file of files) {
+    try {
+      const filename = await resizeListingImage(file.path);
+      file.filename = filename;
+      file.path = path.join(paths.uploadDir, filename);
+    } catch {
+      discardUploads(req);
+      res.status(400).json({ error: "That image could not be read. Use a PNG, JPG, WEBP, or GIF." });
+      return false;
+    }
   }
+  return true;
 }
 
 function assertListingFiles(req, res) {
-  const image = listingFile(req, "image");
-  if (image && image.size > IMAGE_MAX) {
+  const files = [listingFile(req, "image"), ...(req.files?.mediaImage || [])].filter(Boolean);
+  if (files.some((file) => file.size > IMAGE_MAX)) {
     discardUploads(req);
-    res.status(400).json({ error: "Image must be 2 MB or smaller." });
+    res.status(400).json({ error: "Each image must be 2 MB or smaller." });
     return false;
   }
   return true;
 }
 
-// A blank box means "no video"; anything else must reduce to a YouTube id, so a
-// typo is reported now rather than rendering an empty frame on the public post.
-function parseListingVideos(value) {
-  return parseVideoList(asArray(value), VIDEO_MAX);
+// The composer sends the strip as one ordered JSON array. An uploaded image
+// arrives as { kind: "image", upload: <n> }, naming its slot in the
+// `mediaImage` file list, so the order a leader arranged survives the round
+// trip through multipart - which has no ordering of its own.
+function parseListingMedia(body, req) {
+  let rows = [];
+  try {
+    const parsed = typeof body.media === "string" ? JSON.parse(body.media) : body.media;
+    if (Array.isArray(parsed)) rows = parsed;
+  } catch {
+    return { error: "Could not read the media list." };
+  }
+
+  const files = req.files?.mediaImage || [];
+  const used = new Set();
+  const resolved = [];
+  for (const row of rows) {
+    if (row?.kind === "image" && Number.isInteger(row.upload)) {
+      const file = files[row.upload];
+      if (!file) return { error: "An uploaded image went missing. Try adding it again." };
+      used.add(row.upload);
+      resolved.push({ kind: "image", url: `/uploads/${file.filename}` });
+      continue;
+    }
+    resolved.push(row);
+  }
+  // A file with no row pointing at it is a leftover from a row the leader
+  // removed before submitting; drop it rather than leaving it on the volume.
+  files.forEach((file, index) => {
+    if (!used.has(index)) fs.rmSync(file.path, { force: true });
+  });
+
+  const media = normalizeMedia(resolved);
+  if (rows.length && !media.length) {
+    return { error: "None of that media could be used. Paste a YouTube link, or upload an image." };
+  }
+  return { media };
 }
 
 // The composer sends the links as one JSON array so an empty row disappears
@@ -450,7 +506,7 @@ function contactRouteError({ contact, discord, links }, user) {
   return "Give recruits at least one way to reach you: a Discord invite, a verified forum name, or a link.";
 }
 
-function parseClanBody(body, user) {
+function parseClanBody(body, user, req) {
   const playstyles = asArray(body.playstyles);
   const members = Number(body.members);
   const mrRequired = Number(body.mrRequired || 0);
@@ -486,8 +542,9 @@ function parseClanBody(body, user) {
   if (!Number.isFinite(members) || members < 1 || members > TIER_CAPS[tier]) {
     return { error: `${tier} clans cap at ${TIER_CAPS[tier]} members.` };
   }
-  const video = parseListingVideos(body.video);
-  if (video.error) return { error: video.error };
+  const parsedMedia = parseListingMedia(body, req);
+  if (parsedMedia.error) return { error: parsedMedia.error };
+  const media = parsedMedia.media;
   const parsedSections = parseListingSections(body);
   if (parsedSections.error) return { error: parsedSections.error };
   const sections = parsedSections.sections;
@@ -511,8 +568,11 @@ function parseClanBody(body, user) {
       paused: String(body.paused || "") === "1" || body.paused === true || body.paused === "true",
       founded: String(body.founded || new Date().getFullYear()),
       allianceId,
-      videos: video.videos,
-      video: video.videos[0] || null,
+      media,
+      // Derived, not authoritative: an older cached bundle mid-deploy still
+      // reads these, and so does anything that has not learned about `media`.
+      videos: videoIdsOf(media),
+      video: videoIdsOf(media)[0] || null,
       headline: String(body.headline).slice(0, 90),
       summary: String(body.summary).slice(0, 220),
       about,
@@ -523,7 +583,7 @@ function parseClanBody(body, user) {
   };
 }
 
-function parseAllianceBody(body, user) {
+function parseAllianceBody(body, user, req) {
   const platforms = asArray(body.platforms);
   const clanCount = Number(body.clanCount);
   const members = Number(body.members);
@@ -553,8 +613,9 @@ function parseAllianceBody(body, user) {
   if (!Number.isFinite(clanCount) || clanCount < 1) {
     return { error: "Enter how many clans are in the alliance." };
   }
-  const video = parseListingVideos(body.video);
-  if (video.error) return { error: video.error };
+  const parsedMedia = parseListingMedia(body, req);
+  if (parsedMedia.error) return { error: parsedMedia.error };
+  const media = parsedMedia.media;
   const parsedSections = parseListingSections(body);
   if (parsedSections.error) return { error: parsedSections.error };
   const sections = parsedSections.sections;
@@ -573,8 +634,11 @@ function parseAllianceBody(body, user) {
       links: parsedLinks.links,
       paused: String(body.paused || "") === "1" || body.paused === true || body.paused === "true",
       rosterIds: asArray(body.rosterIds),
-      videos: video.videos,
-      video: video.videos[0] || null,
+      media,
+      // Derived, not authoritative: an older cached bundle mid-deploy still
+      // reads these, and so does anything that has not learned about `media`.
+      videos: videoIdsOf(media),
+      video: videoIdsOf(media)[0] || null,
       headline: String(body.headline).slice(0, 90),
       summary: String(body.summary).slice(0, 220),
       about,
@@ -1160,7 +1224,7 @@ app.delete("/api/auth/account", requireUser, (req, res) => {
 // `about` for every listing meant every visitor downloaded every full post on
 // every page load, so list responses carry only what a card and the filters
 // read. The detail route still returns the whole record.
-const HEAVY_FIELDS = ["about", "offering", "requirements", "howToJoin", "video", "videos", "links"];
+const HEAVY_FIELDS = ["about", "offering", "requirements", "howToJoin", "video", "videos", "media", "links"];
 
 function trimListing(item) {
   const out = { ...item };
@@ -1201,7 +1265,8 @@ app.post("/api/clans/:id/whisper", statsLimiter, (req, res) => {
 
 app.post("/api/clans", requirePoster, listingLimiter, listingUpload, async (req, res) => {
   if (!assertListingFiles(req, res)) return;
-  const parsed = parseClanBody(req.body, req.user);
+  if (!(await processListingImages(req, res))) return;
+  const parsed = parseClanBody(req.body, req.user, req);
   if (parsed.error) {
     discardUploads(req);
     res.status(400).json({ error: parsed.error });
@@ -1213,7 +1278,6 @@ app.post("/api/clans", requirePoster, listingLimiter, listingUpload, async (req,
     res.status(400).json({ error: invited.error });
     return;
   }
-  if (!(await processListingImage(req, res))) return;
 
   writeDb((db) => {
     const taken = listingTaken(db, invited);
@@ -1251,7 +1315,8 @@ app.post("/api/clans", requirePoster, listingLimiter, listingUpload, async (req,
 
 app.put("/api/clans/:id", requirePoster, listingUpload, async (req, res) => {
   if (!assertListingFiles(req, res)) return;
-  const parsed = parseClanBody(req.body, req.user);
+  if (!(await processListingImages(req, res))) return;
+  const parsed = parseClanBody(req.body, req.user, req);
   if (parsed.error) {
     discardUploads(req);
     res.status(400).json({ error: parsed.error });
@@ -1263,7 +1328,6 @@ app.put("/api/clans/:id", requirePoster, listingUpload, async (req, res) => {
     res.status(400).json({ error: invited.error });
     return;
   }
-  if (!(await processListingImage(req, res))) return;
 
   writeDb((db) => {
     const clan = db.clans.find((item) => item.id === req.params.id);
@@ -1288,6 +1352,7 @@ app.put("/api/clans/:id", requirePoster, listingUpload, async (req, res) => {
       res.status(400).json({ error: "That alliance does not exist." });
       return db;
     }
+    dropUnusedMedia(clan, invited.media);
     Object.assign(clan, invited, {
       image: nextImage(clan.image, listingFile(req, "image")),
     });
@@ -1512,6 +1577,7 @@ app.delete("/api/clans/:id", requireUser, (req, res) => {
       return db;
     }
     removeStoredFile(clan.image);
+    dropUnusedMedia(clan);
     const now = new Date().toISOString();
     db.reports = (db.reports || []).map((item) =>
       item.listingId === clan.id && item.status === "open"
@@ -1550,7 +1616,8 @@ app.get("/api/alliances/:id", (req, res) => {
 
 app.post("/api/alliances", requirePoster, listingLimiter, listingUpload, async (req, res) => {
   if (!assertListingFiles(req, res)) return;
-  const parsed = parseAllianceBody(req.body, req.user);
+  if (!(await processListingImages(req, res))) return;
+  const parsed = parseAllianceBody(req.body, req.user, req);
   if (parsed.error) {
     discardUploads(req);
     res.status(400).json({ error: parsed.error });
@@ -1563,7 +1630,6 @@ app.post("/api/alliances", requirePoster, listingLimiter, listingUpload, async (
     res.status(400).json({ error: invited.error });
     return;
   }
-  if (!(await processListingImage(req, res))) return;
 
   writeDb((db) => {
     const taken = listingTaken(db, invited);
@@ -1597,7 +1663,8 @@ app.post("/api/alliances", requirePoster, listingLimiter, listingUpload, async (
 
 app.put("/api/alliances/:id", requirePoster, listingUpload, async (req, res) => {
   if (!assertListingFiles(req, res)) return;
-  const parsed = parseAllianceBody(req.body, req.user);
+  if (!(await processListingImages(req, res))) return;
+  const parsed = parseAllianceBody(req.body, req.user, req);
   if (parsed.error) {
     discardUploads(req);
     res.status(400).json({ error: parsed.error });
@@ -1610,7 +1677,6 @@ app.put("/api/alliances/:id", requirePoster, listingUpload, async (req, res) => 
     res.status(400).json({ error: invited.error });
     return;
   }
-  if (!(await processListingImage(req, res))) return;
 
   writeDb((db) => {
     const alliance = db.alliances.find((item) => item.id === req.params.id);
@@ -1630,6 +1696,7 @@ app.put("/api/alliances/:id", requirePoster, listingUpload, async (req, res) => 
       res.status(409).json({ error: taken });
       return db;
     }
+    dropUnusedMedia(alliance, invited.media);
     Object.assign(alliance, invited, {
       image: nextImage(alliance.image, listingFile(req, "image")),
     });
@@ -1746,6 +1813,7 @@ app.delete("/api/alliances/:id", requireUser, (req, res) => {
       return db;
     }
     removeStoredFile(alliance.image);
+    dropUnusedMedia(alliance);
     const now = new Date().toISOString();
     db.reports = (db.reports || []).map((item) =>
       item.listingId === alliance.id && item.status === "open"

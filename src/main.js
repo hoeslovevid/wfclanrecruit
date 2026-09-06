@@ -1,4 +1,4 @@
-import { LINK_MAX, VIDEO_MAX } from "./data.js";
+import { LINK_MAX } from "./data.js";
 import { api } from "./api.js";
 import {
   accountView,
@@ -33,6 +33,7 @@ import {
   toEditorHtml,
 } from "./richtext.js";
 import { parseYouTubeId } from "./video.js";
+import { MEDIA_MAX, parseImageUrl } from "./media.js";
 import {
   applyAllianceFilters,
   applyClanFilters,
@@ -246,17 +247,27 @@ function bindCopyText(root = app) {
   });
 }
 
-// Extra videos swap into the single iframe rather than each getting their own,
-// so a four-video listing still loads one player.
-function bindVideoGallery() {
-  const gallery = app.querySelector("[data-video-gallery]");
-  const frame = app.querySelector("[data-video-frame]");
-  if (!gallery || !frame) return;
+// The strip swaps what the stage shows rather than mounting a player per item,
+// so a listing with eight things still loads one iframe.
+function bindMediaGallery() {
+  const gallery = app.querySelector("[data-media-gallery]");
+  const frame = app.querySelector("[data-media-frame]");
+  const image = app.querySelector("[data-media-image]");
+  if (!gallery || !frame || !image) return;
   gallery.addEventListener("click", (event) => {
-    const pick = event.target.closest("[data-video-pick]");
+    const pick = event.target.closest("[data-media-pick], [data-media-src]");
     if (!pick) return;
-    frame.src = pick.dataset.videoPick;
-    gallery.querySelectorAll("[data-video-pick]").forEach((button) => {
+    const isVideo = pick.dataset.mediaKind === "video";
+    if (isVideo) {
+      frame.src = pick.dataset.mediaSrc;
+    } else {
+      // Stop whatever was playing; leaving the iframe loaded keeps the audio on.
+      frame.removeAttribute("src");
+      image.src = pick.dataset.mediaSrc;
+    }
+    frame.hidden = !isVideo;
+    image.hidden = isVideo;
+    gallery.querySelectorAll("[data-media-src]").forEach((button) => {
       const active = button === pick;
       button.classList.toggle("is-active", active);
       button.setAttribute("aria-pressed", active ? "true" : "false");
@@ -266,7 +277,7 @@ function bindVideoGallery() {
 
 function bindListingPage() {
   bindCopyText();
-  bindVideoGallery();
+  bindMediaGallery();
   app.querySelector("[data-copy-url]")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     try {
@@ -498,9 +509,10 @@ function bindRowList(list, { max = Infinity, min = 0, onChange } = {}) {
   const add = list.querySelector("[data-row-add]");
   const empty = list.querySelector("[data-row-empty]");
   const template = list.querySelector("[data-row-template]");
+  const extraTemplate = list.querySelector("[data-row-template-extra]");
 
-  function blankRow() {
-    return template?.content.firstElementChild?.cloneNode(true) || null;
+  function blankRow(which = template) {
+    return which?.content.firstElementChild?.cloneNode(true) || null;
   }
 
   function sync() {
@@ -513,13 +525,23 @@ function bindRowList(list, { max = Infinity, min = 0, onChange } = {}) {
     onChange?.();
   }
 
-  add?.addEventListener("click", () => {
+  function appendRow(which) {
     if ((items?.children.length || 0) >= max) return;
-    const row = blankRow();
+    const row = blankRow(which);
     if (!row) return;
     items.append(row);
-    row.querySelector("input")?.focus();
     sync();
+    return row;
+  }
+
+  add?.addEventListener("click", () => {
+    appendRow(template)?.querySelector("input")?.focus();
+  });
+
+  // The upload button adds its row and opens the file picker in the same
+  // gesture - two clicks to attach one image is one too many.
+  list.querySelector("[data-row-add-extra]")?.addEventListener("click", () => {
+    appendRow(extraTemplate)?.querySelector("input[type='file']")?.click();
   });
 
   list.addEventListener("click", (event) => {
@@ -543,51 +565,123 @@ function bindRowList(list, { max = Infinity, min = 0, onChange } = {}) {
 // The video is a YouTube id now, not a file, so this binds text boxes rather
 // than a picker: parse on every keystroke, show the poster frame as proof the
 // link resolved, and place the [video] marker the moment the first one does.
-function bindVideoInputs(form, onIds) {
-  const list = form.querySelector("[data-row-list='video']");
+// Each row resolves to one media entry. A link row decides for itself whether
+// what was pasted is a YouTube video or an image, so the leader never picks a
+// type; an upload row carries a File until submit, when its position in the
+// `mediaImage` list is what tells the server where it belongs.
+// The media payload addresses uploads by their position in `mediaImage`, so
+// that list has to be rebuilt deliberately at submit: a FormData taken straight
+// off the form would also carry every empty file picker and shift every slot.
+const mediaFilesByForm = new WeakMap();
+
+function bindMediaRows(form, onMedia) {
+  const list = form.querySelector("[data-row-list='media']");
+  const payload = form.elements.media;
+  // One object URL per File, so a re-render does not leak a new blob each keystroke.
+  const fileUrls = new WeakMap();
   let seenFirst = false;
 
   function readRow(row) {
-    const input = row.querySelector("input[name='video']");
-    const raw = String(input?.value || "").trim();
-    const id = parseYouTubeId(raw);
-    const thumb = row.querySelector("[data-video-thumb]");
-    const image = row.querySelector("[data-video-thumb-img]");
-    const error = row.querySelector("[data-video-error]");
-    const message = raw && !id ? "That is not a YouTube link." : "";
-    if (thumb) thumb.hidden = !id;
-    if (image) image.src = id ? `https://i.ytimg.com/vi/${id}/mqdefault.jpg` : "";
+    const badge = row.querySelector("[data-media-badge]");
+    const thumb = row.querySelector("[data-media-thumb]");
+    const image = row.querySelector("[data-media-thumb-img]");
+    const error = row.querySelector("[data-media-error]");
+    let entry = null;
+    let message = "";
+
+    if (row.dataset.mediaRow === "upload") {
+      const saved = row.dataset.mediaUrlValue || "";
+      const file = row.querySelector("input[type='file']")?.files?.[0] || null;
+      if (file) {
+        if (file.size > IMAGE_MAX) {
+          message = "Each image must be 2 MB or smaller.";
+        } else {
+          entry = { kind: "image", file };
+          if (image && image.dataset.objectUrl !== file.name) {
+            image.src = URL.createObjectURL(file);
+            image.dataset.objectUrl = file.name;
+          }
+        }
+      } else if (saved) {
+        entry = { kind: "image", url: saved };
+      }
+      const name = row.querySelector("[data-media-name]");
+      if (name) name.textContent = file ? file.name : saved ? "Uploaded image" : "";
+      if (badge) badge.textContent = "🖼";
+    } else {
+      const raw = String(row.querySelector("[data-media-url]")?.value || "").trim();
+      if (raw) {
+        const id = parseYouTubeId(raw);
+        if (id) {
+          entry = { kind: "video", id };
+          if (image) image.src = `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
+          if (badge) badge.textContent = "▶";
+        } else {
+          const parsed = parseImageUrl(raw);
+          if (parsed.url) {
+            entry = { kind: "image", url: parsed.url };
+            if (image) image.src = parsed.url;
+            if (badge) badge.textContent = "🖼";
+          } else {
+            message = parsed.error;
+            if (badge) badge.textContent = "🔗";
+          }
+        }
+      } else if (badge) {
+        badge.textContent = "🔗";
+      }
+    }
+
+    if (thumb) thumb.hidden = !entry;
     if (error) {
       error.hidden = !message;
       error.textContent = message;
     }
-    row.classList.toggle("has-video", Boolean(id));
+    row.classList.toggle("has-media", Boolean(entry));
     row.classList.toggle("has-error", Boolean(message));
-    return id;
+    return entry;
   }
 
   function sync() {
-    const ids = [];
+    const entries = [];
+    const files = [];
     for (const row of list?.querySelectorAll("[data-row]") || []) {
-      const id = readRow(row);
-      if (id && !ids.includes(id)) ids.push(id);
+      const entry = readRow(row);
+      if (!entry) continue;
+      if (entry.file) {
+        const row = entry.file;
+        if (!fileUrls.has(row)) fileUrls.set(row, URL.createObjectURL(row));
+        entries.push({ kind: "image", upload: files.length, url: fileUrls.get(row) });
+        files.push(row);
+      } else {
+        entries.push(entry);
+      }
+      if (entries.length >= MEDIA_MAX) break;
     }
-    // Only the first clip is placed in the post body; the rest ride in the
-    // strip beneath it, so a second link must not move the marker.
-    if (ids.length && !seenFirst) {
+    // Only the first item is placed in the post body; the rest ride in the
+    // strip beneath it, so adding a second must not move the marker.
+    if (entries.length && !seenFirst) {
       seenFirst = true;
       ensureVideoMarker(aboutEditor(form));
     }
-    if (!ids.length) seenFirst = false;
-    onIds(ids);
+    if (!entries.length) seenFirst = false;
+    if (payload) {
+      payload.value = JSON.stringify(
+        entries.map((entry) =>
+          entry.upload === undefined ? entry : { kind: "image", upload: entry.upload }
+        )
+      );
+    }
+    mediaFilesByForm.set(form, files);
+    onMedia(entries);
   }
 
-  bindRowList(list, { max: VIDEO_MAX, min: 1, onChange: sync });
+  bindRowList(list, { max: MEDIA_MAX, min: 1, onChange: sync });
   list?.addEventListener("input", sync);
   list?.addEventListener("change", sync);
-  // A draft that opened with a video already has its marker in the body.
-  seenFirst = Boolean(list?.querySelector("input[name='video']")?.value.trim());
+  seenFirst = (list?.querySelectorAll("[data-row].has-media").length || 0) > 0;
   sync();
+  return sync;
 }
 
 function bindLinkRows(form, onChange) {
@@ -738,15 +832,15 @@ function bindRichText(form, onChange) {
 }
 
 function bindListingComposer(form, { imageUrl = null, onChange }) {
-  const media = { image: imageUrl, videos: [] };
+  const media = { image: imageUrl, entries: [] };
   const refresh = () => onChange(media);
   bindRichText(form, refresh);
   bindImagePicker(form, imageUrl, (url) => {
     media.image = url;
     refresh();
   });
-  bindVideoInputs(form, (ids) => {
-    media.videos = ids;
+  bindMediaRows(form, (entries) => {
+    media.entries = entries;
     refresh();
   });
   bindLinkRows(form, refresh);
@@ -785,12 +879,15 @@ function mediaTooLarge(form) {
   if (form.image?.files?.[0] && form.image.files[0].size > IMAGE_MAX) {
     return "Image must be 2 MB or smaller.";
   }
-  const rows = [...form.querySelectorAll("input[name='video']")];
-  for (const [index, input] of rows.entries()) {
-    const raw = String(input.value || "").trim();
-    if (raw && !parseYouTubeId(raw)) {
-      return `Video ${index + 1} is not a YouTube link. Paste a link or clear the box.`;
-    }
+  const rows = [...form.querySelectorAll("[data-row-list='media'] [data-row]")];
+  for (const [index, row] of rows.entries()) {
+    const file = row.querySelector("input[type='file']")?.files?.[0];
+    if (file && file.size > IMAGE_MAX) return "Each image must be 2 MB or smaller.";
+    const raw = String(row.querySelector("[data-media-url]")?.value || "").trim();
+    if (!raw) continue;
+    if (parseYouTubeId(raw)) continue;
+    const parsed = parseImageUrl(raw);
+    if (parsed.error) return `Item ${index + 1}: ${parsed.error}`;
   }
   for (const input of form.querySelectorAll("[data-link-url]")) {
     const raw = String(input.value || "").trim();
@@ -822,6 +919,10 @@ function packForm(form, ...listFields) {
   // The link rows are unnamed inputs, so they never reach FormData on their
   // own; the hidden `links` field carries them as one JSON payload.
   fd.set("links", JSON.stringify(readLinkRows(form).filter((link) => link.url.trim())));
+  // Replace the browser's version of the file inputs - which includes the empty
+  // ones - with exactly the files the media payload counted, in that order.
+  fd.delete("mediaImage");
+  for (const file of mediaFilesByForm.get(form) || []) fd.append("mediaImage", file, file.name);
   return fd;
 }
 
@@ -980,7 +1081,7 @@ async function render() {
       onChange: (media) => {
         if (mr) mr.textContent = form.mrRequired.value;
         if (form.tag) form.tag.value = form.tag.value.toUpperCase();
-        preview.innerHTML = `${clanCard(previewClan(form, media.image, media.videos))}<div class="preview-about"><p class="kicker">Post body</p>${postBodyHtml(form.about.value, media.videos, { placeholder: true })}</div>`;
+        preview.innerHTML = `${clanCard(previewClan(form, media.image, media.entries))}<div class="preview-about"><p class="kicker">Post body</p>${postBodyHtml(form.about.value, media.entries, { placeholder: true })}</div>`;
       },
     });
     form.addEventListener("submit", async (event) => {
@@ -1037,7 +1138,7 @@ async function render() {
       imageUrl: draft?.image || null,
       onChange: (media) => {
         if (form.tag) form.tag.value = form.tag.value.toUpperCase();
-        preview.innerHTML = `${allianceCard(previewAlliance(form, media.image, media.videos))}<div class="preview-about"><p class="kicker">Post body</p>${postBodyHtml(form.about.value, media.videos, { placeholder: true })}</div>`;
+        preview.innerHTML = `${allianceCard(previewAlliance(form, media.image, media.entries))}<div class="preview-about"><p class="kicker">Post body</p>${postBodyHtml(form.about.value, media.entries, { placeholder: true })}</div>`;
       },
     });
     form.addEventListener("submit", async (event) => {
