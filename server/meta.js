@@ -6,7 +6,7 @@ function escapeAttr(value) {
 }
 
 function absoluteUrl(origin, path) {
-  if (!path) return `${origin}/logo.png`;
+  if (!path) return `${origin}/emblem.png`;
   if (/^https?:\/\//i.test(path)) return path;
   return `${origin}${path.startsWith("/") ? path : `/${path}`}`;
 }
@@ -20,7 +20,7 @@ export function listingFromPath(pathname) {
 }
 
 export function socialTags({ title, description, url, image, kind = "website" }) {
-  const card = image && !image.endsWith("/logo.png") ? "summary_large_image" : "summary";
+  const card = image && !image.endsWith("/emblem.png") ? "summary_large_image" : "summary";
   return `<!--social-meta-->
     <title>${escapeAttr(title)}</title>
     <meta name="description" content="${escapeAttr(description)}" />
@@ -43,7 +43,7 @@ export function defaultSocial(origin) {
     description:
       "WF Clan Recruit is a dark recruitment board for Warframe clans and alliances. Browse posts, join Discord, or publish your own listing.",
     url: `${origin}/`,
-    image: `${origin}/logo.png`,
+    image: `${origin}/emblem.png`,
     kind: "website",
   });
 }

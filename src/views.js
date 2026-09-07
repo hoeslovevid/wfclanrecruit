@@ -627,24 +627,21 @@ export function homeView({ clans, alliances }) {
   return `
     <section class="hero recruitment-hero">
       <div class="hero-copy">
-        <p class="eyebrow">WARFRAME COMMUNITY DIRECTORY</p>
-        <h1>Find clan members.<br /><em>Build your community.</em></h1>
-        <p class="lead">A dojo. A place to call home. An alliance to join. Discover the communities that make Warframe so great.</p>
+        <h1>WF Clan Recruit</h1>
+        <p class="lead">Warframe clans and alliances.</p>
         <div class="hero-actions"><a class="btn btn-primary" href="/browse" data-link>Find a clan <span aria-hidden="true">↗</span></a><a class="btn btn-ghost" href="/alliances" data-link>Explore alliances</a></div>
-        <p class="hero-owner">Leading a community? <a href="/post" data-link>Advertise yours →</a></p>
       </div>
-      <div class="hero-emblem" aria-hidden="true"><img src="/warframe.png" alt="" width="512" height="512" /></div>
+      <div class="hero-emblem" aria-hidden="true"><img src="/emblem.png" alt="" width="512" height="512" /></div>
     </section>
     <section class="discovery-bar" aria-label="Search communities">
       <form class="search" data-hero-search>
         <label class="sr-only" for="hero-kind">Community type</label><select id="hero-kind" name="kind"><option value="clans">Clans</option><option value="alliances">Alliances</option></select>
         <label class="sr-only" for="hero-q">Search communities</label><input id="hero-q" name="q" type="search" placeholder="Search by name or keyword…" autocomplete="off" /><button class="btn btn-primary" type="submit">Search</button>
       </form>
-      <p>Find people to play with.</p>
     </section>
     <section class="section discovery-paths" aria-label="Explore communities">
-      <a class="discovery-path discovery-path-clan" href="/browse" data-link><span class="eyebrow">FOR TENNO</span><span class="path-title">A clan to call home <span aria-hidden="true">↗</span></span><span class="muted">Find a squad that shares your playstyle, from your first mission to the Steel Path.</span><span class="path-foot">${board.length ? `${board.length} clan${board.length === 1 ? "" : "s"} to explore` : "Explore the clan directory"}</span></a>
-      <a class="discovery-path discovery-path-alliance" href="/alliances" data-link><span class="eyebrow">FOR CLAN LEADERS</span><span class="path-title">Stronger together <span aria-hidden="true">↗</span></span><span class="muted">Meet other clans, play together, and find an alliance your clan can be part of.</span><span class="path-foot">${allianceBoard.length ? `${allianceBoard.length} alliance${allianceBoard.length === 1 ? "" : "s"} to explore` : "Explore the alliance directory"}</span></a>
+      <a class="discovery-path discovery-path-clan" href="/browse" data-link><span class="eyebrow">FOR TENNO</span><span class="path-title">A clan to call home <span aria-hidden="true">↗</span></span><span class="muted">Find a squad that matches how you play.</span><span class="path-foot">${board.length ? `${board.length} clan${board.length === 1 ? "" : "s"} to explore` : "Explore the clan directory"}</span></a>
+      <a class="discovery-path discovery-path-alliance" href="/alliances" data-link><span class="eyebrow">FOR CLAN LEADERS</span><span class="path-title">Stronger together <span aria-hidden="true">↗</span></span><span class="muted">Meet other clans and find an alliance to join.</span><span class="path-foot">${allianceBoard.length ? `${allianceBoard.length} alliance${allianceBoard.length === 1 ? "" : "s"} to explore` : "Explore the alliance directory"}</span></a>
     </section>
     ${section("IN THE SPOTLIGHT", "Meet the featured clans", "/browse", featured.map(clanCard))}
     ${section("THE RECRUITMENT BOARD", "Discover your next clan", "/browse", recent.map(clanCard))}
