@@ -25,7 +25,7 @@
   --shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
   --inset: inset 0 1px 0 rgba(255, 255, 255, 0.03);
   --nav-bg: rgba(7, 8, 11, 0.84);
-  --drawer-bg: rgba(7, 8, 11, 0.96);
+  --drawer-bg: #07080b;
   --ghost: rgba(16, 18, 24, 0.7);
   --ghost-hover: #1a1e28;
   --mark-from: #1a2233;
@@ -78,7 +78,7 @@
   --shadow: 0 16px 40px rgba(22, 28, 45, 0.08);
   --inset: inset 0 1px 0 rgba(255, 255, 255, 0.8);
   --nav-bg: rgba(244, 246, 250, 0.9);
-  --drawer-bg: rgba(244, 246, 250, 0.98);
+  --drawer-bg: #f4f6fa;
   --ghost: #ffffff;
   --ghost-hover: #eef1f6;
   --mark-from: #e8edf8;
@@ -395,8 +395,33 @@ button { cursor: pointer; }
   background: var(--drawer-bg);
   padding: 24px;
 }
+/* Tall enough to overflow once the status menu is open, so it scrolls itself
+   rather than trapping the panel below the fold. */
+.drawer { overflow-y: auto; overscroll-behavior: contain; }
 .drawer nav { display: grid; gap: 16px; margin-bottom: 24px; }
-.drawer a {
+/* In the bar these sit in a row; in the drawer that row squeezed "Online in
+   game" onto two lines and wrapped "Sign out". Stack them full width. */
+.drawer .account-slot {
+  display: grid;
+  gap: 10px;
+  justify-items: stretch;
+}
+.drawer .account-slot > * { width: 100%; }
+/* Full width like its siblings, but the dot and its label stay together on the
+   left rather than being pushed to opposite ends of the row. */
+.drawer .presence-menu > summary { width: 100%; }
+/* The floating panel is anchored with `right: 0` to a summary that sits at the
+   left edge of the drawer, which put a 240px panel 91px off the side of the
+   screen. In the drawer there is nothing to float over, so it opens in flow. */
+.drawer .presence-panel {
+  position: static;
+  width: auto;
+  margin-top: 10px;
+  box-shadow: none;
+}
+/* Scoped to the nav list: unscoped it also hit the account link, so the
+   username rendered at 30px beside a 13.5px Sign out button. */
+.drawer nav a {
   font-family: var(--display);
   font-size: 30px;
   font-weight: 700;
