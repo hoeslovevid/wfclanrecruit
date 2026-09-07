@@ -994,8 +994,12 @@ function linksField(draft = {}) {
 // the post body - the boxes have nowhere to put a clip.
 function richTextField(name, label, value, { hint = "", optional = false, video = false, placeholder = "" } = {}) {
   return `
-    <div class="field" data-rich-field="${escapeHtml(name)}">
-      <span>${escapeHtml(label)}${optional ? ` <small class="field-optional">optional</small>` : ""}</span>
+    <fieldset class="fieldset rich-field" data-rich-field="${escapeHtml(name)}">
+      <legend>
+        ${escapeHtml(label)}
+        ${hint ? `<small>${escapeHtml(hint)}</small>` : ""}
+        ${optional ? `<small class="field-optional">optional</small>` : ""}
+      </legend>
       <div class="richtext">
         <div class="richtext-toolbar" role="toolbar" aria-label="${escapeHtml(label)} formatting">
           <button class="richtext-btn" type="button" data-rt="bold" title="Bold"><strong>B</strong></button>
@@ -1017,8 +1021,7 @@ function richTextField(name, label, value, { hint = "", optional = false, video 
         ></div>
         <textarea name="${escapeHtml(name)}" hidden>${escapeHtml(toEditorHtml(value || ""))}</textarea>
       </div>
-      ${hint ? `<small class="field-help">${escapeHtml(hint)}</small>` : ""}
-    </div>
+    </fieldset>
   `;
 }
 
@@ -1062,7 +1065,10 @@ function playstyleGroups(selected = []) {
 
 function aboutComposer(draft = {}) {
   return `
-    ${richTextField("about", "Full post", draft.about || "", { video: true })}
+    ${richTextField("about", "Full post", draft.about || "", {
+      video: true,
+      hint: "The body of the listing",
+    })}
     ${videoPicker(draft)}
     <small class="field-help">Select text to format. Click in the post, then Video to place the media band. Insert again to move it.</small>
   `;
@@ -1233,16 +1239,18 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
           <label class="field"><span>Short summary</span><textarea name="summary" required maxlength="220" rows="3">${escapeHtml(draft.summary || "")}</textarea></label>
           ${aboutComposer(draft)}
           ${sectionField("offering", "What you offer", draft.offering, {
+            hint: "What the clan gives a recruit",
             placeholder: "Fully researched Moon clan, weekly events, free forma…",
           })}
           ${sectionField("requirements", "Requirements", draft.requirements, {
+            hint: "What the clan asks of them",
             placeholder: "MR 10+, voice on for hunts…",
           })}
           ${sectionField("howToJoin", "How to join", draft.howToJoin, {
+            hint: "The steps before an invite",
             placeholder: "Post an intro in #recruitment…",
-            hint: "Use it if you filter recruits before the invite. A numbered list works well here.",
           })}
-          <small class="field-help">These three are optional. Leave one empty and the listing simply will not show that section.</small>
+          <small class="field-help">Leave any of the three empty and the listing simply will not show that section.</small>
         </div>
         <div class="form-actions">
           <button class="btn btn-primary" type="submit">${editing ? "Save changes" : "Publish clan"}</button>
@@ -1316,16 +1324,18 @@ export function alliancePostView({ user, draft = {}, auth = {}, clans = [] }) {
           <label class="field"><span>Short summary</span><textarea name="summary" required maxlength="220" rows="3">${escapeHtml(draft.summary || "")}</textarea></label>
           ${aboutComposer(draft)}
           ${sectionField("offering", "What you offer", draft.offering, {
+            hint: "What the alliance gives a clan",
             placeholder: "Shared Discord, cross-clan events…",
           })}
           ${sectionField("requirements", "Requirements", draft.requirements, {
+            hint: "What the alliance asks of them",
             placeholder: "Active clan with 20+ members…",
           })}
           ${sectionField("howToJoin", "How to join", draft.howToJoin, {
+            hint: "The steps before joining",
             placeholder: "Have your clan leader open a ticket…",
-            hint: "Use it if you filter clans before they join. A numbered list works well here.",
           })}
-          <small class="field-help">These three are optional. Leave one empty and the listing simply will not show that section.</small>
+          <small class="field-help">Leave any of the three empty and the listing simply will not show that section.</small>
         </div>
         <div class="form-actions">
           <button class="btn btn-primary" type="submit">${editing ? "Save changes" : "Publish alliance"}</button>
