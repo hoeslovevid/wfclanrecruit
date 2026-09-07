@@ -1096,7 +1096,7 @@ function rolesField(draft = {}) {
   const roles = rolesOf(draft);
   return `
     <fieldset class="fieldset boxed-field" data-boxed-field="roles">
-      <legend>Looking for <small>Specific jobs, not just members</small><small class="field-optional">optional</small></legend>
+      <legend>Looking for <small>Specific roles</small><small class="field-optional">optional</small></legend>
       <datalist id="role-suggestions">
         ${ROLE_SUGGESTIONS.map((name) => `<option value="${escapeHtml(name)}"></option>`).join("")}
       </datalist>
@@ -1107,7 +1107,6 @@ function rolesField(draft = {}) {
         empty: "Recruiters, moderators, event organisers, dojo architects — anything the clan actually needs.",
       })}
       <input type="hidden" name="roles" value="" />
-      <small class="field-help">Leave the count at 0 if the number is open-ended. Closed roles still show, so recruits can see the shape of the team.</small>
     </fieldset>
   `;
 }
