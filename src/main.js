@@ -574,7 +574,83 @@ function bindRowList(list, { max = Infinity, min = 0, onChange } = {}) {
     sync();
   });
 
+  bindRowDrag(list, items, sync);
   sync();
+}
+
+// The order of the media rows decides which item plays inside the post and how
+// the strip reads, so it has to be changeable without deleting and retyping.
+// Dragging is the obvious gesture; the arrow keys are here because a drag-only
+// control is unusable without a mouse.
+function bindRowDrag(list, items, onReorder) {
+  if (!items) return;
+  let dragging = null;
+
+  // The row carries `draggable`, not the handle, so the drag image is the whole
+  // row - but only once the pointer is on the handle, or selecting text inside
+  // an input would start a drag instead.
+  items.addEventListener("pointerdown", (event) => {
+    const row = event.target.closest("[data-row-handle]")?.closest("[data-row]");
+    if (row) row.draggable = true;
+  });
+  const release = () => {
+    items.querySelectorAll("[data-row]").forEach((row) => {
+      row.draggable = false;
+    });
+  };
+  items.addEventListener("pointerup", release);
+
+  items.addEventListener("dragstart", (event) => {
+    dragging = event.target.closest("[data-row]");
+    if (!dragging) return;
+    dragging.classList.add("is-dragging");
+    event.dataTransfer.effectAllowed = "move";
+    // Firefox refuses to start a drag with nothing on the transfer.
+    event.dataTransfer.setData("text/plain", "");
+  });
+
+  items.addEventListener("dragover", (event) => {
+    if (!dragging) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const after = rowAfterPoint(items, event.clientY, dragging);
+    if (after === dragging) return;
+    if (after) items.insertBefore(dragging, after);
+    else items.append(dragging);
+  });
+
+  items.addEventListener("drop", (event) => event.preventDefault());
+
+  items.addEventListener("dragend", () => {
+    dragging?.classList.remove("is-dragging");
+    dragging = null;
+    release();
+    onReorder?.();
+  });
+
+  items.addEventListener("keydown", (event) => {
+    const handle = event.target.closest("[data-row-handle]");
+    const row = handle?.closest("[data-row]");
+    const up = event.key === "ArrowUp";
+    const down = event.key === "ArrowDown";
+    if (!row || (!up && !down)) return;
+    event.preventDefault();
+    if (up && row.previousElementSibling) items.insertBefore(row, row.previousElementSibling);
+    if (down && row.nextElementSibling) items.insertBefore(row.nextElementSibling, row);
+    handle.focus();
+    onReorder?.();
+  });
+}
+
+// The row the pointer sits above, by midpoint: the one the dragged row should
+// be inserted before.
+function rowAfterPoint(items, y, dragging) {
+  for (const row of items.querySelectorAll("[data-row]")) {
+    if (row === dragging) continue;
+    const box = row.getBoundingClientRect();
+    if (y < box.top + box.height / 2) return row;
+  }
+  return null;
 }
 
 // The video is a YouTube id now, not a file, so this binds text boxes rather
