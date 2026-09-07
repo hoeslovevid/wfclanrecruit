@@ -13,9 +13,16 @@ import { YOUTUBE_ID, parseYouTubeId } from "./video.js";
 export const MEDIA_MAX = 8;
 export const VIDEO_MAX = 4;
 
-// Hosts that serve images to third parties and are stable about it. An
-// unlisted host is refused with its name, so a leader knows to rehost rather
-// than wondering why nothing appeared.
+// Pasting an image from someone else's host is switched off. Uploading is the
+// only way an image joins a strip, so every image on the board is one we
+// resized, one we can moderate, and one that cannot expire, get swapped after
+// approval, or leak a visitor's IP to a third party.
+//
+// The allowlist below is kept, not deleted: turning pasting back on is this
+// flag, and hosts a leader asks for go in the set. Videos are unaffected -
+// those are YouTube links by nature and always were.
+export const ALLOW_PASTED_IMAGES = false;
+
 export const IMAGE_HOSTS = new Set([
   "i.imgur.com",
   "imgur.com",
@@ -34,14 +41,23 @@ export const IMAGE_HOSTS = new Set([
 ]);
 
 // Discord signs its attachment URLs and expires them within about a day. A
-// clan leader's first instinct is to paste one, and the gallery would look
-// fine right up until it silently emptied, so this is refused by name.
+// clan leader's first instinct is to paste one, so it keeps its own message
+// even while pasting is off - "upload it instead" is the same advice either
+// way, but knowing why saves a support round trip.
 const EXPIRING_HOSTS = new Map([
   ["cdn.discordapp.com", "Discord"],
   ["media.discordapp.net", "Discord"],
 ]);
 
 const IMAGE_EXT = /\.(png|jpe?g|webp|gif|avif)$/i;
+
+function hostOf(raw) {
+  try {
+    return new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
 
 export function isUploadedImage(url) {
   return typeof url === "string" && url.startsWith("/uploads/");
@@ -51,8 +67,17 @@ export function isUploadedImage(url) {
 // clear the allowlist and look like an image.
 export function parseImageUrl(input) {
   const raw = String(input ?? "").trim();
-  if (!raw) return { error: "Paste an image link, or upload a file." };
+  if (!raw) return { error: "Upload an image file." };
   if (isUploadedImage(raw)) return { url: raw };
+
+  if (!ALLOW_PASTED_IMAGES) {
+    const host = hostOf(raw);
+    const expiring = host && EXPIRING_HOSTS.get(host);
+    if (expiring) {
+      return { error: `${expiring} links expire after about a day. Use Upload an image instead.` };
+    }
+    return { error: "Use Upload an image for pictures. Links are for YouTube videos." };
+  }
 
   let url;
   try {

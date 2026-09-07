@@ -256,7 +256,7 @@ function listingSection(item, name, heading, { accent = false } = {}) {
 // Some clans filter in the recruitment process itself - a form, a trial run, an
 // interview. Accented because it is the last thing a recruit reads before
 // acting on the listing.
-function listingSections(item) {
+export function listingSections(item) {
   return [
     listingSection(item, "offering", "They offer"),
     listingSection(item, "requirements", "Requirements"),
@@ -838,8 +838,8 @@ function rowList(kind, { rows, blank, addLabel, empty = "", extra = "", extraLab
   `;
 }
 
-// A link row takes either a YouTube link or an image link; which one it is gets
-// decided as the leader types, so there is no type to choose up front.
+// A link row is for YouTube. Images are uploaded rather than linked, so they
+// are ours: resized, moderatable, and unable to expire or be swapped later.
 function mediaLinkRow(value = "") {
   return `
     <div class="row-item media-input" data-row data-media-row="link">
@@ -851,7 +851,7 @@ function mediaLinkRow(value = "") {
         inputmode="url"
         autocomplete="off"
         spellcheck="false"
-        placeholder="YouTube link, or an image link"
+        placeholder="YouTube link"
         value="${escapeHtml(value)}"
       />
       <button class="row-remove" type="button" data-row-remove aria-label="Remove this item">×</button>
@@ -894,11 +894,11 @@ function videoPicker(draft = {}) {
         rows,
         blank: mediaLinkRow(),
         extra: mediaUploadRow(),
-        addLabel: "Add a link",
+        addLabel: "Add a YouTube link",
         extraLabel: "Upload an image",
       })}
       <input type="hidden" name="media" value="" />
-      <small class="field-help">The first item shows inside the post; the rest become a strip under it. Uploads are resized here. Pasted image links must come from a host that allows it — Discord links expire, so upload those.</small>
+      <small class="field-help">The first item shows inside the post; the rest become a strip under it. Videos are YouTube links; images are uploaded here and resized for you.</small>
     </div>
   `;
 }

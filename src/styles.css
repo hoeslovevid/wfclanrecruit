@@ -960,6 +960,14 @@ select {
   border-top: 1px solid var(--line);
 }
 .preview-about .kicker { margin-bottom: 8px; }
+/* The preview is the published page in miniature. The section cards keep their
+   shape so a leader can see the stack they are building, just tighter. */
+.preview-about .detail-list {
+  margin-top: 12px;
+  padding: 12px 14px;
+  font-size: 14px;
+}
+.preview-about .detail-list h2 { margin-bottom: 8px; font-size: 11px; }
 .preview-about .post-video { max-width: 320px; }
 .preview-about .post-video-slot { max-height: 180px; }
 .post-tools { margin-top: 2px; }
