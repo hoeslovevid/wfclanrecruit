@@ -711,6 +711,8 @@ h2 { font-size: clamp(26px, 3vw, 36px); }
 .field input:not([type="file"]):not([type="range"]),
 .field textarea,
 .field select,
+.boxed-field > input,
+.boxed-field > textarea,
 select {
   width: 100%;
   border: 1px solid var(--line);
@@ -719,10 +721,13 @@ select {
   padding: 11px 12px;
   outline: none;
 }
-.field textarea { resize: vertical; min-height: 90px; }
+.field textarea,
+.boxed-field > textarea { resize: vertical; min-height: 90px; }
 .field input:not([type="file"]):not([type="range"]):focus,
 .field textarea:focus,
 .field select:focus,
+.boxed-field > input:focus,
+.boxed-field > textarea:focus,
 .search:focus-within {
   border-color: var(--focus);
   box-shadow: 0 0 0 3px var(--focus-ring);
@@ -1879,14 +1884,16 @@ code {
 /* One header for every grouped block in the composer - the playstyle groups and
    the rich-text boxes - so the two cannot drift apart. */
 .playstyle-group legend,
-.rich-field legend {
+.rich-field legend,
+.boxed-field legend {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 8px;
 }
 .playstyle-group legend small,
-.rich-field legend small {
+.rich-field legend small,
+.boxed-field legend small {
   color: var(--muted);
   font-weight: 400;
   font-size: 12px;

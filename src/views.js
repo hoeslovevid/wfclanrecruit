@@ -937,8 +937,8 @@ function videoPicker(draft = {}) {
   const entries = mediaList(draft);
   const rows = (entries.length ? entries : [null]).map((entry) => mediaRow(entry));
   return `
-    <div class="field">
-      <span>Media <small class="field-optional">optional · up to ${MEDIA_MAX}</small></span>
+    <fieldset class="fieldset boxed-field" data-boxed-field="media">
+      <legend>Media <small>up to ${MEDIA_MAX}</small><small class="field-optional">optional</small></legend>
       ${rowList("media", {
         rows,
         blank: mediaLinkRow(),
@@ -948,7 +948,7 @@ function videoPicker(draft = {}) {
       })}
       <input type="hidden" name="media" value="" />
       <small class="field-help">The first item shows inside the post; the rest become a strip under it. Videos are YouTube links; images are uploaded here and resized for you.</small>
-    </div>
+    </fieldset>
   `;
 }
 
@@ -995,6 +995,23 @@ function linksField(draft = {}) {
 // One editor shared by the post body and the three optional boxes. The toolbar
 // is the same everywhere except the video button, which only means anything in
 // the post body - the boxes have nowhere to put a clip.
+// The rich-text boxes sit in a fieldset with a legend on the rule. A plain
+// control can wear the same frame, so the fields around them stop looking like
+// a different kind of thing. The legend labels the group; the control carries
+// its own aria-label, since a legend is not a label for one input.
+function boxedField(name, label, control, { hint = "", optional = false } = {}) {
+  return `
+    <fieldset class="fieldset boxed-field" data-boxed-field="${escapeHtml(name)}">
+      <legend>
+        ${escapeHtml(label)}
+        ${hint ? `<small>${escapeHtml(hint)}</small>` : ""}
+        ${optional ? `<small class="field-optional">optional</small>` : ""}
+      </legend>
+      ${control}
+    </fieldset>
+  `;
+}
+
 function richTextField(name, label, value, { hint = "", optional = false, video = false, placeholder = "" } = {}) {
   return `
     <fieldset class="fieldset rich-field" data-rich-field="${escapeHtml(name)}">
@@ -1238,8 +1255,18 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
         </div>
         <div class="form-block">
           <h2>The post</h2>
-          <label class="field"><span>Headline</span><input name="headline" required maxlength="90" value="${escapeHtml(draft.headline || "")}" /></label>
-          <label class="field"><span>Short summary</span><textarea name="summary" required maxlength="220" rows="3">${escapeHtml(draft.summary || "")}</textarea></label>
+          ${boxedField(
+            "headline",
+            "Headline",
+            `<input name="headline" aria-label="Headline" required maxlength="90" value="${escapeHtml(draft.headline || "")}" />`,
+            { hint: "One line, shown on the card" }
+          )}
+          ${boxedField(
+            "summary",
+            "Short summary",
+            `<textarea name="summary" aria-label="Short summary" required maxlength="220" rows="3">${escapeHtml(draft.summary || "")}</textarea>`,
+            { hint: "A sentence under the headline" }
+          )}
           ${aboutComposer(draft)}
           ${sectionField("offering", "What you offer", draft.offering, {
             hint: "What the clan gives a recruit",
@@ -1323,8 +1350,18 @@ export function alliancePostView({ user, draft = {}, auth = {}, clans = [] }) {
         </div>
         <div class="form-block">
           <h2>The post</h2>
-          <label class="field"><span>Headline</span><input name="headline" required maxlength="90" value="${escapeHtml(draft.headline || "")}" /></label>
-          <label class="field"><span>Short summary</span><textarea name="summary" required maxlength="220" rows="3">${escapeHtml(draft.summary || "")}</textarea></label>
+          ${boxedField(
+            "headline",
+            "Headline",
+            `<input name="headline" aria-label="Headline" required maxlength="90" value="${escapeHtml(draft.headline || "")}" />`,
+            { hint: "One line, shown on the card" }
+          )}
+          ${boxedField(
+            "summary",
+            "Short summary",
+            `<textarea name="summary" aria-label="Short summary" required maxlength="220" rows="3">${escapeHtml(draft.summary || "")}</textarea>`,
+            { hint: "A sentence under the headline" }
+          )}
           ${aboutComposer(draft)}
           ${sectionField("offering", "What you offer", draft.offering, {
             hint: "What the alliance gives a clan",
