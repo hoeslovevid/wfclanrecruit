@@ -34,9 +34,9 @@ import {
   ROLE_NAME_MAX,
   ROLE_STATUSES,
   ROLE_SUGGESTIONS,
-  ROLE_TEXT_MAX,
   isRoleOpen,
   openRoles,
+  roleTextIsEmpty,
   rolesOf,
 } from "./roles.js";
 
@@ -284,8 +284,18 @@ function lookingForSection(item) {
               <span class="pill ${statusClass(role.status)}">${escapeHtml(role.status)}</span>
               ${role.count ? `<span class="role-count">${role.count} wanted</span>` : ""}
             </div>
-            ${role.description ? `<p class="muted">${escapeHtml(role.description)}</p>` : ""}
-            ${role.requirements ? `<p class="role-req"><span>Needs</span> ${escapeHtml(role.requirements)}</p>` : ""}
+            ${
+              roleTextIsEmpty(role.description)
+                ? ""
+                : `<div class="post-body muted role-prose">${sanitizePostHtml(role.description)}</div>`
+            }
+            ${
+              roleTextIsEmpty(role.requirements)
+                ? ""
+                : `<div class="role-req"><span>Needs</span><div class="post-body role-prose">${sanitizePostHtml(
+                    role.requirements
+                  )}</div></div>`
+            }
           </li>`
           )
           .join("")}
@@ -897,8 +907,8 @@ export function readRoleRows(form) {
     name: row.querySelector("[data-role-name]")?.value || "",
     status: row.querySelector("[data-role-status]")?.value || "Open",
     count: Number(row.querySelector("[data-role-count]")?.value || 0),
-    description: row.querySelector("[data-role-description]")?.value || "",
-    requirements: row.querySelector("[data-role-requirements]")?.value || "",
+    description: row.querySelector("[data-role-field=description] textarea")?.value || "",
+    requirements: row.querySelector("[data-role-field=requirements] textarea")?.value || "",
   }));
 }
 
@@ -1074,20 +1084,20 @@ function roleRow(role = {}) {
         />
         <button class="row-remove" type="button" data-row-remove aria-label="Remove this role">×</button>
       </div>
-      <input
-        data-role-description
-        type="text"
-        maxlength="${ROLE_TEXT_MAX}"
-        placeholder="What the role does"
-        value="${escapeHtml(role.description || "")}"
-      />
-      <input
-        data-role-requirements
-        type="text"
-        maxlength="${ROLE_TEXT_MAX}"
-        placeholder="What it asks for"
-        value="${escapeHtml(role.requirements || "")}"
-      />
+      <div class="role-body" data-role-field="description">
+        <span class="role-label">Responsibilities</span>
+        ${richTextEditor(role.description, {
+          label: "What the role does",
+          placeholder: "What the role does — a list works well here",
+        })}
+      </div>
+      <div class="role-body" data-role-field="requirements">
+        <span class="role-label">Requirements</span>
+        ${richTextEditor(role.requirements, {
+          label: "What the role asks for",
+          placeholder: "What it asks for — a list works well here",
+        })}
+      </div>
     </div>
   `;
 }
@@ -1171,6 +1181,37 @@ function boxedField(name, label, control, { hint = "", optional = false } = {}) 
   `;
 }
 
+// The editor itself, without the box around it. Split out so a role row can
+// carry one in a space where a fieldset and legend would not fit.
+//
+// `name` writes to a named textarea the form reads directly; a row inside a
+// repeatable list passes no name and is read out of the DOM into JSON instead.
+function richTextEditor(value, { label, placeholder = "", name = "", video = false, compact = true } = {}) {
+  return `
+    <div class="richtext" data-rich-editor-shell>
+      <div class="richtext-toolbar" role="toolbar" aria-label="${escapeHtml(label)} formatting">
+        <button class="richtext-btn" type="button" data-rt="bold" title="Bold"><strong>B</strong></button>
+        <button class="richtext-btn" type="button" data-rt="italic" title="Italic"><em>I</em></button>
+        <button class="richtext-btn" type="button" data-rt="underline" title="Underline"><u>U</u></button>
+        <button class="richtext-btn" type="button" data-rt="ulist" title="Bullet list">List</button>
+        <button class="richtext-btn" type="button" data-rt="olist" title="Numbered list">1.</button>
+        <button class="richtext-btn" type="button" data-rt="link" title="Add link">Link</button>
+        ${video ? `<button class="richtext-btn" type="button" data-insert-video title="Insert video at cursor">Video</button>` : ""}
+      </div>
+      <div
+        class="richtext-editor${compact ? " is-compact" : ""}"
+        data-rich-editor
+        contenteditable="true"
+        role="textbox"
+        aria-multiline="true"
+        aria-label="${escapeHtml(label)}"
+        data-placeholder="${escapeHtml(placeholder)}"
+      ></div>
+      <textarea ${name ? `name="${escapeHtml(name)}"` : ""} hidden>${escapeHtml(toEditorHtml(value || ""))}</textarea>
+    </div>
+  `;
+}
+
 function richTextField(name, label, value, { hint = "", optional = false, video = false, placeholder = "" } = {}) {
   return `
     <fieldset class="fieldset rich-field" data-rich-field="${escapeHtml(name)}">
@@ -1179,27 +1220,7 @@ function richTextField(name, label, value, { hint = "", optional = false, video 
         ${hint ? `<small>${escapeHtml(hint)}</small>` : ""}
         ${optional ? `<small class="field-optional">optional</small>` : ""}
       </legend>
-      <div class="richtext">
-        <div class="richtext-toolbar" role="toolbar" aria-label="${escapeHtml(label)} formatting">
-          <button class="richtext-btn" type="button" data-rt="bold" title="Bold"><strong>B</strong></button>
-          <button class="richtext-btn" type="button" data-rt="italic" title="Italic"><em>I</em></button>
-          <button class="richtext-btn" type="button" data-rt="underline" title="Underline"><u>U</u></button>
-          <button class="richtext-btn" type="button" data-rt="ulist" title="Bullet list">List</button>
-          <button class="richtext-btn" type="button" data-rt="olist" title="Numbered list">1.</button>
-          <button class="richtext-btn" type="button" data-rt="link" title="Add link">Link</button>
-          ${video ? `<button class="richtext-btn" type="button" data-insert-video title="Insert video at cursor">Video</button>` : ""}
-        </div>
-        <div
-          class="richtext-editor${video ? "" : " is-compact"}"
-          data-rich-editor
-          contenteditable="true"
-          role="textbox"
-          aria-multiline="true"
-          aria-label="${escapeHtml(label)}"
-          data-placeholder="${escapeHtml(placeholder)}"
-        ></div>
-        <textarea name="${escapeHtml(name)}" hidden>${escapeHtml(toEditorHtml(value || ""))}</textarea>
-      </div>
+      ${richTextEditor(value, { label, placeholder, name, video, compact: !video })}
     </fieldset>
   `;
 }

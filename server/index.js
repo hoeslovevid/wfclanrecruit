@@ -12,7 +12,7 @@ import { initStorage, paths, postgresEnabled, readDb, storageLabel, writeDb, clo
 import { rateLimit } from "./ratelimit.js";
 import { dropLegacyVideos } from "../src/video.js";
 import { MEDIA_MAX, mediaList, normalizeMedia, setUploadPublicBase, uploadedUrls, videoIdsOf } from "../src/media.js";
-import { normalizeRoles } from "../src/roles.js";
+import { normalizeRoles, roleTextError } from "../src/roles.js";
 import { resizeListingImage } from "./image.js";
 import { deleteR2Object, putR2Object, r2Enabled, r2PartialEnv, r2PublicUrl, readLocalFile } from "./r2.js";
 import {
@@ -544,7 +544,10 @@ function parseListingRoles(body) {
   } catch {
     return { error: "Could not read the roles list." };
   }
-  return { roles: normalizeRoles(rows) };
+  const roles = normalizeRoles(rows);
+  const tooLong = roleTextError(roles);
+  if (tooLong) return { error: tooLong };
+  return { roles };
 }
 
 // Every listing has to leave a recruit somewhere to go. Discord used to be the

@@ -5,6 +5,11 @@ const PLAIN_MAX = 1500;
 // keeps them the summary they are meant to be.
 const SECTION_MAX = 1500;
 const SECTION_PLAIN_MAX = 600;
+// A role's responsibilities and requirements are lists of a few lines each,
+// not a second post - but they are lists, so they need more room than the
+// single line of plain text they replaced.
+const ROLE_HTML_MAX = 900;
+const ROLE_PLAIN_MAX = 400;
 const VOID = new Set(["br"]);
 const SKIP = new Set(["script", "style", "iframe", "object", "embed", "link", "meta", "svg"]);
 const ALLOWED = {
@@ -232,6 +237,19 @@ export function sectionIsEmpty(html) {
   return !plainTextFromHtml(html).trim();
 }
 
+// Same treatment the listing's own boxes get, at a role's scale: plain text
+// already stored comes back as editor HTML, so a role written before this
+// keeps reading exactly as it did.
+export function normalizeRoleText(value) {
+  const html = sanitizePostHtml(toEditorHtml(value));
+  return html.length > ROLE_HTML_MAX ? html.slice(0, ROLE_HTML_MAX) : html;
+}
+
+export function roleTextTooLong(html) {
+  if (String(html || "").length > ROLE_HTML_MAX) return true;
+  return plainTextFromHtml(html).length > ROLE_PLAIN_MAX;
+}
+
 const VIDEO_MARK = /<span\b[^>]*\bdata-video\b[^>]*>([\s\S]*?)<\/span>/i;
 
 export function splitVideoHtml(html) {
@@ -246,4 +264,4 @@ export function splitVideoHtml(html) {
   };
 }
 
-export { ABOUT_MAX, PLAIN_MAX, SECTION_MAX, SECTION_PLAIN_MAX };
+export { ABOUT_MAX, PLAIN_MAX, SECTION_MAX, SECTION_PLAIN_MAX, ROLE_HTML_MAX, ROLE_PLAIN_MAX };

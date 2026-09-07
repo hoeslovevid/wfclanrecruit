@@ -1882,7 +1882,31 @@ code {
 .role-head > [data-role-status] { flex: 0 0 116px; width: auto; }
 .role-head > [data-role-count] { flex: 0 0 72px; width: auto; }
 .role-head > .row-remove { margin-left: auto; }
-.role-item > input { width: 100%; font-size: 14px; }
+/* Two editors stacked in one row need naming, or it is two toolbars and a
+   guess. The label is small; the editor carries the height. */
+.role-body { display: grid; gap: 4px; }
+.role-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.role-body .richtext-editor {
+  min-height: 66px;
+  max-height: 200px;
+  font-size: 14px;
+}
+.role-body .richtext-toolbar { padding: 4px; }
+.role-body .richtext-btn { height: 26px; min-width: 28px; font-size: 12px; }
+
+/* Listing page: the prose is formatted now, so it needs list spacing rather
+   than a single paragraph's. */
+.role-prose ul,
+.role-prose ol { margin: 4px 0 0; padding-left: 20px; }
+.role-prose > :first-child { margin-top: 0; }
+.role-prose > :last-child { margin-bottom: 0; }
+.role-req { display: grid; gap: 2px; }
 
 /* Listing page */
 .role-list { margin: 0; padding: 0; list-style: none; }
