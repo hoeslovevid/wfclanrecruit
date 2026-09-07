@@ -34,7 +34,7 @@ import {
   toEditorHtml,
 } from "./richtext.js";
 import { parseYouTubeId } from "./video.js";
-import { MEDIA_MAX, parseImageUrl } from "./media.js";
+import { MEDIA_MAX, parseImageUrl, setUploadPublicBase } from "./media.js";
 import {
   applyAllianceFilters,
   applyClanFilters,
@@ -131,6 +131,7 @@ async function refresh() {
   ]);
   state.user = me.user;
   state.auth = me.auth || state.auth;
+  setUploadPublicBase(state.auth.r2PublicUrl);
   state.clans = clansRes.clans;
   state.alliances = alliancesRes.alliances;
   renderNav();

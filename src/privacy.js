@@ -8,7 +8,7 @@ export function privacyView() {
       <p class="eyebrow">Legal</p>
       <h1>Privacy Policy</h1>
       <p class="lead">This page explains what WF Clan Recruit collects, why, who sees it, how long it stays, and how you can opt out. It describes this website as it works today, not a generic template.</p>
-      <p class="muted">Last updated 4 September 2026. This site is independent and is not affiliated with Digital Extremes, Warframe, Discord, or Google.</p>
+      <p class="muted">Last updated 6 September 2026. This site is independent and is not affiliated with Digital Extremes, Warframe, Discord, or Google.</p>
     </section>
 
     <section class="policy-page">
@@ -62,7 +62,7 @@ export function privacyView() {
       <article class="panel policy-section" id="scope">
         <p class="kicker">02</p>
         <h2>What this policy covers</h2>
-        <p>This policy applies to the WF Clan Recruit website, its application programming interface (API), uploaded files served from <code>/uploads/</code>, and account features such as Discord sign-in and Warframe Forum verification.</p>
+        <p>This policy applies to the WF Clan Recruit website, its application programming interface (API), listing images stored on this host under <code>/uploads/</code> or on Cloudflare R2, and account features such as Discord sign-in and Warframe Forum verification.</p>
         <p>It does not cover:</p>
         <ul class="policy-bullets">
           <li>Discord servers you join from a listing. Those communities set their own rules and collect their own data.</li>
@@ -123,7 +123,7 @@ export function privacyView() {
           <li>Platform, region, language, status, member counts, MR, clan tier, founded year</li>
           <li>Playstyles you pick, including Warframe-specific tags such as Archon, Eidolon, or Cross-save</li>
           <li>Leader name, Discord invite URL, optional alliance link</li>
-          <li>Uploaded image (up to 2 MB; we resize it on save and store a WebP) and an optional YouTube link, of which we store only the video id</li>
+          <li>Uploaded images (each up to 2 MB; we resize them on save and store WebP files on this host or Cloudflare R2) and optional YouTube links, of which we store only the video id</li>
           <li>Created time, last bump time, paused flag, hidden flag, invite check result, and the owner id of the account that posted it</li>
         </ul>
         <p>Do not put private phone numbers, home addresses, government IDs, or passwords in a listing. Recruits and search engines can see public posts.</p>
@@ -248,7 +248,8 @@ export function privacyView() {
               <tr><th>Recipient</th><th>Why</th><th>What they may see</th></tr>
             </thead>
             <tbody>
-              <tr><td>Railway (hosting, files, and optional Postgres)</td><td>Run the app, store listings and uploads</td><td>The same data we store, plus ordinary server logs</td></tr>
+              <tr><td>Railway (hosting and optional Postgres)</td><td>Run the app and store listings. When Cloudflare R2 is not configured, listing images stay on this host</td><td>The same data we store, plus ordinary server logs</td></tr>
+              <tr><td>Cloudflare R2</td><td>Store and serve listing images</td><td>The image files you upload, and ordinary request logs when a visitor loads those images</td></tr>
               <tr><td>Discord</td><td>Sign-in and invite checks</td><td>That you authorized this app; Discord already has your Discord account. Invite lookups send the invite code</td></tr>
               <tr><td>Jina AI reader (<code>r.jina.ai</code>)</td><td>Read a public About Me page when Cloudflare blocks our server</td><td>The public forum profile URL you submitted, at the moment you click to check</td></tr>
               <tr><td>Google Fonts</td><td>Load IBM Plex</td><td>Your IP and browser when the font CSS and files load</td></tr>
@@ -265,7 +266,7 @@ export function privacyView() {
       <article class="panel policy-section" id="transfers">
         <p class="kicker">11</p>
         <h2>International transfers</h2>
-        <p>The operator, Railway, Discord, Google, Jina, and Digital Extremes may process data in the United States, Canada, the EU, or other countries. Those countries may not provide the same legal remedies as your home country. We transfer data because the services above are what this board uses, not because we sell a worldwide marketing list.</p>
+        <p>The operator, Railway, Cloudflare, Discord, Google, Jina, and Digital Extremes may process data in the United States, Canada, the EU, or other countries. Those countries may not provide the same legal remedies as your home country. We transfer data because the services above are what this board uses, not because we sell a worldwide marketing list.</p>
       </article>
 
       <article class="panel policy-section" id="retention">
@@ -281,7 +282,7 @@ export function privacyView() {
           <li><strong>Recruiter roster</strong> until you leave the listing, the owner removes you, the listing is deleted, or you delete your account, which withdraws you from every listing you recruited for.</li>
           <li><strong>Online status</strong> your chosen status until you change it or delete your account. The live “online right now” signal is memory-only: it expires about two and a half minutes after your last heartbeat, and a server restart clears it.</li>
           <li><strong>Theme</strong> in your browser until you clear it.</li>
-          <li><strong>Host logs and backups</strong> according to Railway’s systems. A deleted account is removed from the live database we control; a host backup from before deletion might exist until that backup rotates. We do not keep a separate marketing archive.</li>
+          <li><strong>Host logs and backups</strong> according to Railway’s systems, and Cloudflare’s logs for listing images on R2. A deleted account is removed from the live database we control, and its listing images are deleted from this host and from R2; a host backup from before deletion might exist until that backup rotates. We do not keep a separate marketing archive.</li>
         </ul>
       </article>
 

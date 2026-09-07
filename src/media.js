@@ -3,10 +3,10 @@
 // entries rather than a video array: { kind: "video", id } or
 // { kind: "image", url }.
 //
-// Images arrive two ways. An upload lands on our own volume, gets resized to a
-// ~100 KB WebP, and is ours to moderate and delete. A pasted link is somebody
-// else's file on somebody else's host, so it is allowlisted rather than
-// trusted - see IMAGE_HOSTS below.
+// Images arrive two ways. An upload is resized to a ~100 KB WebP and stored
+// either on this host at /uploads/ or, when R2 is configured, on Cloudflare R2
+// at the public media URL. A pasted link is somebody else's file on somebody
+// else's host, so it is allowlisted rather than trusted - see IMAGE_HOSTS below.
 
 import { YOUTUBE_ID, parseYouTubeId } from "./video.js";
 
@@ -51,6 +51,18 @@ const EXPIRING_HOSTS = new Map([
 
 const IMAGE_EXT = /\.(png|jpe?g|webp|gif|avif)$/i;
 
+// The browser copy of this module cannot read R2 secrets. The server tells it
+// the public media origin on /api/auth/me; tests and Node call this directly.
+let uploadPublicBase = "";
+
+export function setUploadPublicBase(url) {
+  uploadPublicBase = String(url || "").replace(/\/$/, "");
+}
+
+export function getUploadPublicBase() {
+  return uploadPublicBase;
+}
+
 function hostOf(raw) {
   try {
     return new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).hostname.toLowerCase();
@@ -60,7 +72,18 @@ function hostOf(raw) {
 }
 
 export function isUploadedImage(url) {
-  return typeof url === "string" && url.startsWith("/uploads/");
+  if (typeof url !== "string" || !url) return false;
+  if (url.startsWith("/uploads/")) return true;
+  if (!uploadPublicBase) return false;
+  try {
+    const href = new URL(url);
+    const base = new URL(uploadPublicBase);
+    if (href.origin !== base.origin) return false;
+    const prefix = base.pathname === "/" ? "/listings/" : `${base.pathname.replace(/\/$/, "")}/`;
+    return href.pathname.startsWith(prefix);
+  } catch {
+    return false;
+  }
 }
 
 // Our own uploads are trusted because we wrote them. Everything else has to
@@ -155,7 +178,7 @@ export function videoIdsOf(media) {
 }
 
 // Every uploaded file a listing still points at. Updating a listing deletes the
-// ones that fell out, so removing an image from the strip reclaims the volume.
+// ones that fell out, so removing an image from the strip reclaims storage.
 export function uploadedUrls(media) {
   return media.filter((entry) => entry.kind === "image" && isUploadedImage(entry.url)).map((e) => e.url);
 }

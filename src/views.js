@@ -861,7 +861,8 @@ function mediaLinkRow(value = "") {
 }
 
 // An upload row holds the file itself until submit. Once saved it comes back as
-// a /uploads/ URL and renders as a thumbnail with nothing to type.
+// a stored image URL (/uploads/ locally, or the R2 public URL in production)
+// and renders as a thumbnail with nothing to type.
 function mediaUploadRow(url = "") {
   return `
     <div class="row-item media-input" data-row data-media-row="upload" data-media-url-value="${escapeHtml(url)}">

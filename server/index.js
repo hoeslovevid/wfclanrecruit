@@ -11,8 +11,9 @@ import { hashPassword, newToken, verifyPassword } from "./auth.js";
 import { initStorage, paths, postgresEnabled, readDb, storageLabel, writeDb, closePg } from "./db.js";
 import { rateLimit } from "./ratelimit.js";
 import { dropLegacyVideos } from "../src/video.js";
-import { MEDIA_MAX, mediaList, normalizeMedia, uploadedUrls, videoIdsOf } from "../src/media.js";
+import { MEDIA_MAX, mediaList, normalizeMedia, setUploadPublicBase, uploadedUrls, videoIdsOf } from "../src/media.js";
 import { resizeListingImage } from "./image.js";
+import { deleteR2Object, putR2Object, r2Enabled, r2PartialEnv, r2PublicUrl, readLocalFile } from "./r2.js";
 import {
   HEARTBEAT_MS,
   KEEP_MINUTES,
@@ -350,22 +351,29 @@ function listingFile(req, name) {
 function discardUploads(req) {
   for (const list of Object.values(req.files || {})) {
     for (const file of list || []) {
+      if (file.publicUrl) removeStoredFile(file.publicUrl);
       fs.rmSync(file.path, { force: true });
     }
   }
 }
 
 function removeStoredFile(url) {
-  if (url?.startsWith("/uploads/")) {
+  if (!url) return;
+  if (url.startsWith("/uploads/")) {
     fs.rmSync(path.join(paths.uploadDir, path.basename(url)), { force: true });
+    return;
   }
+  deleteR2Object(url).catch((error) => {
+    console.warn("Could not delete stored image:", error.message);
+  });
 }
 
 function savedUpload(file) {
-  return file ? `/uploads/${file.filename}` : null;
+  if (!file) return null;
+  return file.publicUrl || `/uploads/${file.filename}`;
 }
 
-// Removing an image from the strip should reclaim the volume, and so should
+// Removing an image from the strip should reclaim storage, and so should
 // deleting the listing. Compare what the listing used to point at against what
 // it points at now; anything dropped is ours to delete because we wrote it.
 function dropUnusedMedia(before, after = []) {
@@ -381,6 +389,16 @@ function nextImage(existing, file) {
   return savedUpload(file);
 }
 
+function listingWriteFailed(req, res) {
+  return (error) => {
+    discardUploads(req);
+    console.error("Listing write failed:", error.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Could not save that listing." });
+    }
+  };
+}
+
 // Every uploaded image - the listing photo and each one in the strip - is
 // resized to a ~960px WebP before anything records its name. Serving a raw
 // phone screenshot is what made hosting media expensive in the first place;
@@ -388,7 +406,9 @@ function nextImage(existing, file) {
 // clips that drove video off this server.
 //
 // This runs before the body is parsed, because resizing renames the file and
-// the media list stores that name.
+// the media list stores that name. When R2 is configured the resized file is
+// then copied there and removed from this host, so the listing stores a public
+// media URL instead of /uploads/.
 async function processListingImages(req, res) {
   const files = [listingFile(req, "image"), ...(req.files?.mediaImage || [])].filter(Boolean);
   for (const file of files) {
@@ -399,6 +419,17 @@ async function processListingImages(req, res) {
     } catch {
       discardUploads(req);
       res.status(400).json({ error: "That image could not be read. Use a PNG, JPG, WEBP, or GIF." });
+      return false;
+    }
+    if (!r2Enabled()) continue;
+    try {
+      const publicUrl = await putR2Object(file.filename, await readLocalFile(file.path));
+      if (!publicUrl) throw new Error("R2 put returned nothing");
+      file.publicUrl = publicUrl;
+      fs.rmSync(file.path, { force: true });
+    } catch {
+      discardUploads(req);
+      res.status(503).json({ error: "Could not store that image. Try again in a moment." });
       return false;
     }
   }
@@ -436,15 +467,18 @@ function parseListingMedia(body, req) {
       const file = files[row.upload];
       if (!file) return { error: "An uploaded image went missing. Try adding it again." };
       used.add(row.upload);
-      resolved.push({ kind: "image", url: `/uploads/${file.filename}` });
+      resolved.push({ kind: "image", url: savedUpload(file) });
       continue;
     }
     resolved.push(row);
   }
   // A file with no row pointing at it is a leftover from a row the leader
-  // removed before submitting; drop it rather than leaving it on the volume.
+  // removed before submitting; drop it rather than leaving it in storage.
   files.forEach((file, index) => {
-    if (!used.has(index)) fs.rmSync(file.path, { force: true });
+    if (!used.has(index)) {
+      removeStoredFile(savedUpload(file));
+      fs.rmSync(file.path, { force: true });
+    }
   });
 
   const media = normalizeMedia(resolved);
@@ -791,7 +825,12 @@ function decorateAlliance(alliance, db, user = null) {
 }
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, name: "WF Clan Recruit", storage: postgresEnabled() ? "postgres" : "file" });
+  res.json({
+    ok: true,
+    name: "WF Clan Recruit",
+    storage: postgresEnabled() ? "postgres" : "file",
+    media: r2Enabled() ? "r2" : "local",
+  });
 });
 
 app.get("/api/auth/me", (req, res) => {
@@ -811,6 +850,7 @@ app.get("/api/auth/me", (req, res) => {
       discord: discordConfigured(),
       minAgeDays: DISCORD_MIN_AGE_DAYS,
       passwordRegister: !isProd,
+      r2PublicUrl: r2PublicUrl() || "",
     },
   });
 });
@@ -1197,6 +1237,7 @@ app.delete("/api/auth/account", requireUser, (req, res) => {
     );
     for (const listing of [...(db.clans || []), ...(db.alliances || [])].filter((item) => item.ownerId === userId)) {
       removeStoredFile(listing.image);
+      dropUnusedMedia(listing);
     }
     db.clans = (db.clans || [])
       .filter((item) => item.ownerId !== userId)
@@ -1310,7 +1351,7 @@ app.post("/api/clans", requirePoster, listingLimiter, listingUpload, async (req,
     db.clans.unshift(clan);
     res.status(201).json({ clan: decorateClan(clan, db) });
     return db;
-  });
+  }).catch(listingWriteFailed(req, res));
 });
 
 app.put("/api/clans/:id", requirePoster, listingUpload, async (req, res) => {
@@ -1358,7 +1399,7 @@ app.put("/api/clans/:id", requirePoster, listingUpload, async (req, res) => {
     });
     res.json({ clan: decorateClan(clan, db) });
     return db;
-  });
+  }).catch(listingWriteFailed(req, res));
 });
 
 app.post("/api/clans/:id/bump", requirePoster, async (req, res) => {
@@ -1658,7 +1699,7 @@ app.post("/api/alliances", requirePoster, listingLimiter, listingUpload, async (
     applyAllianceRoster(db, alliance.id, req.user.id, rosterIds);
     res.status(201).json({ alliance: decorateAlliance(alliance, db) });
     return db;
-  });
+  }).catch(listingWriteFailed(req, res));
 });
 
 app.put("/api/alliances/:id", requirePoster, listingUpload, async (req, res) => {
@@ -1703,7 +1744,7 @@ app.put("/api/alliances/:id", requirePoster, listingUpload, async (req, res) => 
     applyAllianceRoster(db, alliance.id, alliance.ownerId, rosterIds);
     res.json({ alliance: decorateAlliance(alliance, db) });
     return db;
-  });
+  }).catch(listingWriteFailed(req, res));
 });
 
 app.post("/api/alliances/:id/bump", requirePoster, async (req, res) => {
@@ -1974,6 +2015,7 @@ async function clearUploadedVideos() {
 }
 
 async function start() {
+  setUploadPublicBase(r2PublicUrl());
   await initStorage();
   await clearUploadedVideos();
   const frontend = await attachFrontend();
@@ -1984,6 +2026,15 @@ async function start() {
   });
   console.log(`WF Clan Recruit on http://localhost:${PORT}`);
   console.log(`Storage: ${storageLabel()}`);
+  if (r2Enabled()) {
+    console.log(`Media: Cloudflare R2 (${r2PublicUrl()})`);
+  } else {
+    console.log("Media: local /uploads");
+    const missing = r2PartialEnv();
+    if (missing.length) {
+      console.warn(`R2 env is incomplete; missing ${missing.join(", ")}. Listing images stay on this server.`);
+    }
+  }
   console.log(`Frontend: ${frontend === "live" ? "live source (same app as production)" : "production dist build"}`);
   if (!discordConfigured()) {
     console.warn("DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET are unset. Discord sign-in is off.");

@@ -11,6 +11,7 @@ import {
   mediaList,
   normalizeMedia,
   parseImageUrl,
+  setUploadPublicBase,
   uploadedUrls,
   videoIdsOf,
 } from "../src/media.js";
@@ -57,6 +58,26 @@ test("our own uploads are trusted without the allowlist", () => {
   assert.equal(parseImageUrl("/uploads/1712-abc.webp").url, "/uploads/1712-abc.webp");
   assert.equal(isUploadedImage("/uploads/x.webp"), true);
   assert.equal(isUploadedImage("https://i.imgur.com/abc123.png"), false);
+});
+
+test("Cloudflare R2 public URLs count as our uploads once the origin is known", () => {
+  try {
+    setUploadPublicBase("https://media.example.com");
+    const url = "https://media.example.com/listings/1736150400000-aabbccddeeff.webp";
+    assert.equal(isUploadedImage(url), true);
+    assert.equal(parseImageUrl(url).url, url);
+    assert.equal(isUploadedImage("https://evil.test/listings/1736150400000-aabbccddeeff.webp"), false);
+    assert.equal(isUploadedImage("https://media.example.com/secret.webp"), false);
+    assert.deepEqual(uploadedUrls([{ kind: "image", url }, { kind: "image", url: "/uploads/a.webp" }]), [
+      url,
+      "/uploads/a.webp",
+    ]);
+    setUploadPublicBase("https://cdn.example.com/wf");
+    assert.equal(isUploadedImage("https://cdn.example.com/wf/listings/1736150400000-aabbccddeeff.webp"), true);
+    assert.equal(isUploadedImage("https://cdn.example.com/listings/1736150400000-aabbccddeeff.webp"), false);
+  } finally {
+    setUploadPublicBase("");
+  }
 });
 
 test("normalizeMedia keeps the leader's order and drops duplicates", () => {
@@ -111,7 +132,7 @@ test("media wins over the legacy fields once it exists", () => {
   assert.deepEqual(mediaList(item), [{ kind: "image", url: IMG }]);
 });
 
-test("uploadedUrls finds only our own files, for reclaiming the volume", () => {
+test("uploadedUrls finds only our own files, for reclaiming storage", () => {
   const media = [
     { kind: "image", url: "/uploads/a.webp" },
     { kind: "video", id: ID },
