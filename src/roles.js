@@ -6,9 +6,11 @@
 // clans invent jobs the board has never heard of, and a role nobody can name
 // is worse than an untidy list.
 
+import { ROLE_PLAIN_MAX, normalizeRoleText, plainTextFromHtml, roleTextTooLong } from "./richtext.js";
+
 export const ROLE_MAX = 8;
 export const ROLE_NAME_MAX = 40;
-export const ROLE_TEXT_MAX = 240;
+export { ROLE_PLAIN_MAX };
 export const ROLE_COUNT_MAX = 99;
 
 // Offered in the picker; anything typed is kept as written.
@@ -57,11 +59,31 @@ export function normalizeRoles(list) {
       name,
       status: normalizeRoleStatus(row?.status),
       count,
-      description: String(row?.description ?? "").trim().slice(0, ROLE_TEXT_MAX),
-      requirements: String(row?.requirements ?? "").trim().slice(0, ROLE_TEXT_MAX),
+      // Formatted now, and sanitised the same way the post body is. Plain text
+      // from a role written before this comes back through as editor HTML.
+      description: normalizeRoleText(row?.description),
+      requirements: normalizeRoleText(row?.requirements),
     });
   }
   return out;
+}
+
+// Refused rather than silently truncated: half a requirements list is worse
+// than being told to shorten it. Named, so the leader knows which role.
+export function roleTextError(roles) {
+  for (const role of roles) {
+    for (const [field, label] of [["description", "responsibilities"], ["requirements", "requirements"]]) {
+      if (roleTextTooLong(role[field])) {
+        return `The ${label} for "${role.name}" are too long.`;
+      }
+    }
+  }
+  return null;
+}
+
+// A role whose prose is only empty markup has no prose.
+export function roleTextIsEmpty(html) {
+  return !plainTextFromHtml(html).trim();
 }
 
 // "Recruiting for this" means the seat is takeable. Selective still takes

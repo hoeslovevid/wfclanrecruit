@@ -521,7 +521,7 @@ function bindImagePicker(form, initialUrl, onUrl) {
 // to and remove from". One binding drives all three: clone the last row to add,
 // never drop below one row for the lists that need a starting point, and hand
 // the caller a callback whenever the set changes.
-function bindRowList(list, { max = Infinity, min = 0, onChange } = {}) {
+function bindRowList(list, { max = Infinity, min = 0, onChange, onRowAdded } = {}) {
   if (!list) return;
   const items = list.querySelector("[data-row-items]");
   const add = list.querySelector("[data-row-add]");
@@ -548,6 +548,10 @@ function bindRowList(list, { max = Infinity, min = 0, onChange } = {}) {
     const row = blankRow(which);
     if (!row) return;
     items.append(row);
+    // A row cloned from the template is inert markup: anything inside it that
+    // needs wiring - a rich-text editor, say - gets it here, or the row looks
+    // right and does nothing.
+    onRowAdded?.(row);
     sync();
     return row;
   }
@@ -787,7 +791,13 @@ function bindRoleRows(form, onChange) {
     }
     onChange?.();
   };
-  bindRowList(list, { max: ROLE_MAX, min: 0, onChange: sync });
+  bindRowList(list, {
+    max: ROLE_MAX,
+    min: 0,
+    onChange: sync,
+    onRowAdded: (row) => bindRowEditors(row, sync),
+  });
+  list?.querySelectorAll("[data-row]").forEach((row) => bindRowEditors(row, sync));
   list?.addEventListener("input", sync);
   list?.addEventListener("change", sync);
   sync();
@@ -938,6 +948,11 @@ function bindRichTextField(field, onChange) {
 
 function bindRichText(form, onChange) {
   form.querySelectorAll("[data-rich-field]").forEach((field) => bindRichTextField(field, onChange));
+}
+
+// Every editor inside one row, wired the same way the form-level ones are.
+function bindRowEditors(row, onChange) {
+  row.querySelectorAll("[data-rich-editor-shell]").forEach((shell) => bindRichTextField(shell, onChange));
 }
 
 // The preview is the published page in miniature, so it renders through the

@@ -6,15 +6,17 @@ import assert from "node:assert/strict";
 import {
   ROLE_MAX,
   ROLE_NAME_MAX,
-  ROLE_TEXT_MAX,
+  ROLE_PLAIN_MAX,
   hasOpenRole,
   isRoleOpen,
   normalizeRoleStatus,
   normalizeRoles,
   openRoleNames,
   roleFilterOptions,
+  roleTextError,
   rolesOf,
 } from "../src/roles.js";
+import { plainTextFromHtml } from "../src/richtext.js";
 
 const role = (name, extra = {}) => ({ name, status: "Open", count: 1, ...extra });
 
@@ -38,15 +40,36 @@ test("the same role twice is one role", () => {
   assert.equal(out[0].count, 1, "the first one wins");
 });
 
-test("counts and free text are bounded", () => {
-  const [out] = normalizeRoles([
-    { name: "x".repeat(ROLE_NAME_MAX + 20), count: 9999, description: "d".repeat(ROLE_TEXT_MAX + 50) },
-  ]);
+test("names and counts are bounded", () => {
+  const [out] = normalizeRoles([{ name: "x".repeat(ROLE_NAME_MAX + 20), count: 9999 }]);
   assert.equal(out.name.length, ROLE_NAME_MAX);
   assert.equal(out.count, 99);
-  assert.equal(out.description.length, ROLE_TEXT_MAX);
   assert.equal(normalizeRoles([{ name: "a", count: -5 }])[0].count, 0);
   assert.equal(normalizeRoles([{ name: "a", count: "not a number" }])[0].count, 0);
+});
+
+// The prose takes the same formatting the post body does.
+test("role prose keeps its formatting and loses its scripts", () => {
+  const [out] = normalizeRoles([
+    { name: "Recruiter", description: "<ul><li><strong>Greet</strong> newcomers</li></ul><script>alert(1)</script>" },
+  ]);
+  assert.equal(out.description, "<ul><li><strong>Greet</strong> newcomers</li></ul>");
+});
+
+// A role written before the fields took formatting is plain text.
+test("plain text from an older role comes back as editor HTML", () => {
+  const [out] = normalizeRoles([{ name: "Mentor", requirements: "MR 10+\nPatience" }]);
+  assert.equal(plainTextFromHtml(out.requirements), "MR 10+\nPatience");
+});
+
+// Refused, not truncated: half a requirements list is worse than being asked
+// to shorten it.
+test("over-long prose is refused, and says which role", () => {
+  const long = "d".repeat(ROLE_PLAIN_MAX + 50);
+  const message = roleTextError(normalizeRoles([{ name: "Architect", description: long }]));
+  assert.match(message, /Architect/);
+  assert.match(message, /responsibilities/);
+  assert.equal(roleTextError(normalizeRoles([{ name: "Architect", description: "short" }])), null);
 });
 
 test("the list is capped", () => {
