@@ -49,9 +49,9 @@
   --group-activities: #8fb0ff;
   --radius: 14px;
   --nav: 76px;
-  --font: "IBM Plex Sans", "Segoe UI", sans-serif;
-  --display: "IBM Plex Sans", "Segoe UI", sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font: "Rajdhani", "Segoe UI", sans-serif;
+  --display: "Rajdhani", "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
 }
 
 [data-theme="light"] {
@@ -473,10 +473,10 @@ button { cursor: pointer; }
 
 .eyebrow, .kicker {
   margin: 0 0 8px;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  letter-spacing: .025em;
+  text-transform: none;
   color: var(--accent);
 }
 
@@ -888,10 +888,10 @@ select {
   margin: 0 0 6px;
   padding-left: 8px;
   border-left: 2px solid var(--group);
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  letter-spacing: .025em;
+  text-transform: none;
   color: var(--muted);
   cursor: pointer;
   list-style: none;
@@ -992,11 +992,11 @@ select {
 }
 .composer h2, .preview-panel h2 {
   margin: 0;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 12px;
   font-weight: 500;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  letter-spacing: .025em;
+  text-transform: none;
   color: var(--muted);
 }
 .form-actions {
@@ -1295,9 +1295,9 @@ select {
 .policy-table th {
   color: var(--text);
   font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-family: var(--mono);
+  letter-spacing: .025em;
+  text-transform: none;
+  font-family: var(--font);
   font-weight: 500;
 }
 .policy-table td:first-child {
@@ -1531,7 +1531,7 @@ code {
 .whisper-text {
   display: block;
   margin-bottom: 12px;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 13px;
   line-height: 1.6;
   /* Warframe names and clan names are long and full of punctuation, so let the
@@ -1574,10 +1574,10 @@ code {
 }
 .footer h3 {
   font-size: 12px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  letter-spacing: .025em;
+  text-transform: none;
   color: var(--muted);
-  font-family: var(--mono);
+  font-family: var(--font);
   font-weight: 500;
 }
 .footer a:not(.btn) { display: block; color: var(--muted); margin-bottom: 8px; }
@@ -1785,7 +1785,7 @@ code {
   background: var(--ghost);
 }
 .row-add span {
-  font-family: var(--mono);
+  font-family: var(--font);
   color: var(--accent);
 }
 .row-list-empty {
@@ -1886,10 +1886,10 @@ code {
    guess. The label is small; the editor carries the height. */
 .role-body { display: grid; gap: 4px; }
 .role-label {
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: .025em;
+  text-transform: none;
   color: var(--muted);
 }
 .role-body .richtext-editor {
@@ -1930,10 +1930,10 @@ code {
 .role-list p { margin: 6px 0 0; }
 .role-req { font-size: 13px; color: var(--muted); }
 .role-req span {
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: .025em;
+  text-transform: none;
 }
 .role-hint {
   margin: 0;
@@ -2059,11 +2059,11 @@ code {
    them to the kicker voice the composer already uses for section labels. */
 .detail-list h2 {
   margin: 0 0 10px;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 12px;
   font-weight: 500;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  letter-spacing: .025em;
+  text-transform: none;
   color: var(--muted);
 }
 .detail-list .post-body { color: var(--text); }
@@ -2135,7 +2135,7 @@ code {
   background: rgba(0, 0, 0, 0.82);
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
   color: #fff;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 10px;
   line-height: 1.5;
 }
@@ -2157,7 +2157,7 @@ code {
 .form-block > h2::before {
   content: counter(block, decimal-leading-zero);
   color: var(--accent);
-  font-family: var(--mono);
+  font-family: var(--font);
 }
 
 @media (max-width: 720px) {
@@ -2173,7 +2173,7 @@ code {
 .nav-links .nav-advertise { padding: 10px 14px; border: 1px solid var(--line-strong); border-radius: 6px; color: var(--text); }
 a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, .card:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
 .recruitment-hero { display: grid; grid-template-columns: 1.45fr 1fr; align-items: center; gap: 48px; text-align: left; padding: 68px 0 48px; }
-.recruitment-hero h1 { font-size: clamp(40px, 4.7vw, 64px); line-height: 1.08; letter-spacing: -.05em; margin: 20px 0; }
+.recruitment-hero h1 { font-size: clamp(40px, 4.7vw, 64px); line-height: 1.08; letter-spacing: -.015em; margin: 20px 0; }
 .recruitment-hero .lead { margin: 0; max-width: 540px; font-size: 17px; line-height: 1.75; }
 .eyebrow { font-size: 11px; letter-spacing: .16em; color: var(--accent); }
 .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
@@ -2365,3 +2365,31 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 [data-theme="light"] .discovery-path-alliance:hover::before,
 [data-theme="light"] .discovery-path-alliance:focus-visible::before { opacity: .12; }
 @media (prefers-reduced-motion: reduce) { .discovery-path-alliance::before { transition: none; } }
+
+/* Community typography: expressive headings, quieter supporting labels. */
+.path-title { font-family: var(--display); font-size: 30px; letter-spacing: -.01em; }
+.eyebrow, .kicker, .filter-group-label, .footer h3,
+.composer h2, .preview-panel h2 {
+  font-family: var(--font);
+  letter-spacing: .025em;
+  text-transform: none;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+/* Section headings share the display face on profiles and editing screens. */
+.detail-list h2, .composer h2, .preview-panel h2 {
+  font-family: var(--display);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text);
+}
+.role-label, .role-req span, .policy-table th { font-size: 13px; font-weight: 600; }
+.form-block > h2::before, .media-pick-index { font-variant-numeric: tabular-nums; }
+
+.mastery-value { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; font: inherit; color: inherit; }
+.stats .mastery-value { font-size: inherit; color: inherit; }
+.mastery-icon { width: 28px; height: 28px; object-fit: contain; flex: 0 0 28px; border-radius: 4px; background: #20242c; }
+.field em .mastery-value { font-style: normal; }

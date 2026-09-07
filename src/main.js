@@ -1,3 +1,4 @@
+import { masteryDisplay } from "./mastery.js";
 import { bindFilterUpdates, resetFilterForm } from "./filter-ui.js";
 import { LINK_MAX } from "./data.js";
 import { api } from "./api.js";
@@ -1103,7 +1104,7 @@ async function render() {
       const windowedNext = paginate(list, nextPage);
       page = windowedNext.page;
       const mr = app.querySelector("#mr-readout");
-      if (mr) mr.textContent = next.mr;
+      if (mr) mr.innerHTML = masteryDisplay(next.mr, false);
       const count = app.querySelector("#result-count");
       if (count) count.textContent = windowedNext.total === 1 ? "1 clan" : `${windowedNext.total} clans`;
       const results = app.querySelector("#results");
@@ -1213,7 +1214,7 @@ async function render() {
     bindListingComposer(form, {
       imageUrl: draft?.image || null,
       onChange: (media) => {
-        if (mr) mr.textContent = form.mrRequired.value;
+        if (mr) mr.innerHTML = masteryDisplay(form.mrRequired.value, false);
         if (form.tag) form.tag.value = form.tag.value.toUpperCase();
         preview.innerHTML = previewHtml(clanCard(previewClan(form, media.image, media.entries)), form, media);
       },

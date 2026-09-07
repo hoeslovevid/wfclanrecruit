@@ -81,7 +81,7 @@ export function privacyView() {
         <p>Optional on-device data while browsing:</p>
         <ul class="policy-bullets">
           <li><strong>Theme preference.</strong> If you use the light/dark switch, the choice is stored only in your browser as <code>wfr-theme</code>. We never send that value to our server.</li>
-          <li><strong>Google Fonts.</strong> The page loads IBM Plex from Google’s font servers. Google may process your IP address under Google’s policies. Blocking that request still lets the site run on your system fonts.</li>
+          <li><strong>Google Fonts.</strong> The page loads Rajdhani from Google’s font servers. Google may process your IP address under Google’s policies. Blocking that request still lets the site run on your system fonts.</li>
         </ul>
       </article>
 
@@ -252,7 +252,7 @@ export function privacyView() {
               <tr><td>Cloudflare R2</td><td>Store and serve listing images</td><td>The image files you upload, and ordinary request logs when a visitor loads those images</td></tr>
               <tr><td>Discord</td><td>Sign-in and invite checks</td><td>That you authorized this app; Discord already has your Discord account. Invite lookups send the invite code</td></tr>
               <tr><td>Jina AI reader (<code>r.jina.ai</code>)</td><td>Read a public About Me page when Cloudflare blocks our server</td><td>The public forum profile URL you submitted, at the moment you click to check</td></tr>
-              <tr><td>Google Fonts</td><td>Load IBM Plex</td><td>Your IP and browser when the font CSS and files load</td></tr>
+              <tr><td>Google Fonts</td><td>Load Rajdhani</td><td>Your IP and browser when the font CSS and files load</td></tr>
               <tr><td>YouTube (Google)</td><td>Play a video a listing embeds</td><td>Your IP and browser when the player loads on a listing page. We embed through <code>youtube-nocookie.com</code>, so YouTube does not set its usual tracking cookies unless you press play</td></tr>
               <tr><td>Warframe Forums / Digital Extremes</td><td>You publish the code on About Me; we only read that public tab</td><td>Whatever you put on your forum profile</td></tr>
               <tr><td>Other visitors</td><td>The board is public</td><td>Listing content and uploads</td></tr>

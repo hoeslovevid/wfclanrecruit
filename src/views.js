@@ -1,3 +1,4 @@
+import { masteryDisplay, masteryLabel } from "./mastery.js";
 import { filtersToSearch } from "./browse.js";
 import {
   CONTACT_LABELS,
@@ -562,7 +563,7 @@ export function clanCard(clan) {
         </div>
         <div>
           <span>MR</span>
-          <strong>${clan.mrRequired === 0 ? "Any" : `${clan.mrRequired}+`}</strong>
+          <strong>${masteryDisplay(clan.mrRequired)}</strong>
         </div>
         <div>
           <span>${postedStat(clan).label}</span>
@@ -705,7 +706,7 @@ export function browseView(clans, filters, pager, roleOptions = []) {
   const label = total === 1 ? "1 clan" : `${total} clans`;
   return `
     <section class="page-hero">
-      <div class="directory-topline"><p class="eyebrow">CLAN DIRECTORY</p><a class="text-link" href="/post" data-link>Advertise a clan ↗</a></div>
+      <div class="directory-topline"><p class="eyebrow">Clan directory</p><a class="text-link" href="/post" data-link>Advertise a clan ↗</a></div>
       <h1>Find a clan to call home.</h1>
       <p class="lead">Find the right people for the way you play. Explore recruitment posts and connect with a clan.</p>
     </section>
@@ -737,7 +738,7 @@ export function browseView(clans, filters, pager, roleOptions = []) {
           <label class="check" for="filter-online"><input id="filter-online" type="checkbox" name="online" value="1" ${
             filters.online ? "checked" : ""
           } /><span>Online now</span></label>
-          <label class="field"><span>Your MR <em id="mr-readout">${filters.mr || 0}</em></span><input type="range" name="mr" min="0" max="36" value="${escapeHtml(filters.mr || "0")}" /></label>
+          <label class="field"><span>Your MR <em id="mr-readout">${masteryDisplay(filters.mr || 0, false)}</em></span><input type="range" name="mr" min="0" max="36" value="${escapeHtml(filters.mr || "0")}" /></label>
         </form>
       </aside>
       <div class="browse-main">
@@ -764,7 +765,7 @@ export function alliancesView(alliances, filters, pager) {
   const label = total === 1 ? "1 alliance" : `${total} alliances`;
   return `
     <section class="page-hero">
-      <div class="directory-topline"><p class="eyebrow">ALLIANCE DIRECTORY</p><a class="text-link" href="/post-alliance" data-link>Advertise an alliance ↗</a></div>
+      <div class="directory-topline"><p class="eyebrow">Alliance directory</p><a class="text-link" href="/post-alliance" data-link>Advertise an alliance ↗</a></div>
       <h1>Find an alliance for your clan.</h1>
       <p class="lead">Browse alliances, meet other clan leaders, and find people your clan will enjoy playing with.</p>
     </section>
@@ -826,7 +827,7 @@ function appliedFilters(filters, path) {
   const entries = Object.entries(labels).filter(([key]) => filters[key]).map(([key, label]) => ({ label: `${label}: ${filters[key]}`, next: { ...filters, [key]: "" } }));
   for (const style of filters.playstyles || []) entries.push({ label: style, next: { ...filters, playstyles: filters.playstyles.filter(value => value !== style) } });
   if (filters.online) entries.push({ label: "Online now", next: { ...filters, online: false } });
-  if (Number(filters.mr) > 0) entries.push({ label: `Your MR: ${filters.mr}`, next: { ...filters, mr: "0" } });
+  if (Number(filters.mr) > 0) entries.push({ label: `Your MR: ${masteryLabel(filters.mr)}`, next: { ...filters, mr: "0" } });
   if (!entries.length) return "";
   return `<nav class="applied-filters" aria-label="Applied filters">${entries.map(({label, next}) => `<a class="chip" href="${escapeHtml(path + filtersToSearch(next))}" data-link aria-label="${escapeHtml(`Remove ${label}`)}">${escapeHtml(label)} <span aria-hidden="true">×</span></a>`).join("")}</nav>`;
 }
@@ -1349,7 +1350,7 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
             <label class="field"><span>Language</span><select name="language" required>${optionList(LANGUAGES, draft.language)}</select></label>
             <label class="field"><span>Status</span><select name="status" required>${optionList(STATUSES, draft.status)}</select></label>
             <label class="field"><span>Members</span><input name="members" type="number" min="1" max="1000" required value="${escapeHtml(draft.members || "")}" /></label>
-            <label class="field"><span>Minimum MR <em id="post-mr">${draft.mrRequired ?? 0}</em></span><input type="range" name="mrRequired" min="0" max="36" value="${escapeHtml(draft.mrRequired ?? 0)}" /></label>
+            <label class="field"><span>Minimum MR <em id="post-mr">${masteryDisplay(draft.mrRequired ?? 0, false)}</em></span><input type="range" name="mrRequired" min="0" max="36" value="${escapeHtml(draft.mrRequired ?? 0)}" /></label>
             <label class="field"><span>Inactivity kick <small class="field-optional">days, 0 for none</small></span><input name="inactiveDays" type="number" min="0" max="365" value="${escapeHtml(draft.inactiveDays ?? 0)}" /></label>
             <label class="field"><span>How recruits reach you</span><select name="contact" data-contact>${CONTACT_MODES.map(
               (mode) =>
@@ -1891,7 +1892,7 @@ export function clanPage(clan, { admin = false } = {}) {
         <div><dt>Platform</dt><dd>${escapeHtml(clan.platform)}</dd></div>
         <div><dt>Tier</dt><dd>${escapeHtml(clan.tier)}</dd></div>
         <div><dt>Roster</dt><dd>${clan.members} / ${capacity(clan)}</dd></div>
-        <div><dt>MR</dt><dd>${clan.mrRequired === 0 ? "Any" : `${clan.mrRequired}+`}</dd></div>
+        <div><dt>MR</dt><dd>${masteryDisplay(clan.mrRequired)}</dd></div>
         <div><dt>Inactivity kick</dt><dd>${
           clan.inactiveDays ? `${clan.inactiveDays} days` : "None"
         }</dd></div>
