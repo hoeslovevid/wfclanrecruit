@@ -15,6 +15,7 @@ import {
   guideView,
   homeView,
   navAccount,
+  listingSections,
   postBodyHtml,
   postView,
   previewAlliance,
@@ -831,6 +832,23 @@ function bindRichText(form, onChange) {
   form.querySelectorAll("[data-rich-field]").forEach((field) => bindRichTextField(field, onChange));
 }
 
+// The preview is the published page in miniature, so it renders through the
+// same listingSections() the listing page uses. Anything that only lived here
+// would drift from what actually gets published - which is exactly what the
+// three boxes did while the preview showed the post body and nothing else.
+function previewHtml(cardHtml, form, media) {
+  const sections = listingSections({
+    offering: form.elements.offering?.value,
+    requirements: form.elements.requirements?.value,
+    howToJoin: form.elements.howToJoin?.value,
+  });
+  return `${cardHtml}<div class="preview-about"><p class="kicker">Post body</p>${postBodyHtml(
+    form.about.value,
+    media.entries,
+    { placeholder: true }
+  )}${sections}</div>`;
+}
+
 function bindListingComposer(form, { imageUrl = null, onChange }) {
   const media = { image: imageUrl, entries: [] };
   const refresh = () => onChange(media);
@@ -1081,7 +1099,7 @@ async function render() {
       onChange: (media) => {
         if (mr) mr.textContent = form.mrRequired.value;
         if (form.tag) form.tag.value = form.tag.value.toUpperCase();
-        preview.innerHTML = `${clanCard(previewClan(form, media.image, media.entries))}<div class="preview-about"><p class="kicker">Post body</p>${postBodyHtml(form.about.value, media.entries, { placeholder: true })}</div>`;
+        preview.innerHTML = previewHtml(clanCard(previewClan(form, media.image, media.entries)), form, media);
       },
     });
     form.addEventListener("submit", async (event) => {
@@ -1138,7 +1156,7 @@ async function render() {
       imageUrl: draft?.image || null,
       onChange: (media) => {
         if (form.tag) form.tag.value = form.tag.value.toUpperCase();
-        preview.innerHTML = `${allianceCard(previewAlliance(form, media.image, media.entries))}<div class="preview-about"><p class="kicker">Post body</p>${postBodyHtml(form.about.value, media.entries, { placeholder: true })}</div>`;
+        preview.innerHTML = previewHtml(allianceCard(previewAlliance(form, media.image, media.entries)), form, media);
       },
     });
     form.addEventListener("submit", async (event) => {

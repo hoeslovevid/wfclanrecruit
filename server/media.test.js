@@ -4,6 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  ALLOW_PASTED_IMAGES,
   MEDIA_MAX,
   VIDEO_MAX,
   isUploadedImage,
@@ -16,28 +17,34 @@ import {
 
 const ID = "dQw4w9WgXcQ";
 const ID2 = "abcdefghijk";
-const IMG = "https://i.imgur.com/abc123.png";
+const IMG = "/uploads/1712-gallery.webp";
 
-test("an allowlisted image link is kept", () => {
+// Images are uploaded, not linked, so every image on the board is one we
+// resized and can moderate. The allowlist is kept behind the flag for the day
+// that changes.
+test("pasting is off, so images only ever come from our own uploads", () => {
+  assert.equal(ALLOW_PASTED_IMAGES, false, "flip this on deliberately, not by accident");
   assert.equal(parseImageUrl(IMG).url, IMG);
-  assert.equal(parseImageUrl("i.redd.it/foo.jpg").url, "https://i.redd.it/foo.jpg");
+  assert.match(parseImageUrl("https://i.imgur.com/abc123.png").error, /Upload an image/);
+  assert.match(parseImageUrl("i.redd.it/foo.jpg").error, /Upload an image/);
 });
 
 // A clan leader's first instinct is to paste a Discord link, and those expire.
-test("Discord links are refused by name, not silently dropped", () => {
+// Worth its own message even with pasting off: it is the link a clan leader
+// reaches for first, and knowing why saves a support round trip.
+test("Discord links keep their own explanation", () => {
   const result = parseImageUrl("https://cdn.discordapp.com/attachments/1/2/clan.png?ex=abc");
   assert.match(result.error, /Discord/);
   assert.match(result.error, /expire/);
   assert.equal(result.url, undefined);
 });
 
-test("an unlisted host is refused and named", () => {
-  const result = parseImageUrl("https://example.com/clan.png");
-  assert.match(result.error, /example\.com/);
-});
-
-test("a link that is not an image is refused", () => {
-  assert.match(parseImageUrl("https://i.imgur.com/gallery/abc").error, /image file/);
+test("any pasted link is refused, and says to upload instead", () => {
+  for (const url of ["https://example.com/clan.png", "https://i.imgur.com/gallery/abc", "not a url"]) {
+    const result = parseImageUrl(url);
+    assert.equal(result.url, undefined, url);
+    assert.match(result.error, /Upload an image/, url);
+  }
 });
 
 test("hostile schemes never survive", () => {
@@ -49,7 +56,7 @@ test("hostile schemes never survive", () => {
 test("our own uploads are trusted without the allowlist", () => {
   assert.equal(parseImageUrl("/uploads/1712-abc.webp").url, "/uploads/1712-abc.webp");
   assert.equal(isUploadedImage("/uploads/x.webp"), true);
-  assert.equal(isUploadedImage(IMG), false);
+  assert.equal(isUploadedImage("https://i.imgur.com/abc123.png"), false);
 });
 
 test("normalizeMedia keeps the leader's order and drops duplicates", () => {
@@ -69,7 +76,7 @@ test("bad entries fall out without taking the good ones with them", () => {
   const media = normalizeMedia([
     { kind: "image", url: "https://cdn.discordapp.com/a/b.png" },
     { kind: "video", id: ID },
-    { kind: "audio", url: "https://i.imgur.com/x.png" },
+    { kind: "audio", url: "/uploads/x.webp" },
     null,
   ]);
   assert.deepEqual(media, [{ kind: "video", id: ID }]);
@@ -78,7 +85,7 @@ test("bad entries fall out without taking the good ones with them", () => {
 test("the strip and the video count are both capped", () => {
   const many = Array.from({ length: MEDIA_MAX + 5 }, (_, i) => ({
     kind: "image",
-    url: `https://i.imgur.com/img${i}.png`,
+    url: `/uploads/img${i}.webp`,
   }));
   assert.equal(normalizeMedia(many).length, MEDIA_MAX);
 
@@ -107,7 +114,6 @@ test("media wins over the legacy fields once it exists", () => {
 test("uploadedUrls finds only our own files, for reclaiming the volume", () => {
   const media = [
     { kind: "image", url: "/uploads/a.webp" },
-    { kind: "image", url: IMG },
     { kind: "video", id: ID },
   ];
   assert.deepEqual(uploadedUrls(media), ["/uploads/a.webp"]);
