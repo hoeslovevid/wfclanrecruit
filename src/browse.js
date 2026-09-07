@@ -1,4 +1,5 @@
 import { PLAYSTYLES, TIER_CAPS, normalizePlaystyle } from "./data.js";
+import { hasOpenRole } from "./roles.js";
 
 export const PAGE_SIZE = 12;
 
@@ -45,6 +46,7 @@ export function defaultFilters() {
     platform: "",
     tier: "",
     playstyles: [],
+    role: "",
     region: "",
     language: "",
     status: "",
@@ -62,6 +64,7 @@ export function filtersFromSearch(search) {
   filters.platform = String(params.get("platform") || "");
   filters.tier = String(params.get("tier") || "");
   filters.playstyles = parsePlaystyles(params.getAll("playstyle"));
+  filters.role = String(params.get("role") || "").trim();
   filters.region = String(params.get("region") || "");
   filters.language = String(params.get("language") || "");
   filters.status = String(params.get("status") || "");
@@ -78,6 +81,7 @@ export function filtersToSearch(filters, page = 1) {
   if (filters.platform) params.set("platform", filters.platform);
   if (filters.tier) params.set("tier", filters.tier);
   for (const playstyle of filters.playstyles || []) params.append("playstyle", playstyle);
+  if (filters.role) params.set("role", filters.role);
   if (filters.region) params.set("region", filters.region);
   if (filters.language) params.set("language", filters.language);
   if (filters.status) params.set("status", filters.status);
@@ -102,13 +106,24 @@ export function applyClanFilters(clans, filters) {
   const playstyles = selectedPlaystyles(filters);
   let list = (clans || []).filter((clan) => {
     if (clan.hidden) return false;
-    const hay = [clan.name, clan.tag, clan.headline, clan.summary, (clan.playstyles || []).join(" "), clan.allianceName || ""]
+    const hay = [
+      clan.name,
+      clan.tag,
+      clan.headline,
+      clan.summary,
+      (clan.playstyles || []).join(" "),
+      // A clan advertising for an architect should be findable by typing it.
+      (clan.roles || []).map((role) => role.name).join(" "),
+      clan.allianceName || "",
+    ]
       .join(" ")
       .toLowerCase();
     if (q && !hay.includes(q)) return false;
     if (filters.platform && !platformMatches(clan.platform, filters.platform)) return false;
     if (filters.tier && clan.tier !== filters.tier) return false;
     if (playstyles.length && !playstyles.every((item) => (clan.playstyles || []).includes(item))) return false;
+    // Closed roles do not count: the filter is for seats you could take.
+    if (filters.role && !hasOpenRole(clan, filters.role)) return false;
     if (filters.region && clan.region !== filters.region) return false;
     if (filters.language && clan.language !== filters.language) return false;
     if (filters.status && clan.status !== filters.status) return false;

@@ -12,6 +12,7 @@ import { initStorage, paths, postgresEnabled, readDb, storageLabel, writeDb, clo
 import { rateLimit } from "./ratelimit.js";
 import { dropLegacyVideos } from "../src/video.js";
 import { MEDIA_MAX, mediaList, normalizeMedia, setUploadPublicBase, uploadedUrls, videoIdsOf } from "../src/media.js";
+import { normalizeRoles } from "../src/roles.js";
 import { resizeListingImage } from "./image.js";
 import { deleteR2Object, putR2Object, r2Enabled, r2PartialEnv, r2PublicUrl, readLocalFile } from "./r2.js";
 import {
@@ -532,6 +533,20 @@ function parseListingSections(body) {
   return { sections: out };
 }
 
+// The composer sends the roles as one JSON array. Nothing here can fail the
+// save - a role with no name is not a role and simply drops out - so this
+// returns the list rather than an error.
+function parseListingRoles(body) {
+  let rows = [];
+  try {
+    const parsed = typeof body.roles === "string" ? JSON.parse(body.roles) : body.roles;
+    if (Array.isArray(parsed)) rows = parsed;
+  } catch {
+    return { error: "Could not read the roles list." };
+  }
+  return { roles: normalizeRoles(rows) };
+}
+
 // Every listing has to leave a recruit somewhere to go. Discord used to be the
 // only route and so was mandatory; now that it is optional, this is what stops
 // a post going live with no way to reach anyone at all.
@@ -588,6 +603,8 @@ function parseClanBody(body, user, req) {
   const parsedSections = parseListingSections(body);
   if (parsedSections.error) return { error: parsedSections.error };
   const sections = parsedSections.sections;
+  const parsedRoles = parseListingRoles(body);
+  if (parsedRoles.error) return { error: parsedRoles.error };
 
   return {
     fields: {
@@ -622,6 +639,7 @@ function parseClanBody(body, user, req) {
       offering: sections.offering,
       requirements: sections.requirements,
       howToJoin: sections.howToJoin,
+      roles: parsedRoles.roles,
     },
   };
 }
@@ -662,6 +680,8 @@ function parseAllianceBody(body, user, req) {
   const parsedSections = parseListingSections(body);
   if (parsedSections.error) return { error: parsedSections.error };
   const sections = parsedSections.sections;
+  const parsedRoles = parseListingRoles(body);
+  if (parsedRoles.error) return { error: parsedRoles.error };
 
   return {
     fields: {
@@ -688,6 +708,7 @@ function parseAllianceBody(body, user, req) {
       offering: sections.offering,
       requirements: sections.requirements,
       howToJoin: sections.howToJoin,
+      roles: parsedRoles.roles,
     },
   };
 }
@@ -1286,6 +1307,12 @@ const HEAVY_FIELDS = ["about", "offering", "requirements", "howToJoin", "video",
 function trimListing(item) {
   const out = { ...item };
   for (const field of HEAVY_FIELDS) delete out[field];
+  // The browse filter matches role names and the card counts them, so roles
+  // stay - stripped to what those two need. The descriptions are post-length
+  // prose and belong on the detail route with the rest of the body.
+  if (Array.isArray(out.roles)) {
+    out.roles = out.roles.map(({ name, status, count }) => ({ name, status, count }));
+  }
   if (out.memberClans) out.memberClans = out.memberClans.map(trimListing);
   return out;
 }
