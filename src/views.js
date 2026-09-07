@@ -363,10 +363,13 @@ function whisperCardButton(clan) {
   return `<button class="btn btn-ghost btn-small" type="button" title="Copy the /w message for this clan's leader" data-copy-listing="${escapeHtml(clan.id)}" data-copy-text="${escapeHtml(message)}">Whisper</button>`;
 }
 
+// "Offline" rather than "Invisible": it is the default now, and a default
+// should read as a plain state rather than as something you switched on. The
+// stored value stays `invisible`, so nothing has to migrate.
 const PRESENCE_LABELS = {
   online: "Online",
   ingame: "Online in game",
-  invisible: "Invisible",
+  invisible: "Offline",
 };
 
 // Self-declared, like warframe.market's: Warframe has no public presence API,
@@ -391,9 +394,19 @@ export function presenceSummary(status) {
   )}</span>`;
 }
 
+function keepLabel(minutes) {
+  if (minutes === 0) return "While tab is open";
+  return minutes < 60 ? `${minutes}m` : `${minutes / 60}h`;
+}
+
+// A held status survives a reload - the deadline is on the user record - but
+// the menu used to redraw with nothing selected, so it always claimed "while
+// tab is open" and the hold looked broken. Render what is actually stored, and
+// say when it runs out.
 export function presenceControl(user) {
   const presence = user.presence || {};
-  const current = presence.status || "online";
+  const current = PRESENCE_LABELS[presence.status] ? presence.status : "invisible";
+  const heldFor = Number(presence.keepMinutes || 0);
   const options = Object.entries(PRESENCE_LABELS)
     .map(
       ([value, label]) =>
@@ -403,9 +416,12 @@ export function presenceControl(user) {
   const keeps = (user.keepMinutes || [0, 30, 60, 120, 240])
     .map(
       (minutes) =>
-        `<option value="${minutes}">${minutes === 0 ? "While tab is open" : `${minutes < 60 ? `${minutes}m` : `${minutes / 60}h`}`}</option>`
+        `<option value="${minutes}" ${minutes === heldFor ? "selected" : ""}>${escapeHtml(
+          keepLabel(minutes)
+        )}</option>`
     )
     .join("");
+  const note = presence.until && heldFor ? heldUntilNote(presence.until) : "";
   return `
     <details class="presence-menu">
       <summary title="Your status">${presenceSummary(current)}</summary>
@@ -413,10 +429,16 @@ export function presenceControl(user) {
         <p class="kicker">Select your status</p>
         <label class="field"><span class="sr-only">Status</span><select data-presence-status>${options}</select></label>
         <label class="field"><span>And keep status for</span><select data-presence-keep>${keeps}</select></label>
-        <p class="muted presence-note" data-presence-note hidden></p>
+        <p class="muted presence-note" data-presence-note ${note ? "" : "hidden"}>${escapeHtml(note)}</p>
       </div>
     </details>
   `;
+}
+
+export function heldUntilNote(until) {
+  const at = new Date(until).getTime();
+  if (!Number.isFinite(at) || at <= Date.now()) return "";
+  return `Held until ${new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`;
 }
 
 function reportForm(kind, id) {
@@ -641,6 +663,21 @@ function optionList(values, selected = "") {
     .join("");
 }
 
+// A collapsed panel must not hide the fact that it is doing something, so the
+// toggle carries how many filters are actually narrowing the board. `sort` and
+// the recruiting default are excluded - they are always set.
+function activeFilterCount(filters = {}) {
+  let count = 0;
+  if (String(filters.q || "").trim()) count += 1;
+  for (const key of ["platform", "tier", "region", "language", "status"]) {
+    if (filters[key]) count += 1;
+  }
+  count += (filters.playstyles || []).length;
+  if (filters.online) count += 1;
+  if (Number(filters.mr || 0) > 0) count += 1;
+  return count;
+}
+
 export function browseView(clans, filters, pager) {
   const total = pager?.total ?? clans.length;
   const label = total === 1 ? "1 clan" : `${total} clans`;
@@ -651,7 +688,11 @@ export function browseView(clans, filters, pager) {
       <p class="lead">Every listing is written by a clan leader. Filter it down, then join the Discord.</p>
     </section>
     <section class="browse">
-      <aside class="filters">
+      <aside class="filters is-collapsed" data-filters>
+        <button class="filters-toggle" type="button" data-filters-toggle aria-expanded="false">
+          <span>Filters${activeFilterCount(filters) ? ` <em>${activeFilterCount(filters)}</em>` : ""}</span>
+          <span class="filters-caret" aria-hidden="true">▾</span>
+        </button>
         <div class="row-between">
           <h2>Filters</h2>
           <button class="text-link" type="button" data-clear-filters>Reset</button>
@@ -704,7 +745,11 @@ export function alliancesView(alliances, filters, pager) {
       <p class="lead">Alliances group multiple clans. Join the shared Discord if you want a wider roster.</p>
     </section>
     <section class="browse">
-      <aside class="filters">
+      <aside class="filters is-collapsed" data-filters>
+        <button class="filters-toggle" type="button" data-filters-toggle aria-expanded="false">
+          <span>Filters${activeFilterCount(filters) ? ` <em>${activeFilterCount(filters)}</em>` : ""}</span>
+          <span class="filters-caret" aria-hidden="true">▾</span>
+        </button>
         <div class="row-between">
           <h2>Filters</h2>
           <button class="text-link" type="button" data-clear-filters>Reset</button>
