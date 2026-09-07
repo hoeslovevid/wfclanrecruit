@@ -15,7 +15,11 @@
 // deadline is on the persisted record.
 
 export const STATUSES = ["online", "ingame", "invisible"];
-export const DEFAULT_STATUS = "online";
+// Offline by default. Being signed in with a tab open is not a statement that
+// you are available to recruits - it just means the page is loaded. Broadcasting
+// presence is now something you turn on, so a dot on a listing means somebody
+// chose to say they were around.
+export const DEFAULT_STATUS = "invisible";
 
 export const HEARTBEAT_MS = 60 * 1000;
 // Two and a half missed heartbeats. Long enough to ride out a slow request or a
@@ -59,12 +63,23 @@ export function keepUntil(minutes, now = Date.now()) {
   return new Date(now + value * 60 * 1000).toISOString();
 }
 
+// The deadline alone cannot tell the picker what the user chose - 30 minutes
+// with 12 left looks the same as 15 with 12 left - so the choice is stored
+// beside it and read back when the menu renders.
+export function keepMinutesOf(user, now = Date.now()) {
+  const until = user?.presenceUntil ? new Date(user.presenceUntil).getTime() : 0;
+  if (!Number.isFinite(until) || until <= now) return 0;
+  const value = Number(user?.presenceKeep);
+  return KEEP_MINUTES.includes(value) ? value : 0;
+}
+
 // Someone counts as online while their tab is pinging, or until a timed status
 // they set runs out - whichever lasts longer. Invisible always wins.
 export function presenceOf(user, now = Date.now()) {
   if (!user) return { status: "invisible", online: false, until: null };
   const status = normalizeStatus(user.presenceStatus);
   const until = user.presenceUntil || null;
+
   if (status === "invisible") return { status, online: false, until };
   const deadline = until ? new Date(until).getTime() : 0;
   const held = Number.isFinite(deadline) && now < deadline;

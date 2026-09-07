@@ -20,6 +20,7 @@ import {
   postView,
   previewAlliance,
   previewClan,
+  heldUntilNote,
   presenceSummary,
   readLinkRows,
   rosterPanel,
@@ -173,6 +174,11 @@ function paintPresence(presence) {
     if (summary) summary.innerHTML = presenceSummary(presence.status);
     const select = menu.querySelector("[data-presence-status]");
     if (select) select.value = presence.status;
+    // The hold is part of the state, not just a one-off action: repaint it too,
+    // or the menu goes back to claiming "while tab is open" the moment it is
+    // redrawn.
+    const keep = menu.querySelector("[data-presence-keep]");
+    if (keep) keep.value = String(presence.keepMinutes ?? 0);
   });
 }
 
@@ -186,13 +192,7 @@ document.addEventListener("change", async (event) => {
     const { presence } = await api.setPresence(status, keep);
     if (state.user) state.user.presence = presence;
     paintPresence(presence);
-    showNote(
-      note,
-      presence.until
-        ? `Held until ${new Date(presence.until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
-        : "",
-      "muted"
-    );
+    showNote(note, presence.until ? heldUntilNote(presence.until) : "", "muted");
   } catch (error) {
     showNote(note, error.message);
   }
@@ -213,6 +213,19 @@ function readFilters(form) {
     mr: String(data.get("mr") || "0"),
     sort: String(data.get("sort") || "newest"),
   };
+}
+
+// On a phone the filter panel is taller than the screen, so the board opens
+// behind a wall of controls. Collapsed by default there, and left alone on
+// desktop where the sidebar has its own column.
+function bindFiltersToggle() {
+  const panel = app.querySelector("[data-filters]");
+  const toggle = panel?.querySelector("[data-filters-toggle]");
+  if (!panel || !toggle) return;
+  toggle.addEventListener("click", () => {
+    const open = panel.classList.toggle("is-collapsed") === false;
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  });
 }
 
 function bindCards(root = app) {
@@ -994,6 +1007,7 @@ async function render() {
     });
     app.querySelector(".browse")?.addEventListener("input", () => paint(1));
     app.querySelector(".browse")?.addEventListener("change", () => paint(1));
+    bindFiltersToggle();
     app.querySelector("[data-clear-filters]")?.addEventListener("click", () => {
       const fresh = defaultFilters();
       form.reset();
@@ -1043,6 +1057,7 @@ async function render() {
     });
     app.querySelector(".browse")?.addEventListener("input", () => paint(1));
     app.querySelector(".browse")?.addEventListener("change", () => paint(1));
+    bindFiltersToggle();
     app.querySelector("[data-clear-filters]")?.addEventListener("click", () => {
       form.reset();
       form.querySelector("[name='recruiting']").checked = true;

@@ -19,6 +19,7 @@ import {
   KEEP_MINUTES,
   STATUSES,
   forget as forgetPresence,
+  keepMinutesOf,
   keepUntil,
   listingPresence,
   normalizeStatus,
@@ -840,7 +841,7 @@ app.get("/api/auth/me", (req, res) => {
     user: account
       ? {
           ...account,
-          presence: presenceOf(user),
+          presence: { ...presenceOf(user), keepMinutes: keepMinutesOf(user) },
           keepMinutes: KEEP_MINUTES,
           invites: pendingInvitesFor(readDb(), user.id),
           recruitingOn: recruitingOn(readDb(), user.id),
@@ -874,7 +875,10 @@ const presenceLimiter = rateLimit({
 
 app.post("/api/presence/heartbeat", requireUser, presenceLimiter, (req, res) => {
   touchPresence(req.user.id);
-  res.json({ presence: presenceOf(req.user), heartbeatMs: HEARTBEAT_MS });
+  res.json({
+    presence: { ...presenceOf(req.user), keepMinutes: keepMinutesOf(req.user) },
+    heartbeatMs: HEARTBEAT_MS,
+  });
 });
 
 app.post("/api/presence", requireUser, presenceLimiter, async (req, res) => {
@@ -894,6 +898,7 @@ app.post("/api/presence", requireUser, presenceLimiter, async (req, res) => {
     if (user) {
       user.presenceStatus = status;
       user.presenceUntil = until;
+      user.presenceKeep = until ? minutes : 0;
     }
     return db;
   });
@@ -901,7 +906,7 @@ app.post("/api/presence", requireUser, presenceLimiter, async (req, res) => {
   // heartbeat window.
   if (status === "invisible") forgetPresence(req.user.id);
   else touchPresence(req.user.id);
-  res.json({ presence: { status, online: status !== "invisible", until } });
+  res.json({ presence: { status, online: status !== "invisible", until, keepMinutes: minutes } });
 });
 
 app.get("/api/auth/discord", discordStartLimiter, (req, res) => {

@@ -1534,14 +1534,63 @@ code {
   .filters, .preview-panel { position: static; }
 }
 
+/* Desktop keeps the filter sidebar open in its own column; the toggle is a
+   phone control only. */
+.filters-toggle { display: none; }
+
 @media (max-width: 820px) {
   .nav-links { display: none; }
   .nav-toggle { display: block; }
-  .hero-stats, .grid, .grid.three, .detail-stats { grid-template-columns: 1fr; }
+  /* The drawer already carries the theme switch and the account buttons. Left
+     in the bar as well, "Create account with Discord" wrapped to four lines,
+     covered the brand and pushed the menu button off the screen entirely. */
+  .nav-actions > .theme-switch,
+  .nav-actions > .account-slot { display: none; }
+  .nav { padding: 0 16px; gap: 12px; }
+  .brand { min-width: 0; }
+  .brand-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Eight stats one per row is most of a screen of scrolling to read six
+     words each. Two up is still legible at 360px. */
+  .detail-stats { grid-template-columns: 1fr 1fr; }
+  .hero-stats, .grid, .grid.three { grid-template-columns: 1fr; }
   .search { flex-direction: column; }
-  .nav { padding: 0 16px; }
   .list-row { grid-template-columns: auto 1fr; }
   .list-actions { grid-column: 1 / -1; justify-content: flex-start; }
+
+  .filters { padding: 0; background: transparent; border: 0; }
+  .filters-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-weight: 600;
+  }
+  .filters-toggle em {
+    display: inline-grid;
+    place-items: center;
+    min-width: 20px;
+    height: 20px;
+    margin-left: 6px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--btn-primary-fg);
+    font-style: normal;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .filters-caret { transition: transform 0.15s ease; color: var(--muted); }
+  .filters.is-collapsed .filters-caret { transform: rotate(-90deg); }
+  .filters.is-collapsed > .row-between,
+  .filters.is-collapsed > #filter-form { display: none; }
+  .filters > .row-between { margin-top: 14px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
