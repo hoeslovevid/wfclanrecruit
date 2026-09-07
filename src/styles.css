@@ -656,6 +656,19 @@ h2 { font-size: clamp(26px, 3vw, 36px); }
 
 .stats { display: grid; grid-template-columns: 1.3fr 0.7fr 0.9fr; gap: 10px; }
 .stats span, .field span { color: var(--muted); font-size: 12px; }
+/* In the composer a field heading one control reads the same as a legend
+   heading a group - 12px muted beside 16.5px full contrast was two label
+   voices on one form. Scoped here because `.field` is also the filter sidebar,
+   the auth forms and the status menu, where compact labels are right. */
+.composer .field > span {
+  color: var(--text);
+  font-size: 16.5px;
+}
+.composer .field > span small,
+.composer .field > span em {
+  font-size: 12px;
+  font-weight: 400;
+}
 .stats strong { display: block; font-size: 18px; }
 .stats small { color: var(--muted); font-weight: 500; }
 .meter {
