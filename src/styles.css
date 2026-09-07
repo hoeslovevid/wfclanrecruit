@@ -286,6 +286,8 @@ button { cursor: pointer; }
   white-space: nowrap;
 }
 
+.brand-short { display: none; }
+
 .brand-logo {
   width: 40px;
   height: 40px;
@@ -1549,6 +1551,11 @@ code {
   .nav { padding: 0 16px; gap: 12px; }
   .brand { min-width: 0; }
   .brand-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The full name is the first thing to lose a fight for the bar's width, and
+     losing it half-way ("WF Clan Recr…") reads worse than an initialism. The
+     link keeps its full accessible name either way. */
+  .brand-full { display: none; }
+  .brand-short { display: inline; }
   /* Eight stats one per row is most of a screen of scrolling to read six
      words each. Two up is still legible at 360px. */
   .detail-stats { grid-template-columns: 1fr 1fr; }
