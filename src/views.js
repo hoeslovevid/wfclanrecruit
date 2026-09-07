@@ -889,6 +889,7 @@ function rowList(kind, { rows, blank, addLabel, empty = "", extra = "", extraLab
 function mediaLinkRow(value = "") {
   return `
     <div class="row-item media-input" data-row data-media-row="link">
+      <span class="row-handle" data-row-handle role="button" tabindex="0" title="Drag to reorder, or use the arrow keys" aria-label="Reorder this item">⠿</span>
       <span class="media-badge" data-media-badge aria-hidden="true">🔗</span>
       <div class="media-thumb" data-media-thumb hidden><img alt="" referrerpolicy="no-referrer" data-media-thumb-img /></div>
       <input
@@ -912,6 +913,7 @@ function mediaLinkRow(value = "") {
 function mediaUploadRow(url = "") {
   return `
     <div class="row-item media-input" data-row data-media-row="upload" data-media-url-value="${escapeHtml(url)}">
+      <span class="row-handle" data-row-handle role="button" tabindex="0" title="Drag to reorder, or use the arrow keys" aria-label="Reorder this item">⠿</span>
       <span class="media-badge" data-media-badge aria-hidden="true">🖼</span>
       <div class="media-thumb" data-media-thumb ${url ? "" : "hidden"}>
         <img alt="" ${url ? `src="${escapeHtml(url)}"` : ""} data-media-thumb-img />
@@ -953,6 +955,7 @@ function videoPicker(draft = {}) {
 function linkRowField(link = {}) {
   return `
     <div class="row-item link-input" data-row>
+      <span class="row-handle" data-row-handle role="button" tabindex="0" title="Drag to reorder, or use the arrow keys" aria-label="Reorder this item">⠿</span>
       <select data-link-kind aria-label="Link type">
         ${LINK_KINDS.map(
           (kind) => `<option value="${escapeHtml(kind)}" ${kind === link.kind ? "selected" : ""}>${escapeHtml(kind)}</option>`

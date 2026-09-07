@@ -1718,11 +1718,26 @@ code {
   box-shadow: none;
 }
 .row-handle {
-  width: 20px;
+  flex: none;
+  width: 22px;
   text-align: center;
   color: var(--placeholder);
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1;
+  cursor: grab;
   user-select: none;
+  border-radius: 6px;
+}
+.row-handle:hover { color: var(--text); }
+.row-handle:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  color: var(--text);
+}
+.row-item[draggable="true"] .row-handle { cursor: grabbing; }
+.row-item.is-dragging {
+  opacity: 0.5;
+  border-color: var(--accent);
 }
 .row-remove {
   width: 28px;
@@ -1775,16 +1790,38 @@ code {
 }
 
 .link-input {
-  grid-template-columns: 130px minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
 }
+.link-input > select { flex: 0 0 130px; width: auto; }
+.link-input > input { flex: 1 1 0; width: auto; min-width: 0; }
 .link-input select {
   font-size: 13px;
   color: var(--muted);
 }
 
+/* Flex, not grid: a hidden thumbnail removes a grid item, which shifted every
+   later child a column left and left the remove button sitting mid-row on link
+   rows and hard right on upload rows. Here the button is pushed right by its
+   own margin, so it lands in the same place whatever else the row is showing. */
 .media-input {
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
 }
+/* `width: 100%` from the field rules would make these a full row on their own
+   and wrap the remove button onto a line of its own, so they flex from zero
+   instead and share the row. */
+.media-input > input[type="text"],
+.media-input .media-file,
+.media-input .media-name {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+}
+.media-input .row-remove,
+.link-input .row-remove { margin-left: auto; }
 .media-input input[type="text"] { font-family: inherit; }
 .media-input.has-error { border-color: var(--danger); }
 .media-badge {
@@ -1818,7 +1855,7 @@ code {
 }
 .media-file { min-width: 0; font-size: 13px; color: var(--muted); }
 .media-error {
-  grid-column: 1 / -1;
+  flex-basis: 100%;
   margin: 0 0 0 6px;
   color: var(--danger);
   font-size: 12px;
@@ -2040,7 +2077,8 @@ code {
 }
 
 @media (max-width: 720px) {
-  .link-input { grid-template-columns: 108px minmax(0, 1fr) auto; }
-  .media-input { grid-template-columns: auto minmax(0, 1fr) auto; }
+  /* Both rows are flex now, so they wrap on their own; the thumbnail is the
+     one thing worth dropping to keep a row on a single line. */
+  .link-input > select { flex: 0 0 108px; }
   .media-input .media-thumb { display: none; }
 }
