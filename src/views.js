@@ -1,3 +1,4 @@
+import { filtersToSearch } from "./browse.js";
 import {
   CONTACT_LABELS,
   CONTACT_MODES,
@@ -616,106 +617,38 @@ export function allianceCard(alliance) {
   `;
 }
 
-export function homeView({ clans, alliances, user, auth = {} }) {
-  const board = (clans || []).filter((item) => !item.hidden);
-  const boardAlliances = (alliances || []).filter((item) => !item.hidden);
-  const featuredClans = board.filter((item) => item.featured).slice(0, 3);
-  const featuredAlliances = boardAlliances.filter((item) => item.featured).slice(0, 2);
-  const homeAlliances = (featuredAlliances.length ? featuredAlliances : boardAlliances).slice(0, 2);
-  const recent = board.slice(0, 6);
-  const openCount = board.filter((item) => item.status === "Open").length;
-
+export function homeView({ clans, alliances }) {
+  const board = (clans || []).filter(item => !item.hidden);
+  const allianceBoard = (alliances || []).filter(item => !item.hidden);
+  const featured = board.filter(item => item.featured).slice(0, 3);
+  const recent = [...board].sort((a, b) => new Date(b.bumpedAt || b.createdAt) - new Date(a.bumpedAt || a.createdAt)).slice(0, 6);
+  const section = (label, title, href, cards) => cards.length ? `<section class="section community-section"><div class="section-head"><div><p class="eyebrow">${label}</p><h2>${title}</h2></div><a class="text-link" href="${href}" data-link>Explore all <span aria-hidden="true">↗</span></a></div><div class="grid">${cards.join("")}</div></section>` : "";
   return `
-    <section class="hero">
-      <h1>Find a clan.<br /><em>Or post yours.</em></h1>
-      <p class="lead">Browse open clans and alliances, read the post, then join their Discord. Leaders publish once — everyone sees the same board.</p>
+    <section class="hero recruitment-hero">
+      <div class="hero-copy">
+        <p class="eyebrow">WARFRAME COMMUNITY DIRECTORY</p>
+        <h1>Find clan members.<br /><em>Build your community.</em></h1>
+        <p class="lead">A dojo. A place to call home. An alliance to join. Discover the communities that make Warframe so great.</p>
+        <div class="hero-actions"><a class="btn btn-primary" href="/browse" data-link>Find a clan <span aria-hidden="true">↗</span></a><a class="btn btn-ghost" href="/alliances" data-link>Explore alliances</a></div>
+        <p class="hero-owner">Leading a community? <a href="/post" data-link>Advertise yours →</a></p>
+      </div>
+      <div class="hero-emblem" aria-hidden="true"><img src="/warframe.png" alt="" width="512" height="512" /></div>
+    </section>
+    <section class="discovery-bar" aria-label="Search communities">
       <form class="search" data-hero-search>
-        <label class="sr-only" for="hero-q">Search listings</label>
-        <input id="hero-q" name="q" type="search" placeholder="Search clans, tags, playstyles…" autocomplete="off" />
-        <button class="btn btn-primary" type="submit">Search</button>
+        <label class="sr-only" for="hero-kind">Community type</label><select id="hero-kind" name="kind"><option value="clans">Clans</option><option value="alliances">Alliances</option></select>
+        <label class="sr-only" for="hero-q">Search communities</label><input id="hero-q" name="q" type="search" placeholder="Search by name or keyword…" autocomplete="off" /><button class="btn btn-primary" type="submit">Search</button>
       </form>
-      <dl class="hero-stats">
-        <div><dt>Clan posts</dt><dd>${board.length}</dd></div>
-        <div><dt>Open now</dt><dd>${openCount}</dd></div>
-        <div><dt>Alliances</dt><dd>${boardAlliances.length}</dd></div>
-      </dl>
+      <p>Find people to play with.</p>
     </section>
-
-    ${
-      !board.length && !boardAlliances.length
-        ? `<section class="section">${emptyState()}</section>`
-        : ""
-    }
-
-    ${
-      featuredClans.length
-        ? `<section class="section">
-      <div class="section-head">
-        <div>
-          <p class="eyebrow">Featured clans</p>
-          <h2>Worth opening first</h2>
-        </div>
-        <a class="text-link" href="/browse" data-link>Browse all clans</a>
-      </div>
-      <div class="grid">${featuredClans.map((clan) => clanCard(clan)).join("")}</div>
-    </section>`
-        : ""
-    }
-
-    ${
-      homeAlliances.length
-        ? `<section class="section">
-      <div class="section-head">
-        <div>
-          <p class="eyebrow">Alliances</p>
-          <h2>If you want more than one clan</h2>
-        </div>
-        <a class="text-link" href="/alliances" data-link>Browse alliances</a>
-      </div>
-      <div class="grid two">${homeAlliances.map((item) => allianceCard(item)).join("")}</div>
-    </section>`
-        : ""
-    }
-
-    <section class="section split">
-      <div class="panel">
-        <p class="eyebrow">For players</p>
-        <h2>Filter, read, join Discord.</h2>
-        <ol>
-          <li>Filter by platform, MR, and how you play.</li>
-          <li>Open the Discord from the post.</li>
-          <li>Wait for the in-game invite.</li>
-        </ol>
-        <a class="btn btn-primary" href="/browse" data-link>Browse clans</a>
-      </div>
-      <div class="panel">
-        <p class="eyebrow">For leaders</p>
-        <h2>Post once. Keep it current.</h2>
-        <p class="muted">Create an account with one Discord click. That is your sign-in — no second Discord login. Then verify your Warframe Forum profile and publish.</p>
-        ${
-          user
-            ? `<a class="btn btn-ghost" href="/post" data-link>Post a listing</a>`
-            : auth.discord
-              ? discordCreateButton("/account")
-              : `<a class="btn btn-ghost" href="/register" data-link>Create an account</a>`
-        }
-      </div>
+    <section class="section discovery-paths" aria-label="Explore communities">
+      <a class="discovery-path discovery-path-clan" href="/browse" data-link><span class="eyebrow">FOR TENNO</span><span class="path-title">A clan to call home <span aria-hidden="true">↗</span></span><span class="muted">Find a squad that shares your playstyle, from your first mission to the Steel Path.</span><span class="path-foot">${board.length ? `${board.length} clan${board.length === 1 ? "" : "s"} to explore` : "Explore the clan directory"}</span></a>
+      <a class="discovery-path discovery-path-alliance" href="/alliances" data-link><span class="eyebrow">FOR CLAN LEADERS</span><span class="path-title">Stronger together <span aria-hidden="true">↗</span></span><span class="muted">Meet other clans, play together, and find an alliance your clan can be part of.</span><span class="path-foot">${allianceBoard.length ? `${allianceBoard.length} alliance${allianceBoard.length === 1 ? "" : "s"} to explore` : "Explore the alliance directory"}</span></a>
     </section>
-
-    ${
-      recent.length
-        ? `<section class="section">
-      <div class="section-head">
-        <div>
-          <p class="eyebrow">Latest</p>
-          <h2>New clan posts</h2>
-        </div>
-      </div>
-      <div class="grid">${recent.map((clan) => clanCard(clan)).join("")}</div>
-    </section>`
-        : ""
-    }
-  `;
+    ${section("IN THE SPOTLIGHT", "Meet the featured clans", "/browse", featured.map(clanCard))}
+    ${section("THE RECRUITMENT BOARD", "Discover your next clan", "/browse", recent.map(clanCard))}
+    ${section("CONNECTED COMMUNITIES", "Discover alliances", "/alliances", allianceBoard.slice(0, 3).map(allianceCard))}
+    <section class="section"><div class="advertise-panel"><div><p class="eyebrow">MAKE YOUR COMMUNITY KNOWN</p><h2>Looking for more members?</h2><p class="muted">Tell players about your clan or alliance. Show off your dojo, share what you like to play, and let them know how to join.</p></div><div class="advertise-actions"><a class="btn btn-primary" href="/post" data-link>Advertise a clan ↗</a><a class="btn btn-ghost" href="/post-alliance" data-link>Advertise an alliance ↗</a><a class="text-link" href="/guide" data-link>How it works</a></div></div></section>`;
 }
 
 function optionList(values, selected = "") {
@@ -730,7 +663,7 @@ function optionList(values, selected = "") {
 // A collapsed panel must not hide the fact that it is doing something, so the
 // toggle carries how many filters are actually narrowing the board. `sort` and
 // the recruiting default are excluded - they are always set.
-function activeFilterCount(filters = {}) {
+export function activeFilterCount(filters = {}) {
   let count = 0;
   if (String(filters.q || "").trim()) count += 1;
   for (const key of ["platform", "tier", "region", "language", "status"]) {
@@ -772,14 +705,14 @@ export function browseView(clans, filters, pager, roleOptions = []) {
   const label = total === 1 ? "1 clan" : `${total} clans`;
   return `
     <section class="page-hero">
-      <p class="eyebrow">Clans</p>
-      <h1>Browse recruitment posts</h1>
-      <p class="lead">Every listing is written by a clan leader. Filter it down, then join the Discord.</p>
+      <div class="directory-topline"><p class="eyebrow">CLAN DIRECTORY</p><a class="text-link" href="/post" data-link>Advertise a clan ↗</a></div>
+      <h1>Find a clan to call home.</h1>
+      <p class="lead">Find the right people for the way you play. Explore recruitment posts and connect with a clan.</p>
     </section>
     <section class="browse">
       <aside class="filters is-collapsed" data-filters>
         <button class="filters-toggle" type="button" data-filters-toggle aria-expanded="false">
-          <span>Filters${activeFilterCount(filters) ? ` <em>${activeFilterCount(filters)}</em>` : ""}</span>
+          <span>Filters <em data-filter-count ${activeFilterCount(filters) ? "" : "hidden"}>${activeFilterCount(filters)}</em></span>
           <span class="filters-caret" aria-hidden="true">▾</span>
         </button>
         <div class="row-between">
@@ -808,8 +741,9 @@ export function browseView(clans, filters, pager, roleOptions = []) {
         </form>
       </aside>
       <div class="browse-main">
+        <nav class="directory-tabs" aria-label="Community directories"><a href="/browse" data-link aria-current="page">Clans</a><a href="/alliances" data-link aria-current="false">Alliances</a></nav>
         <div class="row-between">
-          <p class="muted" id="result-count">${label}</p>
+          <p class="muted" id="result-count" role="status" aria-live="polite" aria-atomic="true">${label}</p>
           <label class="field inline"><span>Sort</span>
             <select name="sort" form="filter-form">
               <option value="newest" ${filters.sort === "newest" ? "selected" : ""}>Newest</option>
@@ -830,14 +764,14 @@ export function alliancesView(alliances, filters, pager) {
   const label = total === 1 ? "1 alliance" : `${total} alliances`;
   return `
     <section class="page-hero">
-      <p class="eyebrow">Alliances</p>
-      <h1>Browse alliance listings</h1>
-      <p class="lead">Alliances group multiple clans. Join the shared Discord if you want a wider roster.</p>
+      <div class="directory-topline"><p class="eyebrow">ALLIANCE DIRECTORY</p><a class="text-link" href="/post-alliance" data-link>Advertise an alliance ↗</a></div>
+      <h1>Find an alliance for your clan.</h1>
+      <p class="lead">Browse alliances, meet other clan leaders, and find people your clan will enjoy playing with.</p>
     </section>
     <section class="browse">
       <aside class="filters is-collapsed" data-filters>
         <button class="filters-toggle" type="button" data-filters-toggle aria-expanded="false">
-          <span>Filters${activeFilterCount(filters) ? ` <em>${activeFilterCount(filters)}</em>` : ""}</span>
+          <span>Filters <em data-filter-count ${activeFilterCount(filters) ? "" : "hidden"}>${activeFilterCount(filters)}</em></span>
           <span class="filters-caret" aria-hidden="true">▾</span>
         </button>
         <div class="row-between">
@@ -856,22 +790,23 @@ export function alliancesView(alliances, filters, pager) {
         </form>
       </aside>
       <div class="browse-main">
-        <p class="muted" id="result-count">${label}</p>
+        <nav class="directory-tabs" aria-label="Community directories"><a href="/browse" data-link aria-current="false">Clans</a><a href="/alliances" data-link aria-current="page">Alliances</a></nav>
+        <p class="muted" id="result-count" role="status" aria-live="polite" aria-atomic="true">${label}</p>
         <div id="results">${allianceResultsHtml(alliances, filters, pager)}</div>
       </div>
     </section>
   `;
 }
 
-export function emptyState(title = "Nothing to see here", detail = "Check back later, or post a listing.") {
+export function emptyState(title = "Your community could be next", detail = "Post your clan or alliance so other players can find you.") {
   return `<div class="empty"><h3>${escapeHtml(title)}</h3><p class="muted">${escapeHtml(detail)}</p></div>`;
 }
 
 function browseEmpty(kind, filters) {
   if (filters.recruiting) {
     return emptyState(
-      "Nothing to see here",
-      `No ${kind} recruiting right now. Uncheck Recruiting now to see paused or stale posts.`
+      "No communities match just yet",
+      `Try fewer filters or turn off Recruiting now to include paused ${kind}.`
     );
   }
   return emptyState();
@@ -886,16 +821,28 @@ function pagerBar(pager, noun) {
   </nav>`;
 }
 
+function appliedFilters(filters, path) {
+  const labels = { q: "Search", platform: "Platform", tier: "Tier", role: "Role", region: "Region", language: "Language", status: "Status" };
+  const entries = Object.entries(labels).filter(([key]) => filters[key]).map(([key, label]) => ({ label: `${label}: ${filters[key]}`, next: { ...filters, [key]: "" } }));
+  for (const style of filters.playstyles || []) entries.push({ label: style, next: { ...filters, playstyles: filters.playstyles.filter(value => value !== style) } });
+  if (filters.online) entries.push({ label: "Online now", next: { ...filters, online: false } });
+  if (Number(filters.mr) > 0) entries.push({ label: `Your MR: ${filters.mr}`, next: { ...filters, mr: "0" } });
+  if (!entries.length) return "";
+  return `<nav class="applied-filters" aria-label="Applied filters">${entries.map(({label, next}) => `<a class="chip" href="${escapeHtml(path + filtersToSearch(next))}" data-link aria-label="${escapeHtml(`Remove ${label}`)}">${escapeHtml(label)} <span aria-hidden="true">×</span></a>`).join("")}</nav>`;
+}
+
 export function clanResultsHtml(clans, filters, pager) {
   const total = pager?.total ?? clans.length;
-  if (!total) return browseEmpty("clans", filters);
-  return `<div class="grid">${clans.map((clan) => clanCard(clan)).join("")}</div>${pagerBar(pager, "Clan")}`;
+  const applied = appliedFilters(filters, "/browse");
+  if (!total) return applied + browseEmpty("clans", filters);
+  return `${applied}<div class="grid">${clans.map((clan) => clanCard(clan)).join("")}</div>${pagerBar(pager, "Clan")}`;
 }
 
 export function allianceResultsHtml(alliances, filters, pager) {
   const total = pager?.total ?? alliances.length;
-  if (!total) return browseEmpty("alliances", filters);
-  return `<div class="grid two">${alliances.map((item) => allianceCard(item)).join("")}</div>${pagerBar(pager, "Alliance")}`;
+  const applied = appliedFilters(filters, "/alliances");
+  if (!total) return applied + browseEmpty("alliances", filters);
+  return `${applied}<div class="grid two">${alliances.map((item) => allianceCard(item)).join("")}</div>${pagerBar(pager, "Alliance")}`;
 }
 
 // The link rows are not named form fields - they are packed into one hidden
@@ -1247,6 +1194,7 @@ function filterPlaystyleGroups(selected = []) {
         <summary class="filter-group-label">
           <span>${escapeHtml(group.label)}</span>
           ${active ? `<em>${active}</em>` : ""}
+          <svg class="filter-group-chevron" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg>
         </summary>
         <div class="checks">${checks("playstyle", group.tags, chosen)}</div>
       </details>`;

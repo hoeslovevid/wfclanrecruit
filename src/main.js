@@ -1,6 +1,8 @@
+import { bindFilterUpdates, resetFilterForm } from "./filter-ui.js";
 import { LINK_MAX } from "./data.js";
 import { api } from "./api.js";
 import {
+  activeFilterCount,
   accountView,
   allianceCard,
   alliancePage,
@@ -41,7 +43,6 @@ import { MEDIA_MAX, parseImageUrl, setUploadPublicBase } from "./media.js";
 import {
   applyAllianceFilters,
   applyClanFilters,
-  defaultFilters,
   filtersFromSearch,
   filtersToSearch,
   paginate,
@@ -1095,6 +1096,9 @@ async function render() {
     const form = app.querySelector("#filter-form");
     const paint = (nextPage = 1) => {
       const next = readFilters(form);
+      const badge = app.querySelector("[data-filter-count]");
+      const activeCount = activeFilterCount(next);
+      if (badge) { badge.textContent = String(activeCount); badge.hidden = activeCount === 0; }
       const list = applyClanFilters(state.clans, next);
       const windowedNext = paginate(list, nextPage);
       page = windowedNext.page;
@@ -1111,21 +1115,10 @@ async function render() {
         history.replaceState({}, "", nextUrl);
       }
     };
-    form?.addEventListener("submit", (event) => {
-      event.preventDefault();
-      paint(1);
-    });
-    app.querySelector(".browse")?.addEventListener("input", () => paint(1));
-    app.querySelector(".browse")?.addEventListener("change", () => paint(1));
+    bindFilterUpdates(app.querySelector(".browse"), paint);
     bindFiltersToggle();
     app.querySelector("[data-clear-filters]")?.addEventListener("click", () => {
-      const fresh = defaultFilters();
-      form.reset();
-      form.mr.value = "0";
-      form.querySelector("[name='recruiting']").checked = fresh.recruiting;
-      form.querySelectorAll("[name='playstyle']").forEach((input) => {
-        input.checked = false;
-      });
+      resetFilterForm(form);
       paint(1);
     });
     app.querySelector("#results")?.addEventListener("click", (event) => {
@@ -1147,6 +1140,9 @@ async function render() {
     const form = app.querySelector("#filter-form");
     const paint = (nextPage = 1) => {
       const next = readFilters(form);
+      const badge = app.querySelector("[data-filter-count]");
+      const activeCount = activeFilterCount(next);
+      if (badge) { badge.textContent = String(activeCount); badge.hidden = activeCount === 0; }
       const list = applyAllianceFilters(state.alliances, next);
       const windowedNext = paginate(list, nextPage);
       page = windowedNext.page;
@@ -1161,16 +1157,10 @@ async function render() {
         history.replaceState({}, "", nextUrl);
       }
     };
-    form?.addEventListener("submit", (event) => {
-      event.preventDefault();
-      paint(1);
-    });
-    app.querySelector(".browse")?.addEventListener("input", () => paint(1));
-    app.querySelector(".browse")?.addEventListener("change", () => paint(1));
+    bindFilterUpdates(app.querySelector(".browse"), paint);
     bindFiltersToggle();
     app.querySelector("[data-clear-filters]")?.addEventListener("click", () => {
-      form.reset();
-      form.querySelector("[name='recruiting']").checked = true;
+      resetFilterForm(form);
       paint(1);
     });
     app.querySelector("#results")?.addEventListener("click", (event) => {
@@ -1403,8 +1393,9 @@ async function render() {
   app.innerHTML = homeView(state);
   app.querySelector("[data-hero-search]")?.addEventListener("submit", (event) => {
     event.preventDefault();
-    const q = new FormData(event.currentTarget).get("q");
-    go(`/browse?q=${encodeURIComponent(String(q || ""))}`);
+    const data = new FormData(event.currentTarget);
+    const destination = data.get("kind") === "alliances" ? "/alliances" : "/browse";
+    go(`${destination}?q=${encodeURIComponent(String(data.get("q") || ""))}`);
   });
   bindCards();
 }
