@@ -1826,19 +1826,27 @@ code {
 .playstyle-group {
   border-left: 2px solid var(--group);
 }
-.playstyle-group legend {
+/* One header for every grouped block in the composer - the playstyle groups and
+   the rich-text boxes - so the two cannot drift apart. */
+.playstyle-group legend,
+.rich-field legend {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 8px;
 }
-.playstyle-group legend small {
+.playstyle-group legend small,
+.rich-field legend small {
   color: var(--muted);
   font-weight: 400;
   font-size: 12px;
   letter-spacing: 0;
   text-transform: none;
 }
+/* The editor already carries a border, so the fieldset only frames the header
+   and gives the box the same padding the playstyle groups have. */
+.rich-field { display: block; }
+.rich-field .richtext { margin-top: 2px; }
 .playstyle-group[data-group="progression"] { --group: var(--group-progression); }
 .playstyle-group[data-group="community"] { --group: var(--group-community); }
 .playstyle-group[data-group="communication"] { --group: var(--group-communication); }
