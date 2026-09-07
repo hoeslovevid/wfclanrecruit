@@ -1865,6 +1865,59 @@ code {
   color: var(--danger);
   font-size: 12px;
 }
+/* A role is five fields, so its row is a small card: the identity line on top,
+   the two prose fields under it. */
+.role-item {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+}
+.role-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.role-head > [data-role-name] { flex: 1 1 160px; width: auto; min-width: 0; }
+.role-head > [data-role-status] { flex: 0 0 116px; width: auto; }
+.role-head > [data-role-count] { flex: 0 0 72px; width: auto; }
+.role-head > .row-remove { margin-left: auto; }
+.role-item > input { width: 100%; font-size: 14px; }
+
+/* Listing page */
+.role-list { margin: 0; padding: 0; list-style: none; }
+.role-list .role + .role {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.role-list .role.is-closed { opacity: 0.6; }
+.role-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.role-line strong { font-size: 15px; }
+.role-count {
+  color: var(--muted);
+  font-size: 12px;
+}
+.role-list p { margin: 6px 0 0; }
+.role-req { font-size: 13px; color: var(--muted); }
+.role-req span {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.role-hint {
+  margin: 0;
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
 .row-adds {
   display: flex;
   flex-wrap: wrap;

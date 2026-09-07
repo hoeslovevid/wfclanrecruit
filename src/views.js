@@ -29,6 +29,16 @@ import {
 } from "./richtext.js";
 import { youTubeEmbedUrl, youTubeThumbUrl } from "./video.js";
 import { MEDIA_MAX, isUploadedImage, mediaList } from "./media.js";
+import {
+  ROLE_MAX,
+  ROLE_NAME_MAX,
+  ROLE_STATUSES,
+  ROLE_SUGGESTIONS,
+  ROLE_TEXT_MAX,
+  isRoleOpen,
+  openRoles,
+  rolesOf,
+} from "./roles.js";
 
 export function escapeHtml(value) {
   return String(value ?? "")
@@ -254,6 +264,36 @@ function listingSection(item, name, heading, { accent = false } = {}) {
   `;
 }
 
+// A clan short an architect is recruiting even when its roster is full, so the
+// roles get their own block rather than a line inside the post. Kept as a
+// section rather than a tab: the board now filters on these and the cards count
+// them, and none of that pays off if the detail is behind a click.
+function lookingForSection(item) {
+  const roles = rolesOf(item);
+  if (!roles.length) return "";
+  return `
+    <section class="detail-list looking-for">
+      <h2>Looking for</h2>
+      <ul class="role-list">
+        ${roles
+          .map(
+            (role) => `
+          <li class="role${isRoleOpen(role) ? "" : " is-closed"}">
+            <div class="role-line">
+              <strong>${escapeHtml(role.name)}</strong>
+              <span class="pill ${statusClass(role.status)}">${escapeHtml(role.status)}</span>
+              ${role.count ? `<span class="role-count">${role.count} wanted</span>` : ""}
+            </div>
+            ${role.description ? `<p class="muted">${escapeHtml(role.description)}</p>` : ""}
+            ${role.requirements ? `<p class="role-req"><span>Needs</span> ${escapeHtml(role.requirements)}</p>` : ""}
+          </li>`
+          )
+          .join("")}
+      </ul>
+    </section>
+  `;
+}
+
 // Some clans filter in the recruitment process itself - a form, a trial run, an
 // interview. Accented because it is the last thing a recruit reads before
 // acting on the listing.
@@ -262,6 +302,7 @@ export function listingSections(item) {
     listingSection(item, "offering", "They offer"),
     listingSection(item, "requirements", "Requirements"),
     listingSection(item, "howToJoin", "How to join", { accent: true }),
+    lookingForSection(item),
   ].join("");
 }
 
@@ -470,6 +511,17 @@ function clanRosterChecks(clans, selected = []) {
     .join("");
 }
 
+// The board's reason to care: a clan can be full and still want an architect.
+function roleHint(clan) {
+  const open = openRoles(clan);
+  if (!open.length) return "";
+  const names = open.slice(0, 2).map((role) => role.name);
+  const rest = open.length - names.length;
+  return `<p class="role-hint">Looking for ${escapeHtml(names.join(", "))}${
+    rest ? ` +${rest} more` : ""
+  }</p>`;
+}
+
 export function clanCard(clan) {
   const fill = fillPercent(clan);
   return `
@@ -489,6 +541,7 @@ export function clanCard(clan) {
       </header>
       <p class="headline">${escapeHtml(clan.headline)}</p>
       <p class="muted">${escapeHtml(clan.summary)}</p>
+      ${roleHint(clan)}
       <div class="chips">${chipList(orderedPlaystyles(clan.playstyles).slice(0, 4))}</div>
       <div class="stats">
         <div>
@@ -674,12 +727,37 @@ function activeFilterCount(filters = {}) {
     if (filters[key]) count += 1;
   }
   count += (filters.playstyles || []).length;
+  if (filters.role) count += 1;
   if (filters.online) count += 1;
   if (Number(filters.mr || 0) > 0) count += 1;
   return count;
 }
 
-export function browseView(clans, filters, pager) {
+// Built from the board, not from a fixed list, so the filter never offers a
+// role that would return nothing - and a clan's invented role shows up here as
+// soon as someone is recruiting for it.
+function roleFilterField(options, selected) {
+  if (!options.length && !selected) return "";
+  const names = options.map((option) => option.name);
+  if (selected && !names.some((name) => name.toLowerCase() === selected.toLowerCase())) {
+    names.unshift(selected);
+  }
+  return `
+    <label class="field"><span>Recruiting for</span><select name="role">
+      <option value="">Any role</option>
+      ${names
+        .map(
+          (name) =>
+            `<option value="${escapeHtml(name)}" ${
+              name.toLowerCase() === String(selected || "").toLowerCase() ? "selected" : ""
+            }>${escapeHtml(name)}</option>`
+        )
+        .join("")}
+    </select></label>
+  `;
+}
+
+export function browseView(clans, filters, pager, roleOptions = []) {
   const total = pager?.total ?? clans.length;
   const label = total === 1 ? "1 clan" : `${total} clans`;
   return `
@@ -705,6 +783,7 @@ export function browseView(clans, filters, pager) {
           <label class="field"><span>Keyword</span><input type="search" name="q" value="${escapeHtml(filters.q)}" placeholder="Name, tag, playstyle…" /></label>
           <label class="field"><span>Platform</span><select name="platform"><option value="">Any</option>${optionList(PLATFORMS, filters.platform)}</select></label>
           <label class="field"><span>Tier</span><select name="tier"><option value="">Any</option>${optionList(TIERS, filters.tier)}</select></label>
+          ${roleFilterField(roleOptions, filters.role)}
           <fieldset class="fieldset">
             <legend>Playstyles</legend>
             <div class="filter-groups">${filterPlaystyleGroups(filters.playstyles || [])}</div>
@@ -811,6 +890,18 @@ export function allianceResultsHtml(alliances, filters, pager) {
 
 // The link rows are not named form fields - they are packed into one hidden
 // JSON field on submit - so the live preview reads them straight off the DOM.
+// The role rows are unnamed inputs packed into one hidden JSON field on submit,
+// so the live preview reads them straight off the DOM, the way the links do.
+export function readRoleRows(form) {
+  return [...form.querySelectorAll("[data-row-list='role'] [data-row]")].map((row) => ({
+    name: row.querySelector("[data-role-name]")?.value || "",
+    status: row.querySelector("[data-role-status]")?.value || "Open",
+    count: Number(row.querySelector("[data-role-count]")?.value || 0),
+    description: row.querySelector("[data-role-description]")?.value || "",
+    requirements: row.querySelector("[data-role-requirements]")?.value || "",
+  }));
+}
+
 export function readLinkRows(form) {
   return [...form.querySelectorAll("[data-row-list='link'] [data-row]")].map((row) => ({
     kind: row.querySelector("[data-link-kind]")?.value || "Other",
@@ -948,6 +1039,75 @@ function videoPicker(draft = {}) {
       })}
       <input type="hidden" name="media" value="" />
       <small class="field-help">The first item shows inside the post; the rest become a strip under it. Videos are YouTube links; images are uploaded here and resized for you.</small>
+    </fieldset>
+  `;
+}
+
+function roleRow(role = {}) {
+  return `
+    <div class="row-item role-item" data-row>
+      <div class="role-head">
+        <span class="row-handle" data-row-handle role="button" tabindex="0" title="Drag to reorder, or use the arrow keys" aria-label="Reorder this role">⠿</span>
+        <input
+          data-role-name
+          list="role-suggestions"
+          type="text"
+          maxlength="${ROLE_NAME_MAX}"
+          autocomplete="off"
+          placeholder="Role, e.g. Event Organizer"
+          value="${escapeHtml(role.name || "")}"
+        />
+        <select data-role-status aria-label="Is this role open">
+          ${ROLE_STATUSES.map(
+            (status) =>
+              `<option value="${escapeHtml(status)}" ${status === role.status ? "selected" : ""}>${escapeHtml(status)}</option>`
+          ).join("")}
+        </select>
+        <input
+          data-role-count
+          type="number"
+          min="0"
+          max="99"
+          aria-label="How many people you want"
+          placeholder="0"
+          value="${escapeHtml(role.count ?? "")}"
+        />
+        <button class="row-remove" type="button" data-row-remove aria-label="Remove this role">×</button>
+      </div>
+      <input
+        data-role-description
+        type="text"
+        maxlength="${ROLE_TEXT_MAX}"
+        placeholder="What the role does"
+        value="${escapeHtml(role.description || "")}"
+      />
+      <input
+        data-role-requirements
+        type="text"
+        maxlength="${ROLE_TEXT_MAX}"
+        placeholder="What it asks for"
+        value="${escapeHtml(role.requirements || "")}"
+      />
+    </div>
+  `;
+}
+
+function rolesField(draft = {}) {
+  const roles = rolesOf(draft);
+  return `
+    <fieldset class="fieldset boxed-field" data-boxed-field="roles">
+      <legend>Looking for <small>Specific jobs, not just members</small><small class="field-optional">optional</small></legend>
+      <datalist id="role-suggestions">
+        ${ROLE_SUGGESTIONS.map((name) => `<option value="${escapeHtml(name)}"></option>`).join("")}
+      </datalist>
+      ${rowList("role", {
+        rows: roles.map((role) => roleRow(role)),
+        blank: roleRow(),
+        addLabel: "Add a role",
+        empty: "Recruiters, moderators, event organisers, dojo architects — anything the clan actually needs.",
+      })}
+      <input type="hidden" name="roles" value="" />
+      <small class="field-help">Leave the count at 0 if the number is open-ended. Closed roles still show, so recruits can see the shape of the team.</small>
     </fieldset>
   `;
 }
@@ -1252,6 +1412,7 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
             }
           </fieldset>
           <div class="playstyle-groups">${playstyleGroups(draft.playstyles || [])}</div>
+          ${rolesField(draft)}
         </div>
         <div class="form-block">
           <h2>The post</h2>
@@ -1338,6 +1499,7 @@ export function alliancePostView({ user, draft = {}, auth = {}, clans = [] }) {
           ${linksField(draft)}
           <p class="field-help">An alliance needs a Discord invite or at least one link — that is how recruits reach you.</p>
           <fieldset class="fieldset"><legend>Platforms</legend><div class="checks">${checks("platforms", PLATFORMS, draft.platforms || [])}</div></fieldset>
+          ${rolesField(draft)}
           <fieldset class="fieldset">
             <legend>Clan roster</legend>
             <p class="muted">Tick your clan listings to show them on this alliance page. You can post more than one clan.</p>
@@ -1847,6 +2009,7 @@ export function previewClan(form, imageUrl = null, mediaEntries = []) {
     media: mediaEntries,
     links: readLinkRows(form),
     howToJoin: data.get("howToJoin") || "",
+    roles: readRoleRows(form),
     platform: data.get("platform") || "PC",
     tier: data.get("tier") || "Ghost",
     members: Number(data.get("members") || 1),
@@ -1879,6 +2042,7 @@ export function previewAlliance(form, imageUrl = null, mediaEntries = []) {
     media: mediaEntries,
     links: readLinkRows(form),
     howToJoin: data.get("howToJoin") || "",
+    roles: readRoleRows(form),
     platforms: data.getAll("platforms").length ? data.getAll("platforms") : ["PC"],
     region: data.get("region") || "Global",
     language: data.get("language") || "English",

@@ -23,8 +23,10 @@ import {
   heldUntilNote,
   presenceSummary,
   readLinkRows,
+  readRoleRows,
   rosterPanel,
 } from "./views.js";
+import { ROLE_MAX, roleFilterOptions } from "./roles.js";
 import { privacyView } from "./privacy.js";
 import {
   aboutTooLong,
@@ -205,6 +207,7 @@ function readFilters(form) {
     platform: String(data.get("platform") || ""),
     tier: String(data.get("tier") || ""),
     playstyles: data.getAll("playstyle"),
+    role: String(data.get("role") || ""),
     region: String(data.get("region") || ""),
     language: String(data.get("language") || ""),
     status: String(data.get("status") || ""),
@@ -775,6 +778,21 @@ function bindMediaRows(form, onMedia) {
   return sync;
 }
 
+function bindRoleRows(form, onChange) {
+  const list = form.querySelector("[data-row-list='role']");
+  const payload = form.elements.roles;
+  const sync = () => {
+    if (payload) {
+      payload.value = JSON.stringify(readRoleRows(form).filter((role) => role.name.trim()));
+    }
+    onChange?.();
+  };
+  bindRowList(list, { max: ROLE_MAX, min: 0, onChange: sync });
+  list?.addEventListener("input", sync);
+  list?.addEventListener("change", sync);
+  sync();
+}
+
 function bindLinkRows(form, onChange) {
   const list = form.querySelector("[data-row-list='link']");
   bindRowList(list, { max: LINK_MAX, min: 0, onChange });
@@ -952,6 +970,7 @@ function bindListingComposer(form, { imageUrl = null, onChange }) {
     refresh();
   });
   bindLinkRows(form, refresh);
+  bindRoleRows(form, refresh);
   form.addEventListener("input", refresh);
   refresh();
 }
@@ -1057,7 +1076,7 @@ async function render() {
     let page = startPage;
     const windowed = paginate(applyClanFilters(state.clans, initial), page);
     page = windowed.page;
-    app.innerHTML = browseView(windowed.items, initial, windowed);
+    app.innerHTML = browseView(windowed.items, initial, windowed, roleFilterOptions(state.clans));
     const form = app.querySelector("#filter-form");
     const paint = (nextPage = 1) => {
       const next = readFilters(form);
