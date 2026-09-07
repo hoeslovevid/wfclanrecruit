@@ -76,7 +76,7 @@ test("several playstyles require every selected chip", () => {
   );
   const miss = applyClanFilters([open], {
     ...defaultFilters(),
-    playstyles: ["Steel Path", "Hunting"],
+    playstyles: ["Steel Path", "Conclave"],
   });
   assert.equal(miss.length, 0);
 });

@@ -43,9 +43,10 @@
   --backdrop: rgba(0, 0, 0, 0.72);
   /* One hue per playstyle group. Chosen to sit apart from the status pills
      (open / selective / trial) so a card never reads two scales as one. */
-  --group-playstyle: #e0b45c;
-  --group-social: #6dcaa0;
-  --group-content: #8fb0ff;
+  --group-progression: #e0b45c;
+  --group-community: #6dcaa0;
+  --group-communication: #c9a2f0;
+  --group-activities: #8fb0ff;
   --radius: 14px;
   --nav: 76px;
   --font: "IBM Plex Sans", "Segoe UI", sans-serif;
@@ -93,9 +94,10 @@
   --scroll-track: #e8ebf2;
   --scroll-thumb: #b8c0d0;
   --check-border: #b8c0d0;
-  --group-playstyle: #9a6d12;
-  --group-social: #1f7a4d;
-  --group-content: #3358d4;
+  --group-progression: #9a6d12;
+  --group-community: #1f7a4d;
+  --group-communication: #7a3fb0;
+  --group-activities: #3358d4;
   --backdrop: rgba(22, 28, 45, 0.45);
 }
 
@@ -842,8 +844,10 @@ select {
 .check input:checked { background: var(--accent); border-color: var(--accent); }
 /* The scroll cap belongs to the whole playstyle block, not to each group:
    three separately scrolling boxes in a narrow sidebar is unusable. */
+/* Collapsed groups keep this short; the cap only matters when several are
+   open at once. */
 .filters .filter-groups {
-  max-height: 340px;
+  max-height: 420px;
   overflow: auto;
   padding-right: 2px;
 }
@@ -859,6 +863,10 @@ select {
 .filters .check input { width: 13px; height: 13px; }
 .filter-group + .filter-group { margin-top: 10px; }
 .filter-group-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin: 0 0 6px;
   padding-left: 8px;
   border-left: 2px solid var(--group);
@@ -867,10 +875,29 @@ select {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--muted);
+  cursor: pointer;
+  list-style: none;
 }
-.filter-group[data-group="playstyle"] { --group: var(--group-playstyle); }
-.filter-group[data-group="social"] { --group: var(--group-social); }
-.filter-group[data-group="content"] { --group: var(--group-content); }
+.filter-group-label::-webkit-details-marker { display: none; }
+.filter-group-label:hover { color: var(--text); }
+.filter-group[open] > .filter-group-label { color: var(--text); }
+.filter-group-label em {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--group);
+  color: var(--btn-primary-fg);
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 700;
+}
+.filter-group[data-group="progression"] { --group: var(--group-progression); }
+.filter-group[data-group="community"] { --group: var(--group-community); }
+.filter-group[data-group="communication"] { --group: var(--group-communication); }
+.filter-group[data-group="activities"] { --group: var(--group-activities); }
 .pager {
   display: flex;
   align-items: center;
@@ -1812,9 +1839,10 @@ code {
   letter-spacing: 0;
   text-transform: none;
 }
-.playstyle-group[data-group="playstyle"] { --group: var(--group-playstyle); }
-.playstyle-group[data-group="social"] { --group: var(--group-social); }
-.playstyle-group[data-group="content"] { --group: var(--group-content); }
+.playstyle-group[data-group="progression"] { --group: var(--group-progression); }
+.playstyle-group[data-group="community"] { --group: var(--group-community); }
+.playstyle-group[data-group="communication"] { --group: var(--group-communication); }
+.playstyle-group[data-group="activities"] { --group: var(--group-activities); }
 
 /* A card shows three or four chips. Tinting them by group is what turns that
    row from a bag of words into "hardcore, friendly, runs Eidolons". */
@@ -1833,9 +1861,10 @@ code {
   border-radius: 50%;
   background: var(--group, var(--chip-text));
 }
-.chip[data-group="playstyle"] { --group: var(--group-playstyle); }
-.chip[data-group="social"] { --group: var(--group-social); }
-.chip[data-group="content"] { --group: var(--group-content); }
+.chip[data-group="progression"] { --group: var(--group-progression); }
+.chip[data-group="community"] { --group: var(--group-community); }
+.chip[data-group="communication"] { --group: var(--group-communication); }
+.chip[data-group="activities"] { --group: var(--group-activities); }
 
 /* ---------------------------------------------------------------------------
    Links, how-to-join, and the video strip
