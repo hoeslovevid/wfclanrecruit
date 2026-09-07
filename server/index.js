@@ -50,6 +50,7 @@ import {
   VIDEO_MAX,
   normalizeContact,
   normalizeLinks,
+  normalizePlaystyles,
   wantsDiscord,
   wantsWhisper,
 } from "../src/data.js";
@@ -542,9 +543,13 @@ function contactRouteError({ contact, discord, links }, user) {
 }
 
 function parseClanBody(body, user, req) {
-  const playstyles = asArray(body.playstyles);
+  const playstyles = normalizePlaystyles(asArray(body.playstyles));
   const members = Number(body.members);
   const mrRequired = Number(body.mrRequired || 0);
+  const inactiveDaysRaw = Number(body.inactiveDays);
+  const inactiveDays = Number.isFinite(inactiveDaysRaw)
+    ? Math.max(0, Math.min(365, Math.round(inactiveDaysRaw)))
+    : 0;
   const tier = String(body.tier || "");
   const allianceId = String(body.allianceId || "") || null;
 
@@ -592,6 +597,9 @@ function parseClanBody(body, user, req) {
       tier,
       members,
       mrRequired: Math.max(0, Math.min(36, mrRequired)),
+      // 0 means the clan does not kick, which is a real answer rather than a
+      // missing one - every long-lived clan has a position on this.
+      inactiveDays: inactiveDays,
       playstyles,
       region: String(body.region || "Global"),
       language: String(body.language || "English"),
@@ -786,6 +794,9 @@ function decorateClan(clan, db) {
   const { recruiters, stats, hiddenBy, hiddenAt, ...publicClan } = clan;
   return withBumpState({
     ...publicClan,
+    // Renamed tags land here rather than in every reader. The stored value is
+    // left alone until the listing is next saved.
+    playstyles: normalizePlaystyles(clan.playstyles),
     allianceName: alliance?.name || null,
     allianceTag: alliance?.tag || null,
     whisperName: whisperName(clan, db.users),

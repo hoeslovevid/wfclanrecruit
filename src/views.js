@@ -15,6 +15,7 @@ import {
   groupOf,
   normalizeContact,
   normalizeLinks,
+  normalizePlaystyles,
   wantsDiscord,
   wantsWhisper,
 } from "./data.js";
@@ -83,8 +84,8 @@ function chipList(items = []) {
 // Ordered by group, then by the order the group lists them, so two clans that
 // picked the same tags always show them in the same order.
 function orderedPlaystyles(items = []) {
-  const rank = new Map(PLAYSTYLES.map((tag, index) => [tag, index]));
-  return [...items].sort((a, b) => (rank.get(a) ?? Infinity) - (rank.get(b) ?? Infinity));
+  // normalizePlaystyles already returns them in group order.
+  return normalizePlaystyles(items);
 }
 
 function hueFrom(seed) {
@@ -1032,13 +1033,21 @@ function sectionField(name, label, value, options = {}) {
 // rather than the composer's full fieldset-per-group. The input name stays
 // `playstyle`, so the multi-select filter reads them exactly as before.
 function filterPlaystyleGroups(selected = []) {
-  return PLAYSTYLE_GROUPS.map(
-    (group) => `
-      <div class="filter-group" data-group="${escapeHtml(group.id)}">
-        <p class="filter-group-label">${escapeHtml(group.label)}</p>
-        <div class="checks">${checks("playstyle", group.tags, selected)}</div>
-      </div>`
-  ).join("");
+  const chosen = normalizePlaystyles(selected);
+  return PLAYSTYLE_GROUPS.map((group) => {
+    const active = group.tags.filter((tag) => chosen.includes(tag)).length;
+    // Sixty-six tags will not fit a sidebar, so each group opens on demand. A
+    // group holding a live filter starts open, or the panel would hide the very
+    // thing narrowing the board.
+    return `
+      <details class="filter-group" data-group="${escapeHtml(group.id)}" ${active ? "open" : ""}>
+        <summary class="filter-group-label">
+          <span>${escapeHtml(group.label)}</span>
+          ${active ? `<em>${active}</em>` : ""}
+        </summary>
+        <div class="checks">${checks("playstyle", group.tags, chosen)}</div>
+      </details>`;
+  }).join("");
 }
 
 function playstyleGroups(selected = []) {
@@ -1046,7 +1055,7 @@ function playstyleGroups(selected = []) {
     (group) => `
       <fieldset class="fieldset playstyle-group" data-group="${escapeHtml(group.id)}">
         <legend>${escapeHtml(group.label)} <small>${escapeHtml(group.hint)}</small></legend>
-        <div class="checks">${checks("playstyles", group.tags, selected)}</div>
+        <div class="checks">${checks("playstyles", group.tags, normalizePlaystyles(selected))}</div>
       </fieldset>`
   ).join("");
 }
@@ -1187,6 +1196,7 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
             <label class="field"><span>Status</span><select name="status" required>${optionList(STATUSES, draft.status)}</select></label>
             <label class="field"><span>Members</span><input name="members" type="number" min="1" max="1000" required value="${escapeHtml(draft.members || "")}" /></label>
             <label class="field"><span>Minimum MR <em id="post-mr">${draft.mrRequired ?? 0}</em></span><input type="range" name="mrRequired" min="0" max="36" value="${escapeHtml(draft.mrRequired ?? 0)}" /></label>
+            <label class="field"><span>Inactivity kick <small class="field-optional">days, 0 for none</small></span><input name="inactiveDays" type="number" min="0" max="365" value="${escapeHtml(draft.inactiveDays ?? 0)}" /></label>
             <label class="field"><span>How recruits reach you</span><select name="contact" data-contact>${CONTACT_MODES.map(
               (mode) =>
                 `<option value="${mode}" ${normalizeContact(draft.contact) === mode ? "selected" : ""}>${escapeHtml(
@@ -1388,7 +1398,12 @@ export function accountView({ user, clans, alliances, reports = [] }) {
   return `
     <section class="page-hero">
       <p class="eyebrow">${admin ? "Moderator" : "Account"}</p>
-      <h1>${escapeHtml(user.username)}</h1>
+      <h1>${escapeHtml(displayName(user))}</h1>
+      ${
+        displayName(user) !== user.username
+          ? `<p class="muted account-alias">Signed in as ${escapeHtml(user.username)}</p>`
+          : ""
+      }
       <p class="lead">${
         admin
           ? "Edit, bump, pause, or remove any listing. Open reports are at the bottom."
@@ -1697,6 +1712,9 @@ export function clanPage(clan, { admin = false } = {}) {
         <div><dt>Tier</dt><dd>${escapeHtml(clan.tier)}</dd></div>
         <div><dt>Roster</dt><dd>${clan.members} / ${capacity(clan)}</dd></div>
         <div><dt>MR</dt><dd>${clan.mrRequired === 0 ? "Any" : `${clan.mrRequired}+`}</dd></div>
+        <div><dt>Inactivity kick</dt><dd>${
+          clan.inactiveDays ? `${clan.inactiveDays} days` : "None"
+        }</dd></div>
         <div><dt>Region</dt><dd>${escapeHtml(clan.region)}</dd></div>
         <div><dt>Language</dt><dd>${escapeHtml(clan.language)}</dd></div>
         <div><dt>Leader</dt><dd>${escapeHtml(clan.leader)} ${presenceDot(clan)}</dd></div>
@@ -1783,6 +1801,7 @@ export function previewClan(form, imageUrl = null, mediaEntries = []) {
     tier: data.get("tier") || "Ghost",
     members: Number(data.get("members") || 1),
     mrRequired: Number(data.get("mrRequired") || 0),
+    inactiveDays: Number(data.get("inactiveDays") || 0),
     playstyles: playstyles.length ? playstyles : ["Social"],
     region: data.get("region") || "Global",
     language: data.get("language") || "English",
@@ -1827,6 +1846,13 @@ export function previewAlliance(form, imageUrl = null, mediaEntries = []) {
   };
 }
 
+// A leader is known in game by their Warframe name, not by whatever their
+// Discord login happens to be called. Once a forum profile is verified that is
+// the name recruits will whisper, so it is the name we show them.
+export function displayName(user) {
+  return (user?.forumVerified && user?.forumName) || user?.username || "";
+}
+
 export function navAccount(user, { discord = false } = {}) {
   if (user) {
     const invites = (user.invites || []).length;
@@ -1835,7 +1861,7 @@ export function navAccount(user, { discord = false } = {}) {
       : "";
     return `
       ${presenceControl(user)}
-      <a class="btn btn-ghost" href="/account" data-link>${escapeHtml(user.username)}${badge}</a>
+      <a class="btn btn-ghost" href="/account" data-link>${escapeHtml(displayName(user))}${badge}</a>
       <button class="btn btn-ghost" type="button" data-logout>Sign out</button>
     `;
   }

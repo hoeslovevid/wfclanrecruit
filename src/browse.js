@@ -1,4 +1,4 @@
-import { PLAYSTYLES, TIER_CAPS } from "./data.js";
+import { PLAYSTYLES, TIER_CAPS, normalizePlaystyle } from "./data.js";
 
 export const PAGE_SIZE = 12;
 
@@ -6,8 +6,11 @@ export function parsePlaystyles(values) {
   const wanted = [];
   for (const value of values || []) {
     const name = String(value || "");
-    if (!PLAYSTYLES.includes(name) || wanted.includes(name)) continue;
-    wanted.push(name);
+    // A saved or shared link may still carry an old tag name; rename it rather
+    // than dropping the filter on the floor.
+    const tag = normalizePlaystyle(name);
+    if (!PLAYSTYLES.includes(tag) || wanted.includes(tag)) continue;
+    wanted.push(tag);
   }
   return wanted;
 }

@@ -4,7 +4,15 @@
 // tested here with the rest of the server suite.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { LINK_MAX, PLAYSTYLES, PLAYSTYLE_GROUPS, groupOf, normalizeLinkKind, normalizeLinks } from "../src/data.js";
+import {
+  LINK_MAX,
+  PLAYSTYLES,
+  PLAYSTYLE_GROUPS,
+  groupOf,
+  normalizeLinkKind,
+  normalizeLinks,
+  normalizePlaystyles,
+} from "../src/data.js";
 import { isSafeHref } from "../src/richtext.js";
 
 const links = (rows) => normalizeLinks(rows, isSafeHref);
@@ -62,6 +70,24 @@ test("every playstyle belongs to exactly one group", () => {
 });
 
 test("a tag from an older listing still renders", () => {
-  assert.equal(groupOf("Some Retired Tag"), "content");
-  assert.equal(groupOf(undefined), "content");
+  assert.equal(groupOf("Some Retired Tag"), "activities");
+  assert.equal(groupOf(undefined), "activities");
+});
+
+// The vocabulary was rewritten; a listing tagged against the old one keeps its
+// meaning rather than quietly losing it.
+test("renamed tags survive, retired ones do not", () => {
+  assert.equal(groupOf("Archon"), "activities", "old names still group correctly");
+  assert.deepEqual(normalizePlaystyles(["Archon", "Cross-save", "EDA"]), [
+    "Cross-Save",
+    "Archon Hunts",
+    "Elite Deep Archimedea (EDA)",
+  ]);
+  assert.deepEqual(normalizePlaystyles(["Nightwave", "Railjack", "Hardcore", "Hunting"]), []);
+});
+
+test("normalizePlaystyles dedupes, drops unknowns, and orders by group", () => {
+  const out = normalizePlaystyles(["Trading", "Casual", "Trading", "Not A Tag", "Social"]);
+  assert.deepEqual(out, ["Casual", "Social", "Trading"], "group order, not input order");
+  assert.deepEqual(normalizePlaystyles(undefined), []);
 });
