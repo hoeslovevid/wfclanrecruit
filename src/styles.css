@@ -2188,9 +2188,10 @@ code {
   border-radius: var(--radius);
   background: var(--surface-2);
 }
-/* How to join is the last thing read before acting on the listing, so it keeps
-   the accent rail the numbered steps used to carry. */
-.detail-list.is-accent { border-left: 2px solid var(--accent); }
+/* "How to join" / "How to reach them" used to carry an accent rail, on the
+   argument that it is the last thing read before acting on the listing. In
+   practice it just made one of three identical cards look like a different
+   component, so all three now read as the same thing - which they are. */
 /* These sit inside their own card, so the page-level h2 scale shouts. Drop
    them to the kicker voice the composer already uses for section labels. */
 .detail-list h2 {
@@ -2695,3 +2696,33 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   }
   .bubble { max-width: 88%; }
 }
+
+/* The delete control in a composer. Set apart from the save row so it reads as
+   a different kind of action, and cannot be reached on the way to Save. */
+.form-danger {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  margin-top: 8px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.form-danger .muted { margin: 0; font-size: 12px; }
+
+/* The signed-in person's own avatar: in the nav beside their name, and larger
+   at the top of their account page. */
+.user-avatar,
+.account-avatar {
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--chip);
+  border: 1px solid var(--line);
+  flex: none;
+}
+.user-avatar { width: 24px; height: 24px; }
+.account-avatar { width: 64px; height: 64px; border-radius: 16px; }
+
+.nav-account { display: inline-flex; align-items: center; gap: 8px; }
+
+.account-identity { display: flex; align-items: center; gap: 16px; }
+.account-identity h1 { margin: 0; }

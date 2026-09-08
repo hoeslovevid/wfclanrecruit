@@ -409,6 +409,18 @@ function bindConversation(panel, thread) {
   });
 }
 
+// Where to land after a post is removed. From its public page the directory is
+// the only sensible place; from the composer or the account list it is the
+// account page, where the rest of their posts still are.
+function afterDelete(directory) {
+  if (window.location.pathname.startsWith(directory)) {
+    go(directory === "/clans" ? "/browse" : directory);
+    return;
+  }
+  if (state.user) go("/account");
+  else go(directory === "/clans" ? "/browse" : directory);
+}
+
 function readFilters(form) {
   const data = new FormData(form);
   return {
@@ -2366,33 +2378,45 @@ document.addEventListener("click", async (event) => {
   if (deleteClan) {
     event.preventDefault();
     event.stopPropagation();
-    if (!confirm("Remove this clan post for everyone?")) return;
-    await api.deleteClan(deleteClan.dataset.deleteClan);
+    if (!confirm("Remove this clan post for everyone? This cannot be undone.")) return;
+    try {
+      await api.deleteClan(deleteClan.dataset.deleteClan);
+    } catch (error) {
+      alert(error.message);
+      return;
+    }
     await refresh();
-    if (window.location.pathname.startsWith("/clans/")) go("/browse");
-    else render();
+    afterDelete("/clans");
     return;
   }
   const deleteAlliance = event.target.closest("[data-delete-alliance]");
   if (deleteAlliance) {
     event.preventDefault();
     event.stopPropagation();
-    if (!confirm("Remove this alliance post for everyone?")) return;
-    await api.deleteAlliance(deleteAlliance.dataset.deleteAlliance);
+    if (!confirm("Remove this alliance post for everyone? This cannot be undone.")) return;
+    try {
+      await api.deleteAlliance(deleteAlliance.dataset.deleteAlliance);
+    } catch (error) {
+      alert(error.message);
+      return;
+    }
     await refresh();
-    if (window.location.pathname.startsWith("/alliances/")) go("/alliances");
-    else render();
+    afterDelete("/alliances");
     return;
   }
   const deletePlayer = event.target.closest("[data-delete-player]");
   if (deletePlayer) {
     event.preventDefault();
     event.stopPropagation();
-    if (!confirm("Remove this player profile for everyone?")) return;
-    await api.deletePlayer(deletePlayer.dataset.deletePlayer);
+    if (!confirm("Remove this player profile for everyone? This cannot be undone.")) return;
+    try {
+      await api.deletePlayer(deletePlayer.dataset.deletePlayer);
+    } catch (error) {
+      alert(error.message);
+      return;
+    }
     await refresh();
-    if (window.location.pathname.startsWith("/players/")) go("/players");
-    else render();
+    afterDelete("/players");
     return;
   }
   const bumpPlayer = event.target.closest("[data-bump-player]");

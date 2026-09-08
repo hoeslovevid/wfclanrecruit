@@ -299,11 +299,11 @@ export function linkRow(item) {
 // The three boxes are optional and stack full width: side by side they forced
 // every leader to write two lists of matching length, and a long one against an
 // empty one looked broken. Each renders only when it holds something.
-function listingSection(item, name, heading, { accent = false } = {}) {
+function listingSection(item, name, heading) {
   const html = sanitizePostHtml(sectionToHtml(item?.[name]));
   if (sectionIsEmpty(html)) return "";
   return `
-    <section class="detail-list${accent ? " is-accent" : ""}">
+    <section class="detail-list">
       <h2>${escapeHtml(heading)}</h2>
       <div class="post-body">${html}</div>
     </section>
@@ -357,7 +357,7 @@ export function listingSections(item) {
   return [
     listingSection(item, "offering", "They offer"),
     listingSection(item, "requirements", "Requirements"),
-    listingSection(item, "howToJoin", "How to join", { accent: true }),
+    listingSection(item, "howToJoin", "How to join"),
     lookingForSection(item),
   ].join("");
 }
@@ -381,11 +381,12 @@ export function photo(item, size = 56, { fallback = "" } = {}) {
 }
 
 // Everyone without a Discord picture lands on the same mark, so a board of
-// unset avatars looks deliberate rather than broken.
-const PLAYER_FALLBACK_IMAGE = "/warframe.png";
+// unset avatars looks deliberate rather than broken. Shared by player cards and
+// by the signed-in person's own avatar in the nav.
+const FALLBACK_AVATAR = "/warframe.png";
 
 export function playerPhoto(player, size = 56) {
-  return photo(player, size, { fallback: PLAYER_FALLBACK_IMAGE });
+  return photo(player, size, { fallback: FALLBACK_AVATAR });
 }
 
 export const REPORT_REASON_LABELS = {
@@ -1431,6 +1432,22 @@ export function publishGateView(user, nextHash = "/post", auth = {}) {
   `;
 }
 
+
+// Shown only when editing: there is nothing to delete while composing. The
+// button is type="button" because it sits inside the form and must never
+// submit it.
+function deleteFromComposer(kind, id, label) {
+  if (!id) return "";
+  return `
+    <div class="form-danger">
+      <button class="btn btn-ghost btn-danger" type="button" data-delete-${escapeHtml(kind)}="${escapeHtml(
+        id
+      )}" data-from-composer>Delete this ${escapeHtml(label)}</button>
+      <p class="muted">This removes the post for everyone. It cannot be undone.</p>
+    </div>
+  `;
+}
+
 export function postView({ user, alliances = [], draft = {}, auth = {} }) {
   const next = draft.id ? `/post?id=${draft.id}` : "/post";
   if (!user) return authGate(next, auth);
@@ -1536,6 +1553,7 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
           <button class="btn btn-primary" type="submit">${editing ? "Save changes" : "Publish clan"}</button>
           <p class="error" id="form-note" hidden></p>
         </div>
+        ${deleteFromComposer("clan", draft.id, "clan")}
       </form>
       <aside class="preview-panel">
         <h2>Preview</h2>
@@ -1632,6 +1650,7 @@ export function alliancePostView({ user, draft = {}, auth = {}, clans = [] }) {
           <button class="btn btn-primary" type="submit">${editing ? "Save changes" : "Publish alliance"}</button>
           <p class="error" id="form-note" hidden></p>
         </div>
+        ${deleteFromComposer("alliance", draft.id, "alliance")}
       </form>
       <aside class="preview-panel">
         <h2>Preview</h2>
@@ -1697,9 +1716,14 @@ export function authView(mode, next = "/", { error = "", discord = true, passwor
 export function accountView({ user, clans, alliances, players = [], reports = [] }) {
   const admin = Boolean(user.admin);
   return `
-    <section class="page-hero">
-      <p class="eyebrow">${admin ? "Moderator" : "Account"}</p>
-      <h1>${escapeHtml(displayName(user))}</h1>
+    <section class="page-hero account-hero">
+      <div class="account-identity">
+        ${userAvatar(user, 64, "account-avatar")}
+        <div>
+          <p class="eyebrow">${admin ? "Moderator" : "Account"}</p>
+          <h1>${escapeHtml(displayName(user))}</h1>
+        </div>
+      </div>
       ${
         displayName(user) !== user.username
           ? `<p class="muted account-alias">Signed in as ${escapeHtml(user.username)}</p>`
@@ -2229,6 +2253,17 @@ export function displayName(user) {
   return (user?.forumVerified && user?.forumName) || user?.username || "";
 }
 
+// The signed-in person's own face, from the Discord account they signed in
+// with. Same fallback as a player card, so an account with no Discord picture
+// lands on the mark rather than a broken image or an empty circle - and the
+// same onerror guard, because the hash goes stale the moment they change it.
+export function userAvatar(user, size = 24, className = "user-avatar") {
+  const src = user?.discordAvatarUrl || FALLBACK_AVATAR;
+  return `<img class="${escapeHtml(className)}" src="${escapeHtml(src)}" alt="" width="${size}" height="${size}" onerror="this.onerror=null;this.src='${escapeHtml(
+    FALLBACK_AVATAR
+  )}'" />`;
+}
+
 export function navAccount(user, { discord = false, messaging = true } = {}) {
   if (user) {
     const invites = (user.invites || []).length;
@@ -2242,7 +2277,9 @@ export function navAccount(user, { discord = false, messaging = true } = {}) {
           ? `<a class="btn btn-ghost nav-messages" href="/messages" data-link>Messages<span data-unread-slot></span></a>`
           : ""
       }
-      <a class="btn btn-ghost" href="/account" data-link>${escapeHtml(displayName(user))}${badge}</a>
+      <a class="btn btn-ghost nav-account" href="/account" data-link>${userAvatar(user)}<span>${escapeHtml(
+        displayName(user)
+      )}</span>${badge}</a>
       <button class="btn btn-ghost" type="button" data-logout>Sign out</button>
     `;
   }
@@ -2495,7 +2532,7 @@ export function playerSections(player) {
   return [
     listingSection(player, "offering", "What they bring"),
     listingSection(player, "requirements", "What they want from a clan"),
-    listingSection(player, "howToJoin", "How to reach them", { accent: true }),
+    listingSection(player, "howToJoin", "How to reach them"),
   ].join("");
 }
 
@@ -2583,6 +2620,7 @@ export function playerPostView({ user, draft = {}, auth = {} }) {
           <button class="btn btn-primary" type="submit">${editing ? "Save changes" : "Publish profile"}</button>
           <p class="error" id="form-note" hidden></p>
         </div>
+        ${deleteFromComposer("player", draft.id, "profile")}
       </form>
       <aside class="preview-panel">
         <h2>Preview</h2>
