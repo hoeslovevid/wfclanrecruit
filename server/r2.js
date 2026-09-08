@@ -6,16 +6,48 @@ const PREFIX = "listings/";
 
 let clientLoader = null;
 
+// The bucket setting is often pasted out of the Cloudflare dashboard as the
+// whole S3 URL rather than the name at the end of it. Every upload then fails
+// with "Bucket name shouldn't contain '/'" - so the name is taken off the end,
+// and the origin it came with is used as the endpoint when none was set
+// separately, which is what that URL was describing anyway.
+export function splitBucket(raw) {
+  const value = String(raw || "")
+    .trim()
+    .replace(/\/$/, "");
+  if (!/^https?:\/\//i.test(value)) return { bucket: value, endpoint: "" };
+  try {
+    const url = new URL(value);
+    const name = url.pathname.split("/").filter(Boolean).pop() || "";
+    return { bucket: name, endpoint: url.origin };
+  } catch {
+    return { bucket: "", endpoint: "" };
+  }
+}
+
+// The public host is pasted without its scheme just as often. Left alone,
+// every stored image URL is a relative path, so the emblem uploads and then
+//404s against our own origin.
+export function publicBaseUrl(raw) {
+  const value = String(raw || "")
+    .trim()
+    .replace(/\/$/, "");
+  if (!value) return "";
+  return /^https?:\/\//i.test(value) ? value : `https://${value}`;
+}
+
 export function r2Config() {
   const accountId = String(process.env.R2_ACCOUNT_ID || "").trim();
   const accessKeyId = String(process.env.R2_ACCESS_KEY_ID || "").trim();
   const secretAccessKey = String(process.env.R2_SECRET_ACCESS_KEY || "").trim();
-  const bucket = String(process.env.R2_BUCKET || "").trim();
-  const publicBase = String(process.env.R2_PUBLIC_URL || "")
-    .trim()
-    .replace(/\/$/, "");
+  const { bucket, endpoint: bucketEndpoint } = splitBucket(process.env.R2_BUCKET);
+  const publicBase = publicBaseUrl(process.env.R2_PUBLIC_URL);
   if (!accountId || !accessKeyId || !secretAccessKey || !bucket || !publicBase) return null;
-  return { accountId, accessKeyId, secretAccessKey, bucket, publicBase };
+  const endpoint =
+    String(process.env.R2_ENDPOINT || "").trim() ||
+    bucketEndpoint ||
+    `https://${accountId}.r2.cloudflarestorage.com`;
+  return { accountId, accessKeyId, secretAccessKey, bucket, publicBase, endpoint };
 }
 
 export function r2Enabled() {
@@ -68,11 +100,9 @@ async function loadClient() {
   if (!clientLoader) {
     clientLoader = import("@aws-sdk/client-s3")
       .then(({ S3Client }) => {
-        const endpoint =
-          String(process.env.R2_ENDPOINT || "").trim() || `https://${cfg.accountId}.r2.cloudflarestorage.com`;
         return new S3Client({
           region: "auto",
-          endpoint,
+          endpoint: cfg.endpoint,
           forcePathStyle: true,
           requestChecksumCalculation: "WHEN_REQUIRED",
           responseChecksumValidation: "WHEN_REQUIRED",

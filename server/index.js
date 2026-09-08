@@ -424,7 +424,8 @@ async function processListingImages(req, res) {
       const filename = await resizeListingImage(file.path);
       file.filename = filename;
       file.path = path.join(paths.uploadDir, filename);
-    } catch {
+    } catch (error) {
+      console.error("Image resize failed:", error.message);
       discardUploads(req);
       res.status(400).json({ error: "That image could not be read. Use a PNG, JPG, WEBP, or GIF." });
       return false;
@@ -435,7 +436,10 @@ async function processListingImages(req, res) {
       if (!publicUrl) throw new Error("R2 put returned nothing");
       file.publicUrl = publicUrl;
       fs.rmSync(file.path, { force: true });
-    } catch {
+    } catch (error) {
+      // Swallowing this is what made a misconfigured bucket look like a
+      // browser problem: every upload failed and nothing reached the logs.
+      console.error("Media store failed:", error.message);
       discardUploads(req);
       res.status(503).json({ error: "Could not store that image. Try again in a moment." });
       return false;
