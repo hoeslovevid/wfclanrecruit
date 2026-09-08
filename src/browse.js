@@ -53,6 +53,7 @@ export function defaultFilters() {
     online: false,
     recruiting: true,
     mr: "0",
+    hours: "",
     sort: "newest",
   };
 }
@@ -71,6 +72,7 @@ export function filtersFromSearch(search) {
   filters.online = params.get("online") === "1";
   filters.recruiting = params.get("recruiting") !== "0";
   filters.mr = String(params.get("mr") || "0");
+  filters.hours = String(params.get("hours") || "");
   filters.sort = String(params.get("sort") || "newest");
   return { filters, page: Number(params.get("page") || 1) };
 }
@@ -88,6 +90,7 @@ export function filtersToSearch(filters, page = 1) {
   if (filters.online) params.set("online", "1");
   if (!filters.recruiting) params.set("recruiting", "0");
   if (Number(filters.mr) > 0) params.set("mr", String(filters.mr));
+  if (filters.hours) params.set("hours", filters.hours);
   if (filters.sort && filters.sort !== "newest") params.set("sort", filters.sort);
   if (page > 1) params.set("page", String(page));
   const qs = params.toString();
@@ -168,4 +171,49 @@ export function applyAllianceFilters(alliances, filters) {
       if (a.recruiting !== b.recruiting) return a.recruiting ? -1 : 1;
       return new Date(b.bumpedAt || b.createdAt) - new Date(a.bumpedAt || a.createdAt);
     });
+}
+
+// The MR filter means the opposite thing on this side of the board, and that is
+// the one trap in reusing the clan filters wholesale.
+//
+// On clans, `mr` is *the visitor's* rank: they type theirs and the board hides
+// clans that would turn them away, so a clan is excluded when it demands more
+// than they have. On players, `mr` is a *floor* a recruiter sets: show me people
+// at least this experienced, so a player is excluded when they have less than it
+// asks for. Same query parameter, opposite comparison - which is why it is
+// spelled out here rather than left to be read off the symmetry.
+export function applyPlayerFilters(players, filters) {
+  const q = String(filters.q || "").toLowerCase();
+  const mrFloor = Number(filters.mr || 0);
+  const playstyles = selectedPlaystyles(filters);
+  const list = (players || []).filter((player) => {
+    if (player.hidden) return false;
+    const hay = [player.name, player.headline, player.summary, (player.playstyles || []).join(" ")]
+      .join(" ")
+      .toLowerCase();
+    if (q && !hay.includes(q)) return false;
+    if (filters.platform && !platformMatches(player.platform, filters.platform)) return false;
+    if (playstyles.length && !playstyles.every((item) => (player.playstyles || []).includes(item))) return false;
+    if (filters.region && player.region !== filters.region) return false;
+    if (filters.language && player.language !== filters.language) return false;
+    if (filters.status && player.status !== filters.status) return false;
+    if (filters.hours && player.hours !== filters.hours) return false;
+    if (filters.online && !player.online) return false;
+    // `recruiting` is the shared name for "this listing is live"; on a player it
+    // reads as still looking.
+    if (filters.recruiting && !player.recruiting) return false;
+    if (mrFloor > 0 && Number(player.mr || 0) < mrFloor) return false;
+    return true;
+  });
+  if (filters.sort === "mr") {
+    // Highest first. A recruiter sorting by MR is looking for the most
+    // experienced player, where a recruit sorting clans wants the lowest bar.
+    list.sort((a, b) => Number(b.mr || 0) - Number(a.mr || 0));
+  } else {
+    list.sort((a, b) => {
+      if (a.recruiting !== b.recruiting) return a.recruiting ? -1 : 1;
+      return new Date(b.bumpedAt || b.createdAt) - new Date(a.bumpedAt || a.createdAt);
+    });
+  }
+  return list;
 }

@@ -83,6 +83,16 @@ export function publishGate(user, { isProd }) {
   return { ok: true, reason: null, message: null };
 }
 
+// Discord serves avatars off its CDN, keyed by the user id and the avatar hash
+// the OAuth profile hands back. No hash means the account never set a picture,
+// and the caller falls back rather than requesting a broken URL.
+export function discordAvatarUrl(user, size = 128) {
+  if (!user?.discordId || !user?.discordAvatar) return null;
+  // A hash starting a_ is an animated avatar; .png renders the still frame,
+  // which is what a listing card wants anyway.
+  return `https://cdn.discordapp.com/avatars/${user.discordId}/${user.discordAvatar}.png?size=${size}`;
+}
+
 export function publicAccount(user, { isProd }) {
   if (!user) return null;
   const gate = publishGate(user, { isProd });
@@ -93,6 +103,7 @@ export function publicAccount(user, { isProd }) {
     createdAt: user.createdAt,
     discordId: user.discordId || null,
     discordUsername: user.discordUsername || null,
+    discordAvatarUrl: discordAvatarUrl(user),
     discordAgeDays: user.discordId ? discordAgeDays(user.discordId) : null,
     forumVerified: Boolean(user.forumVerified),
     forumName: user.forumName || null,

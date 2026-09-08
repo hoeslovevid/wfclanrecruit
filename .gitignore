@@ -1,5 +1,8 @@
 node_modules
 dist
 .DS_Store
-data/db.json
+# Local storage. db.json holds accounts and listings; messages.json holds
+# private conversations. Neither belongs in the repo, and the glob covers
+# whatever the next lane adds rather than waiting to be remembered.
+data/*.json
 uploads

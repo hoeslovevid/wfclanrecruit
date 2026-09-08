@@ -40,6 +40,7 @@ function emptyDb() {
     sessions: [],
     clans: [],
     alliances: [],
+    players: [],
     reports: [],
   };
 }
@@ -233,6 +234,9 @@ export function readDb() {
     cache = JSON.parse(fs.readFileSync(dbPath, "utf8"));
   }
   if (!Array.isArray(cache.reports)) cache.reports = [];
+  // A database written before player profiles existed has no such key, and
+  // every reader treats it as a list.
+  if (!Array.isArray(cache.players)) cache.players = [];
   return cache;
 }
 
@@ -244,6 +248,7 @@ export function writeDb(mutator) {
     try {
       const next = mutator(db) ?? db;
       if (!Array.isArray(next.reports)) next.reports = [];
+      if (!Array.isArray(next.players)) next.players = [];
       writeDbFile(next);
       await persist(next);
       return next;

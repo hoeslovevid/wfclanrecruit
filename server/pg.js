@@ -49,6 +49,32 @@ const LISTING_COLUMNS = new Set([
   "bumpedAt",
 ]);
 
+// A player profile has no tag, no invite and no alliance, so it gets its own
+// column set rather than borrowing the listing one and leaving half of it NULL.
+const PLAYER_COLUMNS = new Set([
+  "id",
+  "ownerId",
+  "name",
+  "language",
+  "platform",
+  "region",
+  "status",
+  "mr",
+  "paused",
+  "createdAt",
+  "bumpedAt",
+]);
+
+// Everything above this line is the mirrored lane: tables loaded into memory
+// wholesale and rewritten by persistTables. Some tables cannot live that way -
+// messages grow without bound and every send is a write - so they are queried
+// directly instead. This is the door they use, and it is deliberately the only
+// one: nothing outside pg.js gets the pool itself.
+export async function query(sql, params = []) {
+  if (!pool) throw new Error("Postgres is not connected.");
+  return pool.query(sql, params);
+}
+
 export function postgresEnabled() {
   return Boolean(process.env.DATABASE_URL);
 }
@@ -106,6 +132,23 @@ function rowToListing(row) {
     inviteCheckedAt: iso(row.invite_checked_at),
     featured: Boolean(row.featured),
     allianceId: row.alliance_id || null,
+    createdAt: iso(row.created_at),
+    bumpedAt: iso(row.bumped_at),
+  };
+}
+
+function rowToPlayer(row) {
+  return {
+    ...(row.data || {}),
+    id: row.id,
+    ownerId: row.owner_id,
+    name: row.name,
+    language: row.language || null,
+    platform: row.platform || null,
+    region: row.region || null,
+    status: row.status || null,
+    mr: Number(row.mr || 0),
+    paused: Boolean(row.paused),
     createdAt: iso(row.created_at),
     bumpedAt: iso(row.bumped_at),
   };
@@ -199,6 +242,20 @@ export async function connectPg() {
       bumped_at TIMESTAMPTZ,
       data JSONB NOT NULL DEFAULT '{}'::jsonb
     );
+    CREATE TABLE IF NOT EXISTS players (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT,
+      name TEXT NOT NULL,
+      language TEXT,
+      platform TEXT,
+      region TEXT,
+      status TEXT,
+      mr INTEGER NOT NULL DEFAULT 0,
+      paused BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ,
+      bumped_at TIMESTAMPTZ,
+      data JSONB NOT NULL DEFAULT '{}'::jsonb
+    );
     CREATE TABLE IF NOT EXISTS reports (
       id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
@@ -222,6 +279,8 @@ export async function connectPg() {
     CREATE INDEX IF NOT EXISTS clans_alliance ON clans (alliance_id);
     CREATE INDEX IF NOT EXISTS alliances_name_lower ON alliances (lower(name));
     CREATE INDEX IF NOT EXISTS alliances_tag ON alliances (tag);
+    CREATE UNIQUE INDEX IF NOT EXISTS players_owner ON players (owner_id);
+    CREATE INDEX IF NOT EXISTS players_platform ON players (platform);
     CREATE INDEX IF NOT EXISTS reports_status ON reports (status);
   `);
   await migrateFromAppState();
@@ -287,11 +346,12 @@ async function migrateFromAppState() {
 export async function loadState() {
   // Whatever we thought we had written no longer describes this process's view.
   digests = null;
-  const [users, sessions, clans, alliances, reports] = await Promise.all([
+  const [users, sessions, clans, alliances, players, reports] = await Promise.all([
     pool.query("SELECT * FROM users"),
     pool.query("SELECT token, user_id, expires FROM sessions"),
     pool.query("SELECT * FROM clans"),
     pool.query("SELECT * FROM alliances"),
+    pool.query("SELECT * FROM players"),
     pool.query("SELECT * FROM reports ORDER BY created_at DESC"),
   ]);
   if (
@@ -299,6 +359,7 @@ export async function loadState() {
     !sessions.rows.length &&
     !clans.rows.length &&
     !alliances.rows.length &&
+    !players.rows.length &&
     !reports.rows.length
   ) {
     return null;
@@ -316,6 +377,7 @@ export async function loadState() {
       return item;
     }),
     alliances: alliances.rows.map(rowToListing),
+    players: players.rows.map(rowToPlayer),
     reports: reports.rows.map(rowToReport),
   };
 }
@@ -357,6 +419,7 @@ function emptySnapshot() {
     sessions: new Map(),
     clans: new Map(),
     alliances: new Map(),
+    players: new Map(),
     reports: new Map(),
   };
 }
@@ -390,7 +453,7 @@ async function reconcile(client, table, column, ids) {
 // immediately. A large unexplained wipe is a bug, so fail loudly instead:
 // writeDb catches this and resyncs the cache from Postgres.
 const WIPE_LIMIT = 25;
-const PROTECTED = new Set(["users", "clans", "alliances"]);
+const PROTECTED = new Set(["users", "clans", "alliances", "players"]);
 
 // Sessions and reports churn on their own - sessions expire in batches - so
 // only the irreplaceable tables are guarded.
@@ -420,6 +483,7 @@ async function persistTables(db) {
   const sessions = uniqueBy(db.sessions, "token");
   const clans = uniqueBy(db.clans, "id");
   const alliances = uniqueBy(db.alliances, "id");
+  const players = uniqueBy(db.players, "id");
   const reports = uniqueBy(db.reports, "id");
   const client = await pool.connect();
   pending = emptySnapshot();
@@ -576,6 +640,41 @@ async function persistTables(db) {
       "id",
       alliances.map((item) => item.id)
     );
+
+    for (const player of players) {
+      await upsert(client, "players", player.id,
+        `INSERT INTO players (
+          id, owner_id, name, language, platform, region, status, mr, paused, created_at, bumped_at, data
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
+        ON CONFLICT (id) DO UPDATE SET
+          owner_id = EXCLUDED.owner_id,
+          name = EXCLUDED.name,
+          language = EXCLUDED.language,
+          platform = EXCLUDED.platform,
+          region = EXCLUDED.region,
+          status = EXCLUDED.status,
+          mr = EXCLUDED.mr,
+          paused = EXCLUDED.paused,
+          created_at = EXCLUDED.created_at,
+          bumped_at = EXCLUDED.bumped_at,
+          data = EXCLUDED.data`,
+        [
+          player.id,
+          player.ownerId || null,
+          player.name,
+          player.language || null,
+          player.platform || null,
+          player.region || null,
+          player.status || null,
+          Math.max(0, Math.min(36, Number(player.mr) || 0)),
+          Boolean(player.paused),
+          player.createdAt || null,
+          player.bumpedAt || null,
+          JSON.stringify(extraData(player, PLAYER_COLUMNS)),
+        ]
+      );
+    }
+    await reconcile(client, "players", "id", players.map((item) => item.id));
 
     for (const report of reports) {
       await upsert(client, "reports", report.id,

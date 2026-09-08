@@ -10,6 +10,16 @@ import { fileURLToPath } from "node:url";
 import { hashPassword, newToken, verifyPassword } from "./auth.js";
 import { initStorage, paths, postgresEnabled, readDb, storageLabel, writeDb, closePg } from "./db.js";
 import { rateLimit } from "./ratelimit.js";
+import {
+  BODY_MAX,
+  bodyError,
+  normalizeBody,
+  openError,
+  previewOf,
+  threadId as threadIdFor,
+} from "./messages.js";
+import * as store from "./store.js";
+import { PING_MS, publish, subscribe } from "./live.js";
 import { dropLegacyVideos } from "../src/video.js";
 import { MEDIA_MAX, mediaList, normalizeMedia, setUploadPublicBase, uploadedUrls, videoIdsOf } from "../src/media.js";
 import { normalizeRoles, roleTextError } from "../src/roles.js";
@@ -47,8 +57,13 @@ import {
 } from "../src/richtext.js";
 import {
   HEADLINE_MAX,
+  HOURS,
   LINK_MAX,
+  PLAYER_NAME_MAX,
+  PLAYER_STATUSES,
   SUMMARY_MAX,
+  isDiscordName,
+  normalizeDiscordName,
   TAG_MAX,
   VIDEO_MAX,
   normalizeContact,
@@ -88,6 +103,7 @@ import {
   FORUM_CHECK_COOLDOWN_MS,
   discordAgeDays,
   discordConfigured,
+  discordAvatarUrl,
   listingCreateWait,
   newForumToken,
   normalizeForumUrl,
@@ -187,6 +203,11 @@ const listingUpload = upload.fields([
   { name: "mediaImage", maxCount: MEDIA_MAX },
 ]);
 
+// A player profile takes no avatar: the picture is read off the owner's Discord
+// account. Accepting an `image` field anyway would write a file to disk that
+// nothing ever points at, so the field is simply not offered.
+const playerUpload = upload.fields([{ name: "mediaImage", maxCount: MEDIA_MAX }]);
+
 const app = express();
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
@@ -264,6 +285,23 @@ const registerLimiter = rateLimit({ name: "register", limit: 5, windowMs: 60 * 6
 const discordStartLimiter = rateLimit({ name: "discord-start", limit: 20, windowMs: 15 * 60 * 1000 });
 const exportLimiter = rateLimit({ name: "export", limit: 10, windowMs: 60 * 60 * 1000 });
 const listingLimiter = rateLimit({ name: "listing", limit: 20, windowMs: 60 * 60 * 1000 });
+// Generous for a conversation, tight enough that an automated account cannot
+// turn the inbox into a firehose.
+// Set once at boot. False means the message store did not come up, and every
+// messaging route says so plainly rather than failing in a different way each
+// time it is asked.
+let messagingUp = false;
+
+function requireStore(_req, res, next) {
+  if (!messagingUp) {
+    res.status(503).json({ error: "Messaging is temporarily unavailable." });
+    return;
+  }
+  next();
+}
+
+const messageLimiter = rateLimit({ name: "message", limit: 60, windowMs: 10 * 60 * 1000 });
+const threadOpenLimiter = rateLimit({ name: "thread-open", limit: 20, windowMs: 60 * 60 * 1000 });
 const reportLimiter = rateLimit({
   name: "report",
   limit: 8,
@@ -735,6 +773,96 @@ function parseAllianceBody(body, user, req) {
   };
 }
 
+// A player advertises themselves. Structurally this is a listing - the same
+// media strip, the same links row, the same rich-text body - so it reuses every
+// parser above rather than growing a second set. What it does not have is a
+// tag, a tier, a roster or an alliance: those are facts about an organisation,
+// and a person is not one.
+function playerRouteError({ contact, discordName, links }, user) {
+  if (wantsDiscord({ contact }) && discordName) return null;
+  if (wantsWhisper({ contact }) && user?.forumName) return null;
+  if ((links || []).length) return null;
+  return "Give clans at least one way to reach you: a Discord username, a verified forum name, or a link.";
+}
+
+function parsePlayerBody(body, user, req) {
+  const playstyles = normalizePlaystyles(asArray(body.playstyles));
+  const mr = Number(body.mr || 0);
+
+  if (!body.name || !body.headline || !body.summary) {
+    return { error: "Fill every required field." };
+  }
+  const about = normalizeAbout(body.about);
+  if (!plainTextFromHtml(about)) {
+    return { error: "Write the full post." };
+  }
+  const tooLong = aboutTooLong(about);
+  if (tooLong) return { error: tooLong };
+  if (playstyles.length === 0) {
+    return { error: "Pick at least one playstyle." };
+  }
+  if (!Number.isFinite(mr) || mr < 0 || mr > 36) {
+    return { error: "Enter a mastery rank between 0 and 36." };
+  }
+  const contact = normalizeContact(body.contact);
+  // A clan publishes an invite to its server. A player has no server - what a
+  // recruiter needs is the username to type into Add Friend - so this side of
+  // the board stores `discordName` and never touches the invite checker.
+  const discordName = wantsDiscord({ contact }) ? normalizeDiscordName(body.discordName) : "";
+  if (discordName && !isDiscordName(discordName)) {
+    return { error: "That is not a Discord username. Use the name you would type into Add Friend." };
+  }
+  // The one place a player profile is stricter than it looks: publishing an
+  // in-game name is a claim about who you are in the game, so it still needs a
+  // verified forum profile behind it. A Discord-only profile does not.
+  if (wantsWhisper({ contact }) && !user?.forumVerified) {
+    return {
+      error: "Verify your Warframe Forum account before you publish an in-game name.",
+    };
+  }
+  const parsedLinks = parseListingLinks(body.links);
+  if (parsedLinks.error) return { error: parsedLinks.error };
+  const routeError = playerRouteError({ contact, discordName, links: parsedLinks.links }, user);
+  if (routeError) return { error: routeError };
+  const hours = HOURS.includes(String(body.hours || "")) ? String(body.hours) : HOURS[0];
+  const status = PLAYER_STATUSES.includes(String(body.status || "")) ? String(body.status) : PLAYER_STATUSES[0];
+  // An empty pick means "any clan will do", which is a real answer and the one
+  // most players give.
+  const wantsTiers = asArray(body.wantsTiers).filter((tier) => Boolean(TIER_CAPS[tier]));
+  const parsedMedia = parseListingMedia(body, req);
+  if (parsedMedia.error) return { error: parsedMedia.error };
+  const parsedSections = parseListingSections(body);
+  if (parsedSections.error) return { error: parsedSections.error };
+  const sections = parsedSections.sections;
+
+  return {
+    fields: {
+      name: String(body.name).slice(0, PLAYER_NAME_MAX),
+      platform: String(body.platform || "PC"),
+      mr: Math.round(mr),
+      hours,
+      wantsTiers,
+      playstyles,
+      region: String(body.region || "Global"),
+      language: String(body.language || "English"),
+      status,
+      contact,
+      discordName,
+      links: parsedLinks.links,
+      paused: String(body.paused || "") === "1" || body.paused === true || body.paused === "true",
+      media: parsedMedia.media,
+      videos: videoIdsOf(parsedMedia.media),
+      video: videoIdsOf(parsedMedia.media)[0] || null,
+      headline: String(body.headline).slice(0, HEADLINE_MAX),
+      summary: String(body.summary).slice(0, SUMMARY_MAX),
+      about,
+      offering: sections.offering,
+      requirements: sections.requirements,
+      howToJoin: sections.howToJoin,
+    },
+  };
+}
+
 function configuredOrigins() {
   const list = [
     process.env.PUBLIC_URL,
@@ -880,11 +1008,32 @@ function decorateAlliance(alliance, db, user = null) {
   });
 }
 
+// A player profile has exactly one contact - the person it describes - so it
+// does not carry a roster, and its presence dot is simply theirs. `stats` is
+// stripped for the same reason a clan's is: the view count is the owner's
+// business.
+function decoratePlayer(player, db) {
+  const { stats, hiddenBy, hiddenAt, ...publicPlayer } = player;
+  const owner = (db.users || []).find((item) => item.id === player.ownerId);
+  return withBumpState({
+    ...publicPlayer,
+    playstyles: normalizePlaystyles(player.playstyles),
+    // A profile picture is not something a player should have to upload twice.
+    // It is read off their Discord account every time the profile is rendered,
+    // so changing it on Discord changes it here with nothing to re-save. No
+    // Discord picture means no image, and the card falls back to the mark.
+    image: discordAvatarUrl(owner),
+    whisperName: whisperName(player, db.users),
+    ...listingPresence(player, db.users),
+  });
+}
+
 app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
     name: "WF Clan Recruit",
     storage: postgresEnabled() ? "postgres" : "file",
+    messaging: messagingUp,
     media: r2Enabled() ? "r2" : "local",
   });
 });
@@ -907,6 +1056,7 @@ app.get("/api/auth/me", (req, res) => {
       minAgeDays: DISCORD_MIN_AGE_DAYS,
       passwordRegister: !isProd,
       r2PublicUrl: r2PublicUrl() || "",
+      messaging: messagingUp,
     },
   });
 });
@@ -1072,6 +1222,7 @@ app.get("/api/auth/discord/callback", async (req, res) => {
       }
       user.discordId = discordUser.id;
       user.discordUsername = discordUser.global_name || discordUser.username;
+      user.discordAvatar = discordUser.avatar || null;
       user.discordEmail = discordUser.email || null;
       db.sessions.push({
         token: sessionToken,
@@ -1276,6 +1427,7 @@ app.get("/api/auth/export", requireUser, exportLimiter, (req, res) => {
     recruiterInvites: pendingInvitesFor(db, user.id),
     clans: (db.clans || []).filter((item) => item.ownerId === user.id),
     alliances: (db.alliances || []).filter((item) => item.ownerId === user.id),
+    players: (db.players || []).filter((item) => item.ownerId === user.id),
     reports: (db.reports || []).filter((item) => item.reporterId === user.id),
   });
 });
@@ -1295,10 +1447,13 @@ app.delete("/api/auth/account", requireUser, (req, res) => {
     const droppedAlliances = new Set(
       (db.alliances || []).filter((item) => item.ownerId === userId).map((item) => item.id)
     );
-    for (const listing of [...(db.clans || []), ...(db.alliances || [])].filter((item) => item.ownerId === userId)) {
+    for (const listing of [...(db.clans || []), ...(db.alliances || []), ...(db.players || [])].filter(
+      (item) => item.ownerId === userId
+    )) {
       removeStoredFile(listing.image);
       dropUnusedMedia(listing);
     }
+    db.players = (db.players || []).filter((item) => item.ownerId !== userId);
     db.clans = (db.clans || [])
       .filter((item) => item.ownerId !== userId)
       .map((clan) => (droppedAlliances.has(clan.allianceId) ? { ...clan, allianceId: null } : clan))
@@ -1315,6 +1470,13 @@ app.delete("/api/auth/account", requireUser, (req, res) => {
     );
     db.sessions = (db.sessions || []).filter((item) => item.userId !== userId);
     db.users = (db.users || []).filter((item) => item.id !== userId);
+    // The second storage lane is not part of this transaction, so it is asked
+    // separately. Failing here must not fail the deletion the person asked for:
+    // the account is already gone, and an orphaned membership row is a smaller
+    // problem than a half-deleted account.
+    store.dropUser(userId).catch((error) => {
+      console.error("Could not clear messages for the deleted account:", error.message);
+    });
     res.clearCookie(COOKIE, cookieOptions());
     res.json({ ok: true });
     return db;
@@ -1682,7 +1844,7 @@ function writeReport(req, res, kind) {
   }
   const reporter = currentUser(req);
   writeDb((db) => {
-    const list = kind === "clan" ? db.clans : db.alliances;
+    const list = kind === "clan" ? db.clans : kind === "player" ? db.players || [] : db.alliances;
     const listing = list.find((item) => item.id === req.params.id);
     if (!listing) {
       res.status(404).json({ error: "Listing not found." });
@@ -1739,6 +1901,200 @@ app.delete("/api/clans/:id", requireUser, (req, res) => {
         : item
     );
     db.clans = db.clans.filter((item) => item.id !== clan.id);
+    dropThreadsFor(clan.id);
+    res.json({ ok: true });
+    return db;
+  });
+});
+
+// One profile per account. Two posts describing the same person is either a
+// mistake or an attempt to take two slots on the board, and neither is worth
+// supporting - so this is an upsert everywhere it is exposed, and a unique index
+// on players.owner_id backs it up in Postgres.
+function playerOf(db, userId) {
+  return (db.players || []).find((item) => item.ownerId === userId) || null;
+}
+
+app.get("/api/players", (req, res) => {
+  const db = readDb();
+  const user = currentUser(req);
+  const players = (db.players || [])
+    .filter((player) => canSeeListing(user, player))
+    .map((player) => withOwnerStats(decoratePlayer(player, db), player, user))
+    .sort(sortListings)
+    .map(trimListing);
+  res.json({ players });
+});
+
+app.get("/api/players/:id", (req, res) => {
+  const db = readDb();
+  const player = (db.players || []).find((item) => item.id === req.params.id);
+  const user = currentUser(req);
+  if (!player || !canSeeListing(user, player)) {
+    res.status(404).json({ error: "Player not found." });
+    return;
+  }
+  if (!player.hidden && !looksLikeBot(req.headers["user-agent"])) countView(player.id);
+  res.json({ player: withOwnerStats(decoratePlayer(player, db), player, user) });
+});
+
+app.post("/api/players/:id/whisper", statsLimiter, (req, res) => {
+  if (!looksLikeBot(req.headers["user-agent"])) countWhisper(String(req.params.id));
+  res.json({ ok: true });
+});
+
+// Signing in is the whole gate here, deliberately. `requirePoster` demands a
+// verified forum profile, which is the right bar for advertising an
+// organisation other people are asked to join. Asking to be recruited is the
+// low-stakes direction, and gating it would empty the board before it filled.
+// The one claim that still needs proof - an in-game name - is checked inside
+// parsePlayerBody instead.
+app.post("/api/players", requireUser, listingLimiter, playerUpload, async (req, res) => {
+  if (!assertListingFiles(req, res)) return;
+  if (!(await processListingImages(req, res))) return;
+  const parsed = parsePlayerBody(req.body, req.user, req);
+  if (parsed.error) {
+    discardUploads(req);
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  writeDb((db) => {
+    if (playerOf(db, req.user.id)) {
+      discardUploads(req);
+      res.status(409).json({ error: "You already have a player profile. Edit that one instead." });
+      return db;
+    }
+    const now = new Date().toISOString();
+    const player = {
+      id: slugify(parsed.fields.name),
+      ...parsed.fields,
+      ownerId: req.user.id,
+      createdAt: now,
+      bumpedAt: now,
+    };
+    db.players = db.players || [];
+    db.players.unshift(player);
+    res.status(201).json({ player: decoratePlayer(player, db) });
+    return db;
+  }).catch(listingWriteFailed(req, res));
+});
+
+app.put("/api/players/:id", requireUser, playerUpload, async (req, res) => {
+  if (!assertListingFiles(req, res)) return;
+  if (!(await processListingImages(req, res))) return;
+  const parsed = parsePlayerBody(req.body, req.user, req);
+  if (parsed.error) {
+    discardUploads(req);
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  writeDb((db) => {
+    const player = (db.players || []).find((item) => item.id === req.params.id);
+    if (!player) {
+      discardUploads(req);
+      res.status(404).json({ error: "Player not found." });
+      return db;
+    }
+    // A player profile has no recruiters, so there is no editor to delegate to:
+    // it is the owner or an admin, and nobody else.
+    if (!canRemove(req.user, player)) {
+      discardUploads(req);
+      res.status(403).json({ error: "You can only edit your own profile." });
+      return db;
+    }
+    dropUnusedMedia(player, parsed.fields.media);
+    Object.assign(player, parsed.fields);
+    res.json({ player: decoratePlayer(player, db) });
+    return db;
+  }).catch(listingWriteFailed(req, res));
+});
+
+app.post("/api/players/:id/bump", requireUser, async (req, res) => {
+  const current = (readDb().players || []).find((item) => item.id === req.params.id);
+  if (!current) {
+    res.status(404).json({ error: "Player not found." });
+    return;
+  }
+  if (!canRemove(req.user, current)) {
+    res.status(403).json({ error: "You can only bump your own profile." });
+    return;
+  }
+  const wait = bumpWaitMessage(current);
+  if (wait) {
+    res.status(429).json({ error: wait });
+    return;
+  }
+  // Nothing external to re-check: a username is not a link that can rot, which
+  // is most of why this side of the board publishes one.
+  writeDb((db) => {
+    const player = (db.players || []).find((item) => item.id === req.params.id);
+    if (!player) {
+      res.status(404).json({ error: "Player not found." });
+      return db;
+    }
+    player.bumpedAt = new Date().toISOString();
+    res.json({ player: decoratePlayer(player, db) });
+    return db;
+  });
+});
+
+app.post("/api/players/:id/pause", requireUser, (req, res) => {
+  writeDb((db) => {
+    const player = (db.players || []).find((item) => item.id === req.params.id);
+    if (!player) {
+      res.status(404).json({ error: "Player not found." });
+      return db;
+    }
+    if (!canRemove(req.user, player)) {
+      res.status(403).json({ error: "You can only pause your own profile." });
+      return db;
+    }
+    player.paused = Boolean(req.body.paused);
+    res.json({ player: decoratePlayer(player, db) });
+    return db;
+  });
+});
+
+app.post("/api/players/:id/hide", requireAdmin, (req, res) => {
+  writeDb((db) => {
+    const player = (db.players || []).find((item) => item.id === req.params.id);
+    if (!player) {
+      res.status(404).json({ error: "Player not found." });
+      return db;
+    }
+    const hidden = Boolean(req.body.hidden);
+    player.hidden = hidden;
+    player.hiddenAt = hidden ? new Date().toISOString() : null;
+    player.hiddenBy = hidden ? req.user.id : null;
+    res.json({ player: decoratePlayer(player, db) });
+    return db;
+  });
+});
+
+app.post("/api/players/:id/report", reportLimiter, (req, res) => writeReport(req, res, "player"));
+
+app.delete("/api/players/:id", requireUser, (req, res) => {
+  writeDb((db) => {
+    const player = (db.players || []).find((item) => item.id === req.params.id);
+    if (!player) {
+      res.status(404).json({ error: "Player not found." });
+      return db;
+    }
+    if (!canRemove(req.user, player)) {
+      res.status(403).json({ error: "You can only remove your own profile." });
+      return db;
+    }
+    dropUnusedMedia(player);
+    const now = new Date().toISOString();
+    db.reports = (db.reports || []).map((item) =>
+      item.listingId === player.id && item.status === "open"
+        ? { ...item, status: "resolved", resolvedAt: now }
+        : item
+    );
+    db.players = (db.players || []).filter((item) => item.id !== player.id);
+    dropThreadsFor(player.id);
     res.json({ ok: true });
     return db;
   });
@@ -1978,6 +2334,257 @@ app.delete("/api/alliances/:id", requireUser, (req, res) => {
       clan.allianceId === alliance.id ? { ...clan, allianceId: null } : clan
     );
     db.alliances = db.alliances.filter((item) => item.id !== alliance.id);
+    dropThreadsFor(alliance.id);
+    res.json({ ok: true });
+    return db;
+  });
+});
+
+// --- Messaging -------------------------------------------------------------
+//
+// Every route here reads through store.js rather than readDb: messages are the
+// one thing on this site that grows without bound, and keeping them out of the
+// in-memory database is the whole reason that lane exists.
+
+const LISTING_COLLECTIONS = { clan: "clans", alliance: "alliances", player: "players" };
+
+// Removing a post takes its conversations with it. Best effort for the same
+// reason the account cascade is: the listing is already gone, and a stranded
+// thread must not turn a successful delete into a 500.
+function dropThreadsFor(listingId) {
+  store.dropListing(listingId).catch((error) => {
+    console.error("Could not clear conversations for the removed listing:", error.message);
+  });
+}
+
+function listingFor(db, kind, id) {
+  const collection = LISTING_COLLECTIONS[kind];
+  if (!collection) return null;
+  return (db[collection] || []).find((item) => item.id === id) || null;
+}
+
+function listingPath(kind, id) {
+  return `/${LISTING_COLLECTIONS[kind] || "clans"}/${encodeURIComponent(id)}`;
+}
+
+// Who someone is inside a conversation. Never the account username - the board
+// knows people by their verified in-game name or their Discord handle, and the
+// inbox should call them the same thing the listing did.
+function messengerOf(db, userId) {
+  if (!userId) return { id: null, name: "(deleted account)", gone: true };
+  const user = (db.users || []).find((item) => item.id === userId);
+  if (!user) return { id: userId, name: "(deleted account)", gone: true };
+  return {
+    id: user.id,
+    name: user.forumName || user.discordUsername || user.username,
+    gone: false,
+  };
+}
+
+async function decorateThread(db, thread, userId) {
+  const members = await store.membersOf(thread.id);
+  const otherId = members.map((item) => item.userId).find((id) => id !== userId) || null;
+  return {
+    ...thread,
+    with: messengerOf(db, otherId),
+    href: listingPath(thread.kind, thread.listingId),
+    preview: thread.last ? previewOf(thread.last.body) : "",
+  };
+}
+
+// Membership is the authorisation. There is no "view any thread" path, for
+// admins either: a private conversation is not moderation material until
+// somebody reports it.
+async function requireMember(req, res) {
+  const thread = await store.getThread(req.params.id);
+  if (!thread) {
+    res.status(404).json({ error: "Conversation not found." });
+    return null;
+  }
+  const members = await store.membersOf(thread.id);
+  if (!members.some((item) => item.userId === req.user.id)) {
+    res.status(403).json({ error: "That is not your conversation." });
+    return null;
+  }
+  return { thread, members };
+}
+
+app.get("/api/messages", requireUser, requireStore, async (req, res) => {
+  const db = readDb();
+  const threads = await store.inboxFor(req.user.id);
+  const decorated = [];
+  for (const thread of threads) decorated.push(await decorateThread(db, thread, req.user.id));
+  res.json({ threads: decorated });
+});
+
+// The live tap. Everything it carries is already stored, so a client that never
+// connects loses nothing but immediacy.
+//
+// This must stay above "/api/messages/:id": Express matches in declaration
+// order, and a path parameter will happily swallow the literal "stream".
+app.get("/api/messages/stream", requireUser, requireStore, (req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    // Nginx and friends buffer a streaming response by default, which holds
+    // every event until the connection closes. This is the opt-out.
+    "X-Accel-Buffering": "no",
+  });
+  res.flushHeaders?.();
+
+  const send = (event, data) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+  send("ready", { at: new Date().toISOString() });
+
+  const unsubscribe = subscribe(req.user.id, send);
+  const ping = setInterval(() => {
+    try {
+      res.write(": ping\n\n");
+    } catch {
+      /* the close handler cleans up */
+    }
+  }, PING_MS);
+
+  req.on("close", () => {
+    clearInterval(ping);
+    unsubscribe();
+    res.end();
+  });
+});
+
+app.get("/api/messages/unread", requireUser, requireStore, async (req, res) => {
+  res.json({ unread: await store.unreadTotal(req.user.id) });
+});
+
+// Blocking cuts both directions at once - see blockedBetween in messages.js.
+app.post("/api/messages/block", requireUser, requireStore, async (req, res) => {
+  const blockedId = String(req.body.userId || "");
+  if (!blockedId || blockedId === req.user.id) {
+    res.status(400).json({ error: "Pick someone to block." });
+    return;
+  }
+  const on = req.body.blocked !== false;
+  await store.setBlock(req.user.id, blockedId, on);
+  res.json({ blocked: on });
+});
+
+// Opening a conversation is separate from sending one, so the compose box can
+// show the history with someone you have already written to rather than
+// silently starting a second thread about the same listing.
+app.post("/api/messages/open", requireUser, requireStore, threadOpenLimiter, async (req, res) => {
+  const kind = String(req.body.kind || "");
+  const listingId = String(req.body.listingId || "");
+  const db = readDb();
+  const listing = listingFor(db, kind, listingId);
+  const problem = openError({
+    senderId: req.user.id,
+    ownerId: listing?.ownerId,
+    listingId: listing?.id,
+  });
+  if (problem) {
+    res.status(400).json({ error: problem });
+    return;
+  }
+  const blocks = await store.blocksFor(req.user.id);
+  if (blocks.some((row) => row.userId === listing.ownerId || row.blockedId === listing.ownerId)) {
+    res.status(403).json({ error: "You cannot message that person." });
+    return;
+  }
+  const id = threadIdFor(kind, listing.id, req.user.id, listing.ownerId);
+  const thread = await store.openThread({
+    id,
+    kind,
+    listingId: listing.id,
+    listingName: listing.name,
+    userIds: [req.user.id, listing.ownerId],
+  });
+  const messages = await store.messagesIn(thread.id);
+  res.json({
+    thread: await decorateThread(db, { ...thread, last: messages[messages.length - 1] || null }, req.user.id),
+    messages: messages.map((item) => ({ ...item, from: messengerOf(db, item.senderId) })),
+  });
+});
+
+app.get("/api/messages/:id", requireUser, requireStore, async (req, res) => {
+  const found = await requireMember(req, res);
+  if (!found) return;
+  const db = readDb();
+  const messages = await store.messagesIn(found.thread.id);
+  await store.markRead(found.thread.id, req.user.id);
+  res.json({
+    thread: await decorateThread(
+      db,
+      { ...found.thread, last: messages[messages.length - 1] || null },
+      req.user.id
+    ),
+    messages: messages.map((item) => ({ ...item, from: messengerOf(db, item.senderId) })),
+  });
+});
+
+app.post("/api/messages/:id", requireUser, requireStore, messageLimiter, async (req, res) => {
+  const found = await requireMember(req, res);
+  if (!found) return;
+  const problem = bodyError(req.body.body);
+  if (problem) {
+    res.status(400).json({ error: problem });
+    return;
+  }
+  const otherId = found.members.map((item) => item.userId).find((id) => id !== req.user.id) || null;
+  const blocks = await store.blocksFor(req.user.id);
+  if (otherId && blocks.some((row) => row.userId === otherId || row.blockedId === otherId)) {
+    res.status(403).json({ error: "You cannot message that person." });
+    return;
+  }
+  const message = await store.addMessage({
+    threadId: found.thread.id,
+    senderId: req.user.id,
+    body: normalizeBody(req.body.body),
+  });
+  const db = readDb();
+  const from = messengerOf(db, req.user.id);
+  // Best effort: the message is already durable, so a closed stream is not an
+  // error, it just means they will see it on their next load.
+  if (otherId) {
+    publish(otherId, "message", {
+      ...message,
+      from,
+      threadName: found.thread.listingName,
+      href: listingPath(found.thread.kind, found.thread.listingId),
+    });
+  }
+  res.status(201).json({ message: { ...message, from } });
+});
+
+app.post("/api/messages/:id/read", requireUser, requireStore, async (req, res) => {
+  const found = await requireMember(req, res);
+  if (!found) return;
+  const readAt = await store.markRead(found.thread.id, req.user.id);
+  res.json({ readAt, unread: await store.unreadTotal(req.user.id) });
+});
+
+app.post("/api/messages/:id/report", requireUser, requireStore, reportLimiter, async (req, res) => {
+  const found = await requireMember(req, res);
+  if (!found) return;
+  const reason = String(req.body.reason || "");
+  if (!REPORT_REASONS.includes(reason)) {
+    res.status(400).json({ error: "Pick a report reason." });
+    return;
+  }
+  writeDb((db) => {
+    db.reports = db.reports || [];
+    db.reports.unshift({
+      id: `report-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
+      kind: "message",
+      listingId: found.thread.listingId,
+      listingName: found.thread.listingName,
+      reason,
+      details: String(req.body.details || "").slice(0, 400),
+      reporterId: req.user.id,
+      createdAt: new Date().toISOString(),
+      status: "open",
+    });
     res.json({ ok: true });
     return db;
   });
@@ -1990,7 +2597,11 @@ app.get("/robots.txt", (req, res) => {
 app.get("/sitemap.xml", (req, res) => {
   const db = readDb();
   res.type("application/xml").send(
-    sitemapXml(publicOrigin(req), { clans: db.clans || [], alliances: db.alliances || [] })
+    sitemapXml(publicOrigin(req), {
+      clans: db.clans || [],
+      alliances: db.alliances || [],
+      players: db.players || [],
+    })
   );
 });
 
@@ -2013,10 +2624,8 @@ async function sendListingPage(req, res, next, vite) {
   }
   const origin = publicOrigin(req);
   const db = readDb();
-  const listing =
-    match.kind === "clan"
-      ? (db.clans || []).find((item) => item.id === match.id)
-      : (db.alliances || []).find((item) => item.id === match.id);
+  const collections = { clan: db.clans, alliance: db.alliances, player: db.players };
+  const listing = (collections[match.kind] || []).find((item) => item.id === match.id);
   const source = isProd ? path.join(distDir, "index.html") : indexPath;
   let html = fs.readFileSync(source, "utf8");
   html = applySocialMeta(
@@ -2130,6 +2739,21 @@ async function clearUploadedVideos() {
 async function start() {
   setUploadPublicBase(r2PublicUrl());
   await initStorage();
+  // The second storage lane comes up after the first, because on Postgres it
+  // needs the pool that initStorage opened.
+  //
+  // Deliberately not fatal. The board - listings, accounts, the whole reason
+  // the site exists - does not depend on this lane, and a messaging problem
+  // taking down recruitment would be a far worse outage than messaging being
+  // unavailable for an hour. So it is logged loudly, the feature switches off,
+  // and everything else serves as normal.
+  try {
+    await store.initStore(paths.dataDir);
+    messagingUp = true;
+  } catch (error) {
+    messagingUp = false;
+    console.error("Messaging is unavailable: the message store failed to start.", error);
+  }
   await clearUploadedVideos();
   const frontend = await attachFrontend();
   server = app.listen(PORT, "0.0.0.0");

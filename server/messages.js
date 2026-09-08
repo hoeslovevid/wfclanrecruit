@@ -1,0 +1,74 @@
+// The rules of a conversation, kept away from both storage and HTTP so they can
+// be tested on their own. Nothing in here touches the database.
+
+// Long enough for a real introduction, short enough that the inbox stays a list
+// of messages rather than a list of essays.
+export const BODY_MAX = 2000;
+
+// A thread is always *about* something - a listing or a profile - so a recruit
+// opening their inbox can tell which of five clans a stranger is writing about.
+// A message with no subject is a message with no context.
+export const THREAD_KINDS = ["clan", "alliance", "player"];
+
+export function normalizeBody(value) {
+  // Collapse the runs of blank lines people get from pasting, but keep the
+  // paragraph breaks they typed on purpose.
+  return String(value ?? "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(0, BODY_MAX);
+}
+
+export function bodyError(value) {
+  const body = normalizeBody(value);
+  if (!body) return "Write a message first.";
+  if (String(value ?? "").trim().length > BODY_MAX) {
+    return `Messages are up to ${BODY_MAX} characters.`;
+  }
+  return null;
+}
+
+// Two people, always the same two, in a stable order. The id is derived rather
+// than random so opening a conversation twice from two different pages lands in
+// the same thread instead of forking it - and so "do these two already have a
+// thread about this listing?" is a primary-key lookup, not a scan.
+export function threadId(kind, listingId, a, b) {
+  const pair = [String(a), String(b)].sort();
+  return `${kind}:${listingId}:${pair[0]}:${pair[1]}`;
+}
+
+// You cannot message yourself, and you cannot open a thread about a listing
+// with someone who has nothing to do with it. The caller supplies the owner;
+// this only decides whether the pairing makes sense.
+export function openError({ senderId, ownerId, listingId }) {
+  if (!listingId) return "That listing is gone.";
+  if (!ownerId) return "That listing has no owner to write to.";
+  if (senderId === ownerId) return "That is your own listing.";
+  return null;
+}
+
+// Unread is per person, not per thread: the same thread is read for one side
+// and unread for the other. A message you sent yourself never counts.
+export function unreadIn(messages, { userId, readAt }) {
+  const since = readAt ? new Date(readAt).getTime() : 0;
+  return (messages || []).filter(
+    (item) => item.senderId !== userId && new Date(item.createdAt).getTime() > since
+  ).length;
+}
+
+// What the inbox row shows before you open it.
+export function previewOf(body, max = 90) {
+  const line = String(body || "").replace(/\s+/g, " ").trim();
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
+// A blocked pair is blocked in both directions. Blocking someone to stop them
+// writing to you, and then being able to write to them, is not a block - it is
+// a mute with a loophole.
+export function blockedBetween(blocks, a, b) {
+  return (blocks || []).some(
+    (row) =>
+      (row.userId === a && row.blockedId === b) || (row.userId === b && row.blockedId === a)
+  );
+}

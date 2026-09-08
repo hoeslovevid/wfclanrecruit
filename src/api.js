@@ -65,6 +65,31 @@ export const api = {
   reportAlliance: (id, body) =>
     request(`/api/alliances/${id}/report`, { method: "POST", body: JSON.stringify(body) }),
   deleteAlliance: (id) => request(`/api/alliances/${id}`, { method: "DELETE" }),
+  players: () => request("/api/players"),
+  player: (id) => request(`/api/players/${id}`),
+  createPlayer: (formData) => request("/api/players", { method: "POST", body: formData }),
+  updatePlayer: (id, formData) => request(`/api/players/${id}`, { method: "PUT", body: formData }),
+  bumpPlayer: (id) => request(`/api/players/${id}/bump`, { method: "POST", body: "{}" }),
+  pausePlayer: (id, paused) =>
+    request(`/api/players/${id}/pause`, { method: "POST", body: JSON.stringify({ paused }) }),
+  hidePlayer: (id, hidden) =>
+    request(`/api/players/${id}/hide`, { method: "POST", body: JSON.stringify({ hidden }) }),
+  reportPlayer: (id, body) => request(`/api/players/${id}/report`, { method: "POST", body: JSON.stringify(body) }),
+  deletePlayer: (id) => request(`/api/players/${id}`, { method: "DELETE" }),
+  countPlayerWhisper: (id) => request(`/api/players/${id}/whisper`, { method: "POST", body: "{}" }),
+  inbox: () => request("/api/messages"),
+  unread: () => request("/api/messages/unread"),
+  openThread: (kind, listingId) =>
+    request("/api/messages/open", { method: "POST", body: JSON.stringify({ kind, listingId }) }),
+  thread: (id) => request(`/api/messages/${encodeURIComponent(id)}`),
+  send: (id, body) =>
+    request(`/api/messages/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify({ body }) }),
+  readThread: (id) =>
+    request(`/api/messages/${encodeURIComponent(id)}/read`, { method: "POST", body: "{}" }),
+  reportThread: (id, body) =>
+    request(`/api/messages/${encodeURIComponent(id)}/report`, { method: "POST", body: JSON.stringify(body) }),
+  blockUser: (userId, blocked) =>
+    request("/api/messages/block", { method: "POST", body: JSON.stringify({ userId, blocked }) }),
   reports: () => request("/api/reports"),
   resolveReport: (id, status) =>
     request(`/api/reports/${id}/resolve`, { method: "POST", body: JSON.stringify({ status }) }),

@@ -1,6 +1,6 @@
 import { masteryDisplay } from "./mastery.js";
 import { bindFilterUpdates, resetFilterForm } from "./filter-ui.js";
-import { LINK_MAX } from "./data.js";
+import { LINK_MAX, isDiscordName, normalizeDiscordName } from "./data.js";
 import { api } from "./api.js";
 import {
   activeFilterCount,
@@ -19,11 +19,23 @@ import {
   guideView,
   homeView,
   navAccount,
+  conversationHtml,
   listingSections,
+  messageBubble,
+  messagesView,
+  threadListHtml,
+  unreadBadge,
+  playerCard,
+  playerSections,
+  playerPage,
+  playerPostView,
+  playerResultsHtml,
+  playersView,
   postBodyHtml,
   postView,
   previewAlliance,
   previewClan,
+  previewPlayer,
   heldUntilNote,
   presenceSummary,
   readLinkRows,
@@ -54,6 +66,7 @@ import { MEDIA_MAX, parseImageUrl, setUploadPublicBase } from "./media.js";
 import {
   applyAllianceFilters,
   applyClanFilters,
+  applyPlayerFilters,
   filtersFromSearch,
   filtersToSearch,
   paginate,
@@ -83,6 +96,9 @@ const state = {
   user: null,
   clans: [],
   alliances: [],
+  players: [],
+  threads: [],
+  unread: 0,
   auth: { discord: false, passwordRegister: false, minAgeDays: 7 },
 };
 
@@ -121,7 +137,8 @@ function setActiveNav(path) {
       match === path ||
       (match === "/post" && path === "/post-alliance") ||
       (match === "/browse" && path.startsWith("/clans/")) ||
-      (match === "/alliances" && path.startsWith("/alliances/"));
+      (match === "/alliances" && path.startsWith("/alliances/")) ||
+      (match === "/players" && (path.startsWith("/players/") || path === "/lfc"));
     link.classList.toggle("is-active", active);
   });
 }
@@ -133,24 +150,34 @@ function closeDrawer() {
 }
 
 function renderNav() {
-  const html = navAccount(state.user, { discord: Boolean(state.auth.discord) });
+  const html = navAccount(state.user, {
+    discord: Boolean(state.auth.discord),
+    messaging: state.auth.messaging !== false,
+  });
   if (accountSlot) accountSlot.innerHTML = html;
   if (drawerAccount) drawerAccount.innerHTML = html;
+  // The nav is rebuilt wholesale, which blanks the badge slot, so it is filled
+  // again from the count already in memory rather than re-fetched.
+  paintUnread();
 }
 
 async function refresh() {
-  const [me, clansRes, alliancesRes] = await Promise.all([
+  const [me, clansRes, alliancesRes, playersRes] = await Promise.all([
     api.me().catch(() => ({ user: null })),
     api.clans(),
     api.alliances(),
+    api.players(),
   ]);
   state.user = me.user;
   state.auth = me.auth || state.auth;
   setUploadPublicBase(state.auth.r2PublicUrl);
   state.clans = clansRes.clans;
   state.alliances = alliancesRes.alliances;
+  state.players = playersRes.players;
   renderNav();
   startHeartbeat();
+  startLive();
+  await refreshUnread();
 }
 
 // Liveness is in-memory on the server (see server/presence.js), so the tab has
@@ -212,6 +239,176 @@ document.addEventListener("change", async (event) => {
   }
 });
 
+// --- Messaging -------------------------------------------------------------
+//
+// The stream is a tap on the shoulder, not the source of truth: every event it
+// carries is already stored, so a browser that never connects - or one whose
+// connection drops and never comes back - loses immediacy and nothing else.
+
+let live = null;
+
+function paintUnread() {
+  for (const slot of document.querySelectorAll("[data-unread-slot]")) {
+    slot.innerHTML = unreadBadge(state.unread);
+  }
+}
+
+async function refreshUnread() {
+  if (!state.user || state.auth.messaging === false) {
+    state.unread = 0;
+    paintUnread();
+    return;
+  }
+  try {
+    const { unread } = await api.unread();
+    state.unread = unread;
+    paintUnread();
+  } catch {
+    /* the badge is not worth an error */
+  }
+}
+
+function startLive() {
+  if (!state.user || state.auth.messaging === false) {
+    stopLive();
+    return;
+  }
+  if (live) return;
+  // EventSource reconnects on its own, so there is deliberately no retry loop
+  // here - writing one would fight the browser's.
+  live = new EventSource("/api/messages/stream", { withCredentials: true });
+  live.addEventListener("message", (event) => {
+    let payload = null;
+    try {
+      payload = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    onIncoming(payload);
+  });
+  // Left to the browser: closing the source here would stop it retrying.
+  live.addEventListener("error", () => {});
+}
+
+function stopLive() {
+  live?.close();
+  live = null;
+}
+
+// A message arriving while its conversation is open should appear in it.
+// Arriving anywhere else, it should only move the badge.
+function onIncoming(message) {
+  const panel = app.querySelector("[data-conversation]");
+  if (panel && message.threadId === panel.dataset.threadId) {
+    const bubbles = panel.querySelector("[data-bubbles]");
+    if (bubbles) {
+      bubbles.insertAdjacentHTML("beforeend", messageBubble(message, state.user?.id));
+      bubbles.scrollTop = bubbles.scrollHeight;
+      api
+        .readThread(message.threadId)
+        .then(({ unread }) => {
+          state.unread = unread;
+          paintUnread();
+        })
+        .catch(() => {});
+      loadInbox(message.threadId);
+      return;
+    }
+  }
+  state.unread += 1;
+  paintUnread();
+  if (window.location.pathname === "/messages") loadInbox();
+}
+
+async function loadInbox(activeId = "") {
+  try {
+    const { threads } = await api.inbox();
+    state.threads = threads;
+    const list = app.querySelector("[data-thread-list]");
+    if (list) list.innerHTML = threadListHtml(threads, activeId);
+  } catch {
+    /* leave whatever is already on screen */
+  }
+}
+
+async function openConversation(id) {
+  const panel = app.querySelector("[data-conversation]");
+  if (!panel) return;
+  try {
+    const { thread, messages } = await api.thread(id);
+    panel.dataset.threadId = thread.id;
+    panel.innerHTML = conversationHtml(thread, messages, state.user?.id);
+    const bubbles = panel.querySelector("[data-bubbles]");
+    if (bubbles) bubbles.scrollTop = bubbles.scrollHeight;
+    bindConversation(panel, thread);
+    await refreshUnread();
+    await loadInbox(thread.id);
+  } catch (error) {
+    panel.innerHTML = `<div class="conversation-empty"><p class="error">${error.message}</p></div>`;
+  }
+}
+
+function bindConversation(panel, thread) {
+  const form = panel.querySelector("[data-send-form]");
+  const note = panel.querySelector("[data-send-note]");
+  const box = form?.querySelector("textarea");
+  const submit = async (event) => {
+    event?.preventDefault();
+    const body = box.value.trim();
+    if (!body) return;
+    // Cleared optimistically so a slow send cannot be submitted twice, but put
+    // back if it fails: losing what someone typed is worse than an error.
+    box.value = "";
+    try {
+      const { message } = await api.send(thread.id, body);
+      const bubbles = panel.querySelector("[data-bubbles]");
+      if (bubbles) {
+        if (!bubbles.querySelector(".bubble")) bubbles.innerHTML = "";
+        bubbles.insertAdjacentHTML("beforeend", messageBubble(message, state.user?.id));
+        bubbles.scrollTop = bubbles.scrollHeight;
+      }
+      showNote(note, "", "muted");
+      await loadInbox(thread.id);
+    } catch (error) {
+      box.value = body;
+      showNote(note, error.message);
+    }
+  };
+  form?.addEventListener("submit", submit);
+  // Enter sends, Shift+Enter is a newline. Without this a two-line message
+  // becomes two messages.
+  box?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) submit(event);
+  });
+  panel.querySelector("[data-block-user]")?.addEventListener("click", async (event) => {
+    const userId = event.currentTarget.dataset.blockUser;
+    if (!confirm("Block this person? Neither of you will be able to message the other.")) return;
+    try {
+      await api.blockUser(userId, true);
+      panel.innerHTML = `<div class="conversation-empty"><p class="muted">Blocked. They can no longer message you.</p></div>`;
+      delete panel.dataset.threadId;
+      await loadInbox();
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  const report = panel.querySelector(".report-form");
+  report?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const reportNote = report.querySelector("[data-report-note]");
+    try {
+      await api.reportThread(thread.id, {
+        reason: report.reason.value,
+        details: report.details.value.trim(),
+      });
+      showNote(reportNote, "Report sent. Thanks.", "muted");
+      report.querySelector("button[type='submit']").disabled = true;
+    } catch (error) {
+      showNote(reportNote, error.message);
+    }
+  });
+}
+
 function readFilters(form) {
   const data = new FormData(form);
   return {
@@ -226,6 +423,7 @@ function readFilters(form) {
     online: data.get("online") === "1",
     recruiting: data.get("recruiting") === "1",
     mr: String(data.get("mr") || "0"),
+    hours: String(data.get("hours") || ""),
     sort: String(data.get("sort") || "newest"),
   };
 }
@@ -267,6 +465,7 @@ function bindCopyText(root = app) {
         button.textContent = "Copied";
         // Tell the leader someone acted on their post. Best effort only.
         if (button.dataset.copyListing) api.countWhisper(button.dataset.copyListing).catch(() => {});
+        if (button.dataset.copyPlayer) api.countPlayerWhisper(button.dataset.copyPlayer).catch(() => {});
       } catch {
         button.textContent = "Copy failed";
       }
@@ -330,6 +529,7 @@ function bindListingPage() {
     };
     try {
       if (kind === "alliance") await api.reportAlliance(id, payload);
+      else if (kind === "player") await api.reportPlayer(id, payload);
       else await api.reportClan(id, payload);
       showNote(note, "Report sent. Thanks.", "muted");
       form.querySelector("button[type='submit']").disabled = true;
@@ -343,13 +543,16 @@ function bindListingPage() {
 // owner actually opens the section rather than shipped with every listing.
 // List responses drop the post body, so anything that needs the whole record -
 // the detail page, the edit form - asks for it and caches what comes back.
+const LISTING_LISTS = { clan: "clans", alliance: "alliances", player: "players" };
+
 async function fullListing(kind, id) {
-  const list = kind === "clan" ? state.clans : state.alliances;
+  const list = state[LISTING_LISTS[kind]];
   const cached = list.find((item) => item.id === id && item.about !== undefined);
   if (cached) return cached;
   try {
-    const res = kind === "clan" ? await api.clan(id) : await api.alliance(id);
-    const item = kind === "clan" ? res.clan : res.alliance;
+    const res =
+      kind === "clan" ? await api.clan(id) : kind === "player" ? await api.player(id) : await api.alliance(id);
+    const item = res[kind];
     const at = list.findIndex((entry) => entry.id === id);
     if (at >= 0) list[at] = item;
     else list.push(item);
@@ -1338,8 +1541,8 @@ function bindRowEditors(row, onChange) {
 // same listingSections() the listing page uses. Anything that only lived here
 // would drift from what actually gets published - which is exactly what the
 // three boxes did while the preview showed the post body and nothing else.
-function previewHtml(cardHtml, form, media) {
-  const sections = listingSections({
+function previewHtml(cardHtml, form, media, sectionsFor = listingSections) {
+  const sections = sectionsFor({
     offering: form.elements.offering?.value,
     requirements: form.elements.requirements?.value,
     howToJoin: form.elements.howToJoin?.value,
@@ -1453,6 +1656,15 @@ function contactRouteMissing(form, user, { whisper = true } = {}) {
     : "Give recruits at least one way to reach you: a Discord invite or a link.";
 }
 
+function playerRouteMissing(form, user) {
+  const contact = form.contact?.value || "both";
+  const name = normalizeDiscordName(form.discordName?.value);
+  if (name && contact !== "whisper") return null;
+  if (contact !== "discord" && user?.forumName) return null;
+  if (readLinkRows(form).some((link) => isSafeHref(link.url))) return null;
+  return "Give clans at least one way to reach you: a Discord username, a verified forum name, or a link.";
+}
+
 function packForm(form, ...listFields) {
   const fd = new FormData(form);
   for (const listField of listFields) {
@@ -1475,8 +1687,10 @@ async function render() {
   closeDrawer();
   setActiveNav(path);
   window.scrollTo({ top: 0, behavior: "instant" });
+  const messagesMatch = path === "/messages";
   const clanMatch = path.match(/^\/clans\/([^/]+)$/);
   const allianceMatch = path.match(/^\/alliances\/([^/]+)$/);
+  const playerMatch = path.match(/^\/players\/([^/]+)$/);
   document.title =
     path === "/privacy"
       ? "Privacy Policy — WF Clan Recruit"
@@ -1554,6 +1768,76 @@ async function render() {
       bindCards(results);
       const qs = filtersToSearch(next, page);
       const nextUrl = `/alliances${qs}`;
+      if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+        history.replaceState({}, "", nextUrl);
+      }
+    };
+    bindFilterUpdates(app.querySelector(".browse"), paint);
+    bindFiltersToggle();
+    app.querySelector("[data-clear-filters]")?.addEventListener("click", () => {
+      resetFilterForm(form);
+      paint(1);
+    });
+    app.querySelector("#results")?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-page]");
+      if (!button || button.disabled) return;
+      paint(Number(button.dataset.page));
+      app.querySelector("#results")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    bindCards();
+    return;
+  }
+
+  if (messagesMatch) {
+    document.title = "Messages — WF Clan Recruit";
+    if (!state.user) {
+      app.innerHTML = messagesView({ user: null, threads: [] });
+      return;
+    }
+    try {
+      state.threads = (await api.inbox()).threads;
+    } catch {
+      state.threads = [];
+    }
+    app.innerHTML = messagesView({ user: state.user, threads: state.threads });
+    // An empty inbox renders no thread list and no conversation panel, so there
+    // is nothing below this to bind.
+    if (!state.threads.length) return;
+    // ?thread= is what the Message button on a listing redirects to, so a
+    // conversation opened from a post lands on that conversation.
+    if (params.thread) await openConversation(params.thread);
+    app.querySelector("[data-thread-list]")?.addEventListener("click", (event) => {
+      const row = event.target.closest("[data-thread]");
+      if (!row) return;
+      openConversation(row.dataset.thread);
+    });
+    return;
+  }
+
+  if (path === "/players") {
+    const { filters: initial, page: startPage } = filtersFromSearch(window.location.search);
+    let page = startPage;
+    const windowed = paginate(applyPlayerFilters(state.players, initial), page);
+    page = windowed.page;
+    app.innerHTML = playersView(windowed.items, initial, windowed);
+    const form = app.querySelector("#filter-form");
+    const paint = (nextPage = 1) => {
+      const next = readFilters(form);
+      const badge = app.querySelector("[data-filter-count]");
+      const activeCount = activeFilterCount(next);
+      if (badge) { badge.textContent = String(activeCount); badge.hidden = activeCount === 0; }
+      const list = applyPlayerFilters(state.players, next);
+      const windowedNext = paginate(list, nextPage);
+      page = windowedNext.page;
+      const mr = app.querySelector("#mr-readout");
+      if (mr) mr.innerHTML = masteryDisplay(next.mr, false);
+      const count = app.querySelector("#result-count");
+      if (count) count.textContent = windowedNext.total === 1 ? "1 player" : `${windowedNext.total} players`;
+      const results = app.querySelector("#results");
+      results.innerHTML = playerResultsHtml(windowedNext.items, next, windowedNext);
+      bindCards(results);
+      const qs = filtersToSearch(next, page);
+      const nextUrl = `/players${qs}`;
       if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
         history.replaceState({}, "", nextUrl);
       }
@@ -1711,6 +1995,81 @@ async function render() {
     return;
   }
 
+  // One profile per account, so this route is an upsert rather than a "new
+  // post" page: it finds yours if you have one and edits it in place.
+  if (path === "/lfc") {
+    const own = state.user ? state.players.find((item) => item.ownerId === state.user.id) : null;
+    const draft = own ? await fullListing("player", own.id) : null;
+    app.innerHTML = playerPostView({ user: state.user, draft: draft || {}, auth: state.auth });
+    const form = app.querySelector("#player-form");
+    if (!form) return;
+    const contact = form.querySelector("[data-contact]");
+    const syncContact = () => {
+      const hint = form.querySelector("[data-discord-hint]");
+      if (hint) {
+        hint.textContent =
+          contact.value !== "whisper"
+            ? "optional, the name clans type into Add Friend"
+            : "not shown on this profile";
+      }
+    };
+    contact?.addEventListener("change", syncContact);
+    if (contact) syncContact();
+    const preview = app.querySelector("#live-preview");
+    const note = app.querySelector("#form-note");
+    const mr = app.querySelector("#player-mr");
+    const avatar = state.user?.discordAvatarUrl || null;
+    bindListingComposer(form, {
+      imageUrl: avatar,
+      onChange: (media) => {
+        if (mr) mr.innerHTML = masteryDisplay(form.mr.value, false);
+        preview.innerHTML = previewHtml(
+          playerCard(previewPlayer(form, avatar, media.entries)),
+          form,
+          media,
+          playerSections
+        );
+      },
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!form.checkValidity()) {
+        showNote(note, "Fill every required field.");
+        form.reportValidity();
+        return;
+      }
+      const name = normalizeDiscordName(form.discordName.value);
+      if (name && !isDiscordName(name)) {
+        showNote(note, "That is not a Discord username. Use the name you would type into Add Friend.");
+        return;
+      }
+      const blocked =
+        mediaTooLarge(form) || aboutError(form) || playerRouteMissing(form, state.user) || sectionError(form);
+      if (blocked) {
+        showNote(note, blocked);
+        return;
+      }
+      // The server checks this too - it is the one claim on a profile that
+      // needs proof - but saying it here saves a round trip and points at the
+      // control that caused it.
+      if (form.contact.value !== "discord" && !state.user?.forumName) {
+        showNote(note, "Verify your Warframe Forum account before you publish an in-game name.");
+        return;
+      }
+      try {
+        const payload = packForm(form, "playstyles", "wantsTiers");
+        const result = draft
+          ? await api.updatePlayer(draft.id, payload)
+          : await api.createPlayer(payload);
+        await refresh();
+        go(`/players/${result.player.id}`);
+      } catch (error) {
+        showNote(note, error.message);
+      }
+    });
+    return;
+  }
+
   if (path === "/login" || path === "/register") {
     const next = params.next || "/account";
     app.innerHTML = authView(path.slice(1), next, {
@@ -1748,6 +2107,9 @@ async function render() {
     const mineAlliances = state.user.admin
       ? state.alliances
       : state.alliances.filter((item) => item.ownerId === state.user.id);
+    const minePlayers = state.user.admin
+      ? state.players
+      : state.players.filter((item) => item.ownerId === state.user.id);
     let reports = [];
     if (state.user.admin) {
       try {
@@ -1756,7 +2118,13 @@ async function render() {
         reports = [];
       }
     }
-    app.innerHTML = accountView({ user: state.user, clans: mineClans, alliances: mineAlliances, reports });
+    app.innerHTML = accountView({
+      user: state.user,
+      clans: mineClans,
+      alliances: mineAlliances,
+      players: minePlayers,
+      reports,
+    });
     bindForumForm();
     bindRecruiters();
     return;
@@ -1769,7 +2137,10 @@ async function render() {
       return;
     }
     document.title = `${clan.name} — WF Clan Recruit`;
-    app.innerHTML = clanPage(clan, { admin: Boolean(state.user?.admin) });
+    app.innerHTML = clanPage(clan, {
+      admin: Boolean(state.user?.admin),
+      user: state.auth.messaging === false ? null : state.user,
+    });
     bindListingPage();
     return;
   }
@@ -1781,7 +2152,26 @@ async function render() {
       return;
     }
     document.title = `${alliance.name} — WF Clan Recruit`;
-    app.innerHTML = alliancePage(alliance, { admin: Boolean(state.user?.admin) });
+    app.innerHTML = alliancePage(alliance, {
+      admin: Boolean(state.user?.admin),
+      user: state.auth.messaging === false ? null : state.user,
+    });
+    bindListingPage();
+    return;
+  }
+
+  if (playerMatch) {
+    const player = await fullListing("player", playerMatch[1]);
+    if (!player) {
+      app.innerHTML = `<section class="auth-card"><h1>Profile not found</h1><p class="muted">That player profile is gone or the link is wrong.</p></section>`;
+      return;
+    }
+    document.title = `${player.name} — WF Clan Recruit`;
+    app.innerHTML = playerPage(player, {
+      admin: Boolean(state.user?.admin),
+      mine: Boolean(state.user && player.ownerId === state.user.id),
+      user: state.auth.messaging === false ? null : state.user,
+    });
     bindListingPage();
     return;
   }
@@ -1825,6 +2215,7 @@ document.addEventListener("click", async (event) => {
     return;
   }
   if (event.target.closest("[data-logout]")) {
+    stopLive();
     await api.logout();
     await refresh();
     go("/");
@@ -1910,6 +2301,55 @@ document.addEventListener("click", async (event) => {
     }
     return;
   }
+  const pausePlayer = event.target.closest("[data-pause-player]");
+  if (pausePlayer) {
+    event.preventDefault();
+    try {
+      await api.pausePlayer(pausePlayer.dataset.pausePlayer, pausePlayer.dataset.paused === "1");
+      await refresh();
+      render();
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
+  const hidePlayer = event.target.closest("[data-hide-player]");
+  if (hidePlayer) {
+    event.preventDefault();
+    const hide = hidePlayer.dataset.hidden === "1";
+    if (hide && !confirm("Hide this profile from the board? The owner keeps it, and you can unhide it later.")) return;
+    try {
+      await api.hidePlayer(hidePlayer.dataset.hidePlayer, hide);
+      await refresh();
+      render();
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
+  const messageButton = event.target.closest("[data-message-listing]");
+  if (messageButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (state.auth.messaging === false) {
+      alert("Messaging is temporarily unavailable. Use the Discord or whisper details on the post.");
+      return;
+    }
+    if (!state.user) {
+      go(`/login?next=${encodeURIComponent(window.location.pathname)}`);
+      return;
+    }
+    try {
+      const { thread } = await api.openThread(
+        messageButton.dataset.messageKind,
+        messageButton.dataset.messageListing
+      );
+      go(`/messages?thread=${encodeURIComponent(thread.id)}`);
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
   const resolveReport = event.target.closest("[data-resolve-report]");
   if (resolveReport) {
     event.preventDefault();
@@ -1942,6 +2382,29 @@ document.addEventListener("click", async (event) => {
     await refresh();
     if (window.location.pathname.startsWith("/alliances/")) go("/alliances");
     else render();
+    return;
+  }
+  const deletePlayer = event.target.closest("[data-delete-player]");
+  if (deletePlayer) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!confirm("Remove this player profile for everyone?")) return;
+    await api.deletePlayer(deletePlayer.dataset.deletePlayer);
+    await refresh();
+    if (window.location.pathname.startsWith("/players/")) go("/players");
+    else render();
+    return;
+  }
+  const bumpPlayer = event.target.closest("[data-bump-player]");
+  if (bumpPlayer && !bumpPlayer.disabled) {
+    event.preventDefault();
+    try {
+      await api.bumpPlayer(bumpPlayer.dataset.bumpPlayer);
+      await refresh();
+      render();
+    } catch (error) {
+      alert(error.message);
+    }
     return;
   }
   const bumpClan = event.target.closest("[data-bump-clan]");

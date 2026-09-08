@@ -3,10 +3,14 @@ import { filtersToSearch } from "./browse.js";
 import {
   CONTACT_LABELS,
   CONTACT_MODES,
+  DISCORD_NAME_MAX,
   HEADLINE_MAX,
+  HOURS,
   LANGUAGES,
   LINK_KINDS,
   LINK_MAX,
+  PLAYER_NAME_MAX,
+  PLAYER_STATUSES,
   PLAYSTYLES,
   PLAYSTYLE_GROUPS,
   PLATFORMS,
@@ -17,8 +21,10 @@ import {
   TIER_CAPS,
   TIERS,
   cardPlaystyles,
+  discordAddFriendHint,
   groupOf,
   normalizeContact,
+  normalizeDiscordName,
   normalizeLinks,
   normalizePlaystyles,
   playstylesByGroup,
@@ -356,12 +362,30 @@ export function listingSections(item) {
   ].join("");
 }
 
-export function photo(item, size = 56) {
-  if (item.image) {
-    return `<img class="photo" src="${escapeHtml(item.image)}" alt="" width="${size}" height="${size}" />`;
+export function photo(item, size = 56, { fallback = "" } = {}) {
+  const src = item.image || fallback;
+  if (src) {
+    // A Discord avatar is a URL we do not host: the hash goes stale when
+    // someone changes their picture, and the CDN then 404s. Without this the
+    // card renders a broken-image box, which looks like our bug rather than
+    // their changed avatar. `onerror` clears itself first so a missing
+    // fallback cannot loop.
+    const onError =
+      fallback && src !== fallback
+        ? ` onerror="this.onerror=null;this.src='${escapeHtml(fallback)}'"`
+        : "";
+    return `<img class="photo" src="${escapeHtml(src)}" alt="" width="${size}" height="${size}"${onError} />`;
   }
   const initials = String(item.tag || item.name || "?").slice(0, 2).toUpperCase();
   return `<div class="photo fallback" style="--hue:${hueFrom(item.id || item.name)}">${escapeHtml(initials)}</div>`;
+}
+
+// Everyone without a Discord picture lands on the same mark, so a board of
+// unset avatars looks deliberate rather than broken.
+const PLAYER_FALLBACK_IMAGE = "/warframe.png";
+
+export function playerPhoto(player, size = 56) {
+  return photo(player, size, { fallback: PLAYER_FALLBACK_IMAGE });
 }
 
 export const REPORT_REASON_LABELS = {
@@ -537,12 +561,15 @@ function reportForm(kind, id) {
   const options = Object.entries(REPORT_REASON_LABELS)
     .map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`)
     .join("");
+  const noun = kind === "message" ? "conversation" : "listing";
   return `
     <details class="report-box">
-      <summary>Report this listing</summary>
+      <summary>Report this ${escapeHtml(noun)}</summary>
       <form class="stack report-form" data-report-kind="${escapeHtml(kind)}" data-report-id="${escapeHtml(id)}">
         <label class="field"><span>Reason</span><select name="reason" required><option value="">Choose one</option>${options}</select></label>
-        <label class="field"><span>Details <small>optional</small></span><textarea name="details" maxlength="400" rows="3" placeholder="Dead invite, stolen tag, no activity…"></textarea></label>
+        <label class="field"><span>Details <small>optional</small></span><textarea name="details" maxlength="400" rows="3" placeholder="${
+          kind === "message" ? "Harassment, scam, spam…" : "Dead invite, stolen tag, no activity…"
+        }"></textarea></label>
         <button class="btn btn-ghost" type="submit">Send report</button>
         <p class="muted" data-report-note hidden></p>
       </form>
@@ -702,7 +729,7 @@ function optionList(values, selected = "") {
 export function activeFilterCount(filters = {}) {
   let count = 0;
   if (String(filters.q || "").trim()) count += 1;
-  for (const key of ["platform", "tier", "region", "language", "status"]) {
+  for (const key of ["platform", "tier", "region", "language", "status", "hours"]) {
     if (filters[key]) count += 1;
   }
   count += (filters.playstyles || []).length;
@@ -776,7 +803,7 @@ export function browseView(clans, filters, pager, roleOptions = []) {
         </form>
       </aside>
       <div class="browse-main">
-        <nav class="directory-tabs" aria-label="Community directories"><a href="/browse" data-link aria-current="page">Clans</a><a href="/alliances" data-link aria-current="false">Alliances</a></nav>
+        <nav class="directory-tabs" aria-label="Community directories"><a href="/browse" data-link aria-current="page">Clans</a><a href="/alliances" data-link aria-current="false">Alliances</a><a href="/players" data-link aria-current="false">Players</a></nav>
         <div class="row-between">
           <p class="muted" id="result-count" role="status" aria-live="polite" aria-atomic="true">${label}</p>
           <label class="field inline"><span>Sort</span>
@@ -824,7 +851,7 @@ export function alliancesView(alliances, filters, pager) {
         </form>
       </aside>
       <div class="browse-main">
-        <nav class="directory-tabs" aria-label="Community directories"><a href="/browse" data-link aria-current="false">Clans</a><a href="/alliances" data-link aria-current="page">Alliances</a></nav>
+        <nav class="directory-tabs" aria-label="Community directories"><a href="/browse" data-link aria-current="false">Clans</a><a href="/alliances" data-link aria-current="page">Alliances</a><a href="/players" data-link aria-current="false">Players</a></nav>
         <p class="muted" id="result-count" role="status" aria-live="polite" aria-atomic="true">${label}</p>
         <div id="results">${allianceResultsHtml(alliances, filters, pager)}</div>
       </div>
@@ -836,12 +863,9 @@ export function emptyState(title = "Your community could be next", detail = "Pos
   return `<div class="empty"><h3>${escapeHtml(title)}</h3><p class="muted">${escapeHtml(detail)}</p></div>`;
 }
 
-function browseEmpty(kind, filters) {
+function browseEmpty(kind, filters, { toggle = "Recruiting now", title = "No communities match just yet" } = {}) {
   if (filters.recruiting) {
-    return emptyState(
-      "No communities match just yet",
-      `Try fewer filters or turn off Recruiting now to include paused ${kind}.`
-    );
+    return emptyState(title, `Try fewer filters or turn off ${toggle} to include paused ${kind}.`);
   }
   return emptyState();
 }
@@ -855,12 +879,12 @@ function pagerBar(pager, noun) {
   </nav>`;
 }
 
-function appliedFilters(filters, path) {
-  const labels = { q: "Search", platform: "Platform", tier: "Tier", role: "Role", region: "Region", language: "Language", status: "Status" };
+function appliedFilters(filters, path, { mrLabel = "Your MR" } = {}) {
+  const labels = { q: "Search", platform: "Platform", tier: "Tier", role: "Role", region: "Region", language: "Language", status: "Status", hours: "Plays" };
   const entries = Object.entries(labels).filter(([key]) => filters[key]).map(([key, label]) => ({ label: `${label}: ${filters[key]}`, next: { ...filters, [key]: "" } }));
   for (const style of filters.playstyles || []) entries.push({ label: style, next: { ...filters, playstyles: filters.playstyles.filter(value => value !== style) } });
   if (filters.online) entries.push({ label: "Online now", next: { ...filters, online: false } });
-  if (Number(filters.mr) > 0) entries.push({ label: `Your MR: ${masteryLabel(filters.mr)}`, next: { ...filters, mr: "0" } });
+  if (Number(filters.mr) > 0) entries.push({ label: `${mrLabel}: ${masteryLabel(filters.mr)}`, next: { ...filters, mr: "0" } });
   if (!entries.length) return "";
   return `<nav class="applied-filters" aria-label="Applied filters">${entries.map(({label, next}) => `<a class="chip" href="${escapeHtml(path + filtersToSearch(next))}" data-link aria-label="${escapeHtml(`Remove ${label}`)}">${escapeHtml(label)} <span aria-hidden="true">×</span></a>`).join("")}</nav>`;
 }
@@ -1670,7 +1694,7 @@ export function authView(mode, next = "/", { error = "", discord = true, passwor
   `;
 }
 
-export function accountView({ user, clans, alliances, reports = [] }) {
+export function accountView({ user, clans, alliances, players = [], reports = [] }) {
   const admin = Boolean(user.admin);
   return `
     <section class="page-hero">
@@ -1715,6 +1739,12 @@ export function accountView({ user, clans, alliances, reports = [] }) {
     <section class="section">
       <div class="section-head"><h2>${admin ? "Alliance posts" : "Your alliances"}</h2><a class="text-link" href="/post-alliance" data-link>New alliance</a></div>
       ${listingList(alliances, "alliance", "You have not posted an alliance yet.", { admin })}
+    </section>
+    <section class="section">
+      <div class="section-head"><h2>${admin ? "Player profiles" : "Your player profile"}</h2>${
+        admin || players.length ? "" : `<a class="text-link" href="/lfc" data-link>Post your profile</a>`
+      }</div>
+      ${listingList(players, "player", "You have not posted a player profile yet.", { admin })}
     </section>
     ${admin ? reportsPanel(reports) : ""}
     <section class="section">
@@ -1898,14 +1928,23 @@ function listingStats(item) {
   </p>`;
 }
 
+const LISTING_KINDS = {
+  clan: { edit: "/post", open: "/clans", attr: "clan" },
+  alliance: { edit: "/post-alliance", open: "/alliances", attr: "alliance" },
+  // The player composer takes no id: you have one profile, so /lfc is always
+  // the edit page for it.
+  player: { edit: "/lfc", open: "/players", attr: "player", byId: false },
+};
+
 function listingList(items, kind, emptyText, { admin = false } = {}) {
   if (!items.length) return `<p class="muted">${emptyText}</p>`;
-  const editPath = kind === "clan" ? "/post" : "/post-alliance";
-  const openPath = kind === "clan" ? "/clans" : "/alliances";
-  const bumpAttr = kind === "clan" ? "data-bump-clan" : "data-bump-alliance";
-  const deleteAttr = kind === "clan" ? "data-delete-clan" : "data-delete-alliance";
-  const pauseAttr = kind === "clan" ? "data-pause-clan" : "data-pause-alliance";
-  const hideAttr = kind === "clan" ? "data-hide-clan" : "data-hide-alliance";
+  const spec = LISTING_KINDS[kind] || LISTING_KINDS.clan;
+  const editPath = spec.edit;
+  const openPath = spec.open;
+  const bumpAttr = `data-bump-${spec.attr}`;
+  const deleteAttr = `data-delete-${spec.attr}`;
+  const pauseAttr = `data-pause-${spec.attr}`;
+  const hideAttr = `data-hide-${spec.attr}`;
   return `<div class="list">${items
     .map((item) => {
       const badges = listingBadges(item);
@@ -1914,12 +1953,12 @@ function listingList(items, kind, emptyText, { admin = false } = {}) {
               ${photo(item, 44)}
               <div>
                 <strong>${escapeHtml(item.name)}</strong>
-                <p class="muted">[${escapeHtml(item.tag)}] · ${escapeHtml(item.status)}${badges ? ` ${badges}` : ""}</p>
+                <p class="muted">${item.tag ? `[${escapeHtml(item.tag)}] · ` : ""}${escapeHtml(item.status)}${badges ? ` ${badges}` : ""}</p>
                 ${listingStats(item)}
               </div>
               <div class="list-actions">
                 <a class="btn btn-ghost" href="${openPath}/${encodeURIComponent(item.id)}" data-link>Open</a>
-                <a class="btn btn-ghost" href="${editPath}?id=${encodeURIComponent(item.id)}" data-link>Edit</a>
+                <a class="btn btn-ghost" href="${spec.byId === false ? editPath : `${editPath}?id=${encodeURIComponent(item.id)}`}" data-link>Edit</a>
                 <button class="btn btn-ghost" type="button" ${pauseAttr}="${escapeHtml(item.id)}" data-paused="${item.paused ? "0" : "1"}">${
                   item.paused ? "Resume" : "Pause"
                 }</button>
@@ -1957,7 +1996,7 @@ function reportsPanel(reports) {
             ${item.details ? `<p class="muted">${escapeHtml(item.details)}</p>` : ""}
           </div>
           <div class="list-actions">
-            <a class="btn btn-ghost" href="/${item.kind === "clan" ? "clans" : "alliances"}/${encodeURIComponent(item.listingId)}" data-link>Open</a>
+            <a class="btn btn-ghost" href="${(LISTING_KINDS[item.kind] || LISTING_KINDS.clan).open}/${encodeURIComponent(item.listingId)}" data-link>Open</a>
             ${
               item.status === "open"
                 ? `<button class="btn btn-ghost" type="button" data-resolve-report="${escapeHtml(item.id)}" data-status="resolved">Resolve</button>
@@ -2018,7 +2057,7 @@ export function guideView() {
   `;
 }
 
-export function clanPage(clan, { admin = false } = {}) {
+export function clanPage(clan, { admin = false, user = null } = {}) {
   return `
     <article class="listing-page panel">
       <p class="eyebrow"><a href="/browse" data-link>Clans</a></p>
@@ -2060,6 +2099,7 @@ export function clanPage(clan, { admin = false } = {}) {
       ${whisperBox(clan)}
       <div class="row listing-actions">
         ${joinDiscord(clan, `Join ${clan.name} on Discord`)}
+        ${messageButton(clan, "clan", user)}
         <button class="btn btn-ghost" type="button" data-copy-url>Copy link</button>
         ${admin ? `<button class="btn btn-ghost" type="button" data-hide-clan="${escapeHtml(clan.id)}" data-hidden="${clan.hidden ? "0" : "1"}">${clan.hidden ? "Unhide listing" : "Hide listing"}</button>
         <button class="btn btn-ghost" type="button" data-delete-clan="${escapeHtml(clan.id)}">Remove listing</button>` : ""}
@@ -2069,7 +2109,7 @@ export function clanPage(clan, { admin = false } = {}) {
   `;
 }
 
-export function alliancePage(alliance, { admin = false } = {}) {
+export function alliancePage(alliance, { admin = false, user = null } = {}) {
   const clans = alliance.memberClans || [];
   return `
     <article class="listing-page panel">
@@ -2110,6 +2150,7 @@ export function alliancePage(alliance, { admin = false } = {}) {
       }
       <div class="row listing-actions">
         ${joinDiscord(alliance, `Join ${alliance.name} on Discord`)}
+        ${messageButton(alliance, "alliance", user)}
         <button class="btn btn-ghost" type="button" data-copy-url>Copy link</button>
         ${admin ? `<button class="btn btn-ghost" type="button" data-hide-alliance="${escapeHtml(alliance.id)}" data-hidden="${alliance.hidden ? "0" : "1"}">${alliance.hidden ? "Unhide listing" : "Hide listing"}</button>
         <button class="btn btn-ghost" type="button" data-delete-alliance="${escapeHtml(alliance.id)}">Remove listing</button>` : ""}
@@ -2188,7 +2229,7 @@ export function displayName(user) {
   return (user?.forumVerified && user?.forumName) || user?.username || "";
 }
 
-export function navAccount(user, { discord = false } = {}) {
+export function navAccount(user, { discord = false, messaging = true } = {}) {
   if (user) {
     const invites = (user.invites || []).length;
     const badge = invites
@@ -2196,6 +2237,11 @@ export function navAccount(user, { discord = false } = {}) {
       : "";
     return `
       ${presenceControl(user)}
+      ${
+        messaging
+          ? `<a class="btn btn-ghost nav-messages" href="/messages" data-link>Messages<span data-unread-slot></span></a>`
+          : ""
+      }
       <a class="btn btn-ghost" href="/account" data-link>${escapeHtml(displayName(user))}${badge}</a>
       <button class="btn btn-ghost" type="button" data-logout>Sign out</button>
     `;
@@ -2204,4 +2250,512 @@ export function navAccount(user, { discord = false } = {}) {
     <a class="btn btn-ghost" href="/login" data-link>Sign in</a>
     ${discord ? discordCreateButton("/account") : `<a class="btn btn-primary" href="/register" data-link>Create account</a>`}
   `;
+}
+
+// --- Player listings -------------------------------------------------------
+
+// The clan side's whisper reads "I would like to join you". Coming the other
+// way round it has to say the opposite thing, so it gets its own line rather
+// than a parameter on `whisperMessage`.
+export function playerWhisperMessage(player, name = player.whisperName) {
+  if (!wantsWhisper(player)) return null;
+  if (!name || player.recruiting === false) return null;
+  return `/w ${name} Hi ${name}, saw your post on wfclanrecruit - we are recruiting, interested?`;
+}
+
+function discordName(player) {
+  return wantsDiscord(player) && player.discordName ? normalizeDiscordName(player.discordName) : "";
+}
+
+function discordCopyButton(player, { small = false } = {}) {
+  const name = discordName(player);
+  if (!name) return "";
+  if (player.recruiting === false) return "";
+  return `<button class="btn btn-discord${small ? " btn-small" : ""}" type="button" title="${escapeHtml(
+    discordAddFriendHint(name)
+  )}" data-copy-player="${escapeHtml(player.id)}" data-copy-text="${escapeHtml(name)}">${
+    small ? "Copy Discord" : `Copy Discord username`
+  }</button>`;
+}
+
+// The profile has room to show the name itself rather than hide it behind a
+// button, so a recruiter can read it before deciding to act on it.
+function discordBox(player) {
+  const name = discordName(player);
+  if (!name) return "";
+  if (player.recruiting === false) {
+    return `<p class="muted join-note">${escapeHtml(recruitingNote(player))}</p>`;
+  }
+  return `
+    <div class="whisper">
+      <p class="kicker">Add on Discord</p>
+      <div class="whisper-row">
+        <div class="whisper-who">
+          <strong>${escapeHtml(player.name)}</strong>
+          <span class="muted">Discord</span>
+        </div>
+        <code class="whisper-text">${escapeHtml(name)}</code>
+        <button class="btn btn-ghost" type="button" data-copy-player="${escapeHtml(player.id)}" data-copy-text="${escapeHtml(name)}">Copy username</button>
+      </div>
+      <p class="muted">Paste it into Discord's Add Friend box.</p>
+    </div>
+  `;
+}
+
+function playerWhisperBox(player) {
+  const message = playerWhisperMessage(player);
+  if (!message) return "";
+  return `
+    <div class="whisper">
+      <p class="kicker">Whisper in-game</p>
+      <div class="whisper-row">
+        <div class="whisper-who">
+          <strong>${escapeHtml(player.whisperName)}</strong>
+          <span class="muted">Player</span>
+          ${presenceDot(player)}
+        </div>
+        <code class="whisper-text">${escapeHtml(message)}</code>
+        <button class="btn btn-ghost" type="button" data-copy-player="${escapeHtml(player.id)}" data-copy-text="${escapeHtml(message)}">Copy whisper</button>
+      </div>
+    </div>
+  `;
+}
+
+function playerWhisperButton(player) {
+  const message = playerWhisperMessage(player);
+  if (!message) return "";
+  return `<button class="btn btn-ghost btn-small" type="button" title="Copy the /w message for this player" data-copy-player="${escapeHtml(player.id)}" data-copy-text="${escapeHtml(message)}">Whisper</button>`;
+}
+
+// What kind of clan they are after. An empty pick is the common case and means
+// "any", which is worth saying out loud rather than leaving the row blank.
+function tierWants(player) {
+  const wants = (player.wantsTiers || []).filter((tier) => TIER_CAPS[tier]);
+  return wants.length ? wants.join(", ") : "Any clan";
+}
+
+export function playerCard(player) {
+  return `
+    <article class="card${player.recruiting === false ? " is-quiet" : ""}" data-href="/players/${escapeHtml(player.id)}" tabindex="0">
+      <header class="card-head">
+        ${playerPhoto(player)}
+        <div>
+          <p class="kicker">Player</p>
+          <h3>${escapeHtml(player.name)}</h3>
+          <p class="muted">${escapeHtml(player.platform)} · ${escapeHtml(player.region)}</p>
+          <span class="card-presence">${presenceDot(player)}</span>
+        </div>
+        <div class="card-pills">
+          <span class="pill ${statusClass(player.status)}">${escapeHtml(player.status)}</span>
+          ${listingBadges(player)}
+        </div>
+      </header>
+      <p class="headline">${escapeHtml(player.headline)}</p>
+      <p class="muted">${escapeHtml(player.summary)}</p>
+      ${cardChips(player.playstyles)}
+      <div class="stats">
+        <div>
+          <span>MR</span>
+          <strong>${masteryDisplay(player.mr)}</strong>
+        </div>
+        <div>
+          <span>Plays</span>
+          <strong>${escapeHtml(String(player.hours || HOURS[0]).replace(" hrs/week", "h"))}</strong>
+        </div>
+        <div>
+          <span>${postedStat(player).label}</span>
+          <strong>${timeAgo(postedStat(player).at)}</strong>
+        </div>
+      </div>
+      <footer class="card-foot">
+        <a class="btn btn-ghost" href="/players/${escapeHtml(player.id)}" data-link>View profile</a>
+        ${discordCopyButton(player, { small: true })}
+        ${playerWhisperButton(player)}
+      </footer>
+    </article>
+  `;
+}
+
+export function playerResultsHtml(players, filters, pager) {
+  const total = pager?.total ?? players.length;
+  const applied = appliedFilters(filters, "/players", { mrLabel: "Minimum MR" });
+  if (!total) {
+    return (
+      applied +
+      browseEmpty("profiles", filters, { toggle: "Still looking", title: "No players match just yet" })
+    );
+  }
+  return `${applied}<div class="grid">${players.map((player) => playerCard(player)).join("")}</div>${pagerBar(pager, "Player")}`;
+}
+
+export function playersView(players, filters, pager) {
+  const total = pager?.total ?? players.length;
+  const label = total === 1 ? "1 player" : `${total} players`;
+  return `
+    <section class="page-hero">
+      <div class="directory-topline"><p class="eyebrow">Player directory</p><a class="text-link" href="/lfc" data-link>Post your profile ↗</a></div>
+      <h1>Find players looking for a clan.</h1>
+    </section>
+    <section class="browse">
+      <aside class="filters is-collapsed" data-filters>
+        <button class="filters-toggle" type="button" data-filters-toggle aria-expanded="false">
+          <span>Filters <em data-filter-count ${activeFilterCount(filters) ? "" : "hidden"}>${activeFilterCount(filters)}</em></span>
+          <span class="filters-caret" aria-hidden="true">▾</span>
+        </button>
+        <div class="row-between">
+          <h2>Filters</h2>
+          <button class="text-link" type="button" data-clear-filters>Reset</button>
+        </div>
+        <form id="filter-form">
+          <label class="check" for="filter-recruiting"><input id="filter-recruiting" type="checkbox" name="recruiting" value="1" ${
+            filters.recruiting ? "checked" : ""
+          } /><span>Still looking</span></label>
+          <label class="field"><span>Keyword</span><input type="search" name="q" value="${escapeHtml(filters.q)}" placeholder="Name, playstyle…" /></label>
+          <label class="field"><span>Platform</span><select name="platform"><option value="">Any</option>${optionList(PLATFORMS, filters.platform)}</select></label>
+          <fieldset class="fieldset">
+            <legend>Playstyles</legend>
+            <div class="filter-groups">${filterPlaystyleGroups(filters.playstyles || [])}</div>
+          </fieldset>
+          <label class="field"><span>Region</span><select name="region"><option value="">Any</option>${optionList(REGIONS, filters.region)}</select></label>
+          <label class="field"><span>Language</span><select name="language"><option value="">Any</option>${optionList(LANGUAGES, filters.language)}</select></label>
+          <label class="field"><span>Looking</span><select name="status"><option value="">Any</option>${optionList(PLAYER_STATUSES, filters.status)}</select></label>
+          <label class="field"><span>Plays</span><select name="hours"><option value="">Any</option>${optionList(HOURS, filters.hours)}</select></label>
+          <label class="check" for="filter-online"><input id="filter-online" type="checkbox" name="online" value="1" ${
+            filters.online ? "checked" : ""
+          } /><span>Online now</span></label>
+          <label class="field"><span>Minimum MR <em id="mr-readout">${masteryDisplay(filters.mr || 0, false)}</em></span><input type="range" name="mr" min="0" max="36" value="${escapeHtml(filters.mr || "0")}" /></label>
+        </form>
+      </aside>
+      <div class="browse-main">
+        <nav class="directory-tabs" aria-label="Community directories"><a href="/browse" data-link aria-current="false">Clans</a><a href="/alliances" data-link aria-current="false">Alliances</a><a href="/players" data-link aria-current="page">Players</a></nav>
+        <div class="row-between">
+          <p class="muted" id="result-count" role="status" aria-live="polite" aria-atomic="true">${label}</p>
+          <label class="field inline"><span>Sort</span>
+            <select name="sort" form="filter-form">
+              <option value="newest" ${filters.sort === "newest" ? "selected" : ""}>Newest</option>
+              <option value="mr" ${filters.sort === "mr" ? "selected" : ""}>Highest MR</option>
+            </select>
+          </label>
+        </div>
+        <div id="results">${playerResultsHtml(players, filters, pager)}</div>
+      </div>
+    </section>
+  `;
+}
+
+export function playerPage(player, { admin = false, mine = false, user = null } = {}) {
+  return `
+    <article class="listing-page panel">
+      <p class="eyebrow"><a href="/players" data-link>Players</a></p>
+      <div class="modal-hero">
+        ${playerPhoto(player, 72)}
+        <div>
+          <div class="modal-kicker">
+            <p class="kicker">Player · ${escapeHtml(tierWants(player))}</p>
+            <span class="pill ${statusClass(player.status)}">${escapeHtml(player.status)}</span>
+            ${listingBadges(player)}
+          </div>
+          <h1 id="player-title">${escapeHtml(player.name)}</h1>
+          <p class="headline">${escapeHtml(player.headline)}</p>
+          ${groupedChips(player.playstyles)}
+          ${linkRow(player)}
+        </div>
+      </div>
+      <dl class="detail-stats">
+        <div><dt>Platform</dt><dd>${escapeHtml(player.platform)}</dd></div>
+        <div><dt>MR</dt><dd>${masteryDisplay(player.mr)}</dd></div>
+        <div><dt>Plays</dt><dd>${escapeHtml(player.hours || HOURS[0])}</dd></div>
+        <div><dt>Wants</dt><dd>${escapeHtml(tierWants(player))}</dd></div>
+        <div><dt>Region</dt><dd>${escapeHtml(player.region)}</dd></div>
+        <div><dt>Language</dt><dd>${escapeHtml(player.language)}</dd></div>
+        <div><dt>Status</dt><dd>${escapeHtml(player.status)} ${presenceDot(player)}</dd></div>
+        <div><dt>${postedStat(player).label}</dt><dd>${timeAgo(postedStat(player).at)}</dd></div>
+      </dl>
+      <h2>About</h2>
+      ${postBodyHtml(player.about, mediaList(player))}
+      ${playerSections(player)}
+      ${discordBox(player)}
+      ${playerWhisperBox(player)}
+      <div class="row listing-actions">
+        ${messageButton(player, "player", user)}
+        <button class="btn btn-ghost" type="button" data-copy-url>Copy link</button>
+        ${mine ? `<a class="btn btn-ghost" href="/lfc" data-link>Edit profile</a>` : ""}
+        ${admin ? `<button class="btn btn-ghost" type="button" data-hide-player="${escapeHtml(player.id)}" data-hidden="${player.hidden ? "0" : "1"}">${player.hidden ? "Unhide profile" : "Hide profile"}</button>
+        <button class="btn btn-ghost" type="button" data-delete-player="${escapeHtml(player.id)}">Remove profile</button>` : ""}
+      </div>
+      ${reportForm("player", player.id)}
+    </article>
+  `;
+}
+
+// The three optional prose boxes are stored under the same keys a clan uses, so
+// nothing on the server has to branch - only the headings change, because the
+// questions run the other way round.
+export function playerSections(player) {
+  return [
+    listingSection(player, "offering", "What they bring"),
+    listingSection(player, "requirements", "What they want from a clan"),
+    listingSection(player, "howToJoin", "How to reach them", { accent: true }),
+  ].join("");
+}
+
+export function playerPostView({ user, draft = {}, auth = {} }) {
+  if (!user) return authGate("/lfc", auth);
+  const editing = Boolean(draft.id);
+  return `
+    <section class="page-hero">
+      <p class="eyebrow">Players</p>
+      <h1>${editing ? "Edit your profile" : "Post your player profile"}</h1>
+      <p class="lead">${
+        editing
+          ? "Update your profile. Bump it from your account page to send it back to the top."
+          : "Say what you play and what you are after, and let clans come to you. You get one profile - editing it is how you change it."
+      }</p>
+    </section>
+    <section class="composer">
+      <form id="player-form" class="stack" novalidate>
+        <div class="form-block">
+          <h2>You</h2>
+          <div class="two-col">
+            <label class="field"><span>Display name</span><input name="name" required maxlength="${PLAYER_NAME_MAX}" value="${escapeHtml(draft.name || user.forumName || user.username || "")}" /></label>
+            <label class="field"><span>Platform</span><select name="platform" required>${optionList(PLATFORMS, draft.platform)}</select></label>
+            <label class="field"><span>Region</span><select name="region" required>${optionList(REGIONS, draft.region || "Global")}</select></label>
+            <label class="field"><span>Language</span><select name="language" required>${optionList(LANGUAGES, draft.language)}</select></label>
+            <label class="field"><span>Mastery rank <em id="player-mr">${masteryDisplay(draft.mr ?? 0, false)}</em></span><input type="range" name="mr" min="0" max="36" value="${escapeHtml(draft.mr ?? 0)}" /></label>
+            <label class="field"><span>How much you play</span><select name="hours" required>${optionList(HOURS, draft.hours)}</select></label>
+            <label class="field"><span>How hard you are looking</span><select name="status" required>${optionList(PLAYER_STATUSES, draft.status)}</select></label>
+            <label class="field"><span>How clans reach you</span><select name="contact" data-contact>${CONTACT_MODES.map(
+              (mode) =>
+                `<option value="${mode}" ${normalizeContact(draft.contact) === mode ? "selected" : ""}>${escapeHtml(
+                  CONTACT_LABELS[mode]
+                )}</option>`
+            ).join("")}</select></label>
+            <label class="field"><span>Discord username <small data-discord-hint>optional, the name clans type into Add Friend</small></span><input name="discordName" maxlength="${DISCORD_NAME_MAX}" placeholder="gunson" value="${escapeHtml(
+              draft.discordName || ""
+            )}" /></label>
+          </div>
+          ${linksField(draft)}
+          <p class="field-help">Clans need at least one route: a Discord username, a verified forum name for whispers, or a link.${
+            user.forumName ? "" : " Verify a Warframe Forum profile if you want clans to whisper you in-game."
+          }</p>
+          <p class="field-help">Your profile picture comes from your Discord account${
+            user.discordAvatarUrl ? "" : ", once you connect one"
+          }. There is nothing to upload.</p>
+        </div>
+        <div class="form-block">
+          <h2>What you are after</h2>
+          <fieldset class="fieldset">
+            <legend>Clan sizes you would join <small class="field-optional">leave empty for any</small></legend>
+            <div class="check-row">${checks("wantsTiers", TIERS, draft.wantsTiers || [])}</div>
+          </fieldset>
+          <div class="playstyle-groups">${playstyleGroups(draft.playstyles || [])}</div>
+        </div>
+        <div class="form-block">
+          <h2>The post</h2>
+          ${boxedField(
+            "headline",
+            "Headline",
+            `<input name="headline" aria-label="Headline" required maxlength="${HEADLINE_MAX}" value="${escapeHtml(draft.headline || "")}" />`,
+            { hint: "One line, shown on the card", limit: HEADLINE_MAX }
+          )}
+          ${boxedField(
+            "summary",
+            "Short summary",
+            `<textarea name="summary" aria-label="Short summary" required maxlength="${SUMMARY_MAX}" rows="3">${escapeHtml(draft.summary || "")}</textarea>`,
+            { hint: "A sentence under the headline", limit: SUMMARY_MAX }
+          )}
+          ${aboutComposer(draft)}
+          ${sectionField("offering", "What you bring", draft.offering, {
+            hint: "What a clan gets out of having you",
+            placeholder: "MR 30, run Eidolons most nights, happy to mentor…",
+          })}
+          ${sectionField("requirements", "What you want from a clan", draft.requirements, {
+            hint: "What would make you say yes",
+            placeholder: "Active Discord, no contribution quotas, EU evenings…",
+          })}
+          ${sectionField("howToJoin", "How to reach you", draft.howToJoin, {
+            hint: "The best way to get hold of you",
+            placeholder: "DM me on Discord, or whisper in-game after 7pm GMT…",
+          })}
+          <small class="field-help">Leave any of the three empty and your profile simply will not show that section.</small>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" type="submit">${editing ? "Save changes" : "Publish profile"}</button>
+          <p class="error" id="form-note" hidden></p>
+        </div>
+      </form>
+      <aside class="preview-panel">
+        <h2>Preview</h2>
+        <div class="live-preview" id="live-preview"></div>
+      </aside>
+    </section>
+  `;
+}
+
+export function previewPlayer(form, imageUrl = null, mediaEntries = []) {
+  const data = new FormData(form);
+  return {
+    id: "preview",
+    name: data.get("name") || "Your name",
+    platform: data.get("platform") || "PC",
+    region: data.get("region") || "Global",
+    language: data.get("language") || "English",
+    status: data.get("status") || PLAYER_STATUSES[0],
+    hours: data.get("hours") || HOURS[0],
+    mr: Number(data.get("mr") || 0),
+    wantsTiers: data.getAll("wantsTiers"),
+    playstyles: normalizePlaystyles(data.getAll("playstyles")),
+    headline: data.get("headline") || "Your headline goes here",
+    summary: data.get("summary") || "A sentence about what you are looking for.",
+    contact: normalizeContact(data.get("contact")),
+    discordName: data.get("discordName") || "",
+    links: normalizeLinks(readLinkRows(form), isSafeHref),
+    // The preview shows the picture the profile will actually carry - the one
+    // on the Discord account - rather than an upload slot that no longer exists.
+    image: imageUrl,
+    media: mediaEntries,
+    recruiting: true,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+// --- Messages --------------------------------------------------------------
+
+export const MESSAGE_MAX = 2000;
+
+function messageTime(iso) {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  const today = new Date().toDateString() === at.toDateString();
+  return today
+    ? at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    : at.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+// Threads are grouped by nothing and sorted by recency, which is what an inbox
+// is. The unread count sits on the row rather than the thread, because the same
+// thread is read for one person and unread for the other.
+export function threadRow(thread, activeId = "") {
+  return `
+    <button class="thread-row${thread.id === activeId ? " is-active" : ""}${
+      thread.unread ? " is-unread" : ""
+    }" type="button" data-thread="${escapeHtml(thread.id)}">
+      <span class="thread-top">
+        <strong>${escapeHtml(thread.with?.name || "(deleted account)")}</strong>
+        <span class="muted">${escapeHtml(thread.last ? messageTime(thread.last.createdAt) : "")}</span>
+      </span>
+      <span class="thread-about muted">About ${escapeHtml(thread.listingName || "a listing")}</span>
+      <span class="thread-preview">${escapeHtml(thread.preview || "No messages yet.")}</span>
+      ${thread.unread ? `<span class="thread-badge">${thread.unread}</span>` : ""}
+    </button>
+  `;
+}
+
+export function threadListHtml(threads, activeId = "") {
+  if (!threads.length) {
+    return `<p class="muted thread-empty">No conversations yet. Open a clan or a player profile and press Message.</p>`;
+  }
+  return threads.map((thread) => threadRow(thread, activeId)).join("");
+}
+
+export function messageBubble(message, meId) {
+  const mine = message.senderId && message.senderId === meId;
+  return `
+    <div class="bubble-row${mine ? " is-mine" : ""}">
+      <div class="bubble">
+        <p class="bubble-who muted">${escapeHtml(message.from?.name || "(deleted account)")} · ${escapeHtml(
+          messageTime(message.createdAt)
+        )}</p>
+        <p class="bubble-body">${escapeHtml(message.body)}</p>
+      </div>
+    </div>
+  `;
+}
+
+export function conversationHtml(thread, messages, meId) {
+  if (!thread) {
+    return `<div class="conversation-empty"><p class="muted">Pick a conversation.</p></div>`;
+  }
+  return `
+    <header class="conversation-head">
+      <div>
+        <h2>${escapeHtml(thread.with?.name || "(deleted account)")}</h2>
+        <p class="muted">About <a href="${escapeHtml(thread.href)}" data-link>${escapeHtml(
+          thread.listingName || "a listing"
+        )}</a></p>
+      </div>
+      <div class="conversation-actions">
+        ${
+          thread.with?.id
+            ? `<button class="btn btn-ghost btn-small" type="button" data-block-user="${escapeHtml(
+                thread.with.id
+              )}">Block</button>`
+            : ""
+        }
+      </div>
+    </header>
+    <div class="bubbles" data-bubbles>
+      ${
+        messages.length
+          ? messages.map((item) => messageBubble(item, meId)).join("")
+          : `<p class="muted">No messages yet. Say hello.</p>`
+      }
+    </div>
+    ${reportForm("message", thread.id)}
+    <form class="composer-bar" data-send-form>
+      <label class="sr-only" for="message-body">Message</label>
+      <textarea id="message-body" name="body" rows="2" maxlength="${MESSAGE_MAX}" placeholder="Write a message… (Enter to send)"></textarea>
+      <button class="btn btn-primary" type="submit">Send</button>
+      <p class="error" data-send-note hidden></p>
+    </form>
+  `;
+}
+
+export function messagesView({ user, threads, activeId = "" }) {
+  if (!user) {
+    return `<section class="auth-card"><p class="eyebrow">Account required</p><h1>Sign in to read your messages</h1><p class="lead">Conversations are between two accounts, so this page needs one.</p><div class="row"><a class="btn btn-primary" href="/login?next=/messages" data-link>Sign in</a></div></section>`;
+  }
+  // With nothing in the inbox there is no conversation to pick, so the split
+  // layout is just two empty boxes asking a question with no answer. Say what
+  // to do instead, and point at the two places you can do it from.
+  if (!threads.length) {
+    return `
+      <section class="page-hero">
+        <p class="eyebrow">Messages</p>
+        <h1>Your conversations</h1>
+      </section>
+      <section class="auth-card inbox-empty">
+        <h2>No conversations yet</h2>
+        <p class="lead">Conversations start from a post. Open a clan or a player profile and press <strong>Message</strong> — whatever you send lands here, and so does their reply.</p>
+        <div class="row">
+          <a class="btn btn-primary" href="/browse" data-link>Browse clans</a>
+          <a class="btn btn-ghost" href="/players" data-link>Browse players</a>
+        </div>
+      </section>
+    `;
+  }
+  return `
+    <section class="page-hero">
+      <p class="eyebrow">Messages</p>
+      <h1>Your conversations</h1>
+    </section>
+    <section class="inbox">
+      <aside class="thread-list" data-thread-list>${threadListHtml(threads, activeId)}</aside>
+      <div class="conversation" data-conversation>${conversationHtml(null, [], user.id)}</div>
+    </section>
+  `;
+}
+
+// The nav badge. Zero is not a number worth showing, so it renders as nothing.
+export function unreadBadge(count) {
+  return count > 0 ? `<span class="unread-badge" data-unread>${count > 99 ? "99+" : count}</span>` : "";
+}
+
+// The button that starts a conversation. Hidden on your own post - there is
+// nobody on the other end - and on a listing with no owner left.
+export function messageButton(item, kind, user) {
+  if (!user || !item.ownerId || item.ownerId === user.id) return "";
+  return `<button class="btn btn-ghost" type="button" data-message-kind="${escapeHtml(
+    kind
+  )}" data-message-listing="${escapeHtml(item.id)}">Message</button>`;
 }

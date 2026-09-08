@@ -4,6 +4,7 @@ import {
   PAGE_SIZE,
   applyAllianceFilters,
   applyClanFilters,
+  applyPlayerFilters,
   defaultFilters,
   filtersFromSearch,
   filtersToSearch,
@@ -113,4 +114,106 @@ test("alliance browse also defaults to recruiting and drops hidden rows", () => 
     applyAllianceFilters([live, quiet, gone], defaultFilters()).map((item) => item.id),
     ["a1"]
   );
+});
+
+// --- Player filters --------------------------------------------------------
+
+const veteran = {
+  id: "vet",
+  name: "Gunson",
+  headline: "MR30 looking for Steel Path nights",
+  summary: "Been playing since 2015",
+  playstyles: ["Late Steel Path", "Endgame", "Voice Optional"],
+  platform: "PC",
+  region: "Europe",
+  language: "English",
+  status: "Looking now",
+  hours: "20+ hrs/week",
+  mr: 30,
+  recruiting: true,
+  bumpedAt: "2026-09-04T00:00:00.000Z",
+  createdAt: "2026-08-01T00:00:00.000Z",
+};
+
+const newbie = {
+  ...veteran,
+  id: "new",
+  name: "Tenno1",
+  headline: "Just started, want a friendly clan",
+  summary: "New to the game",
+  playstyles: ["Casual", "New Player Friendly"],
+  platform: "PlayStation",
+  region: "North America",
+  status: "Casually looking",
+  hours: "Under 5 hrs/week",
+  mr: 4,
+  bumpedAt: "2026-09-05T00:00:00.000Z",
+};
+
+const PLAYERS = [veteran, newbie];
+
+// The whole reason this test exists: `mr` is a ceiling on the clan board and a
+// floor on the player board, off the same query parameter. Getting this
+// backwards would silently show recruiters exactly the players they ruled out.
+test("the player MR filter is a floor, not a ceiling", () => {
+  const filters = { ...defaultFilters(), mr: "10" };
+  const ids = applyPlayerFilters(PLAYERS, filters).map((item) => item.id);
+  assert.deepEqual(ids, ["vet"]);
+});
+
+test("the clan MR filter still excludes clans that ask for more than you have", () => {
+  const cheap = { ...open, id: "cheap", mrRequired: 2 };
+  const ids = applyClanFilters([open, cheap], { ...defaultFilters(), mr: "5" }).map((item) => item.id);
+  assert.deepEqual(ids, ["cheap"]);
+});
+
+test("MR 0 is no floor at all", () => {
+  assert.equal(applyPlayerFilters(PLAYERS, defaultFilters()).length, 2);
+});
+
+test("player filters narrow on platform, region, status and hours", () => {
+  const only = (patch) => applyPlayerFilters(PLAYERS, { ...defaultFilters(), ...patch }).map((item) => item.id);
+  assert.deepEqual(only({ platform: "PlayStation" }), ["new"]);
+  assert.deepEqual(only({ region: "Europe" }), ["vet"]);
+  assert.deepEqual(only({ status: "Looking now" }), ["vet"]);
+  assert.deepEqual(only({ hours: "20+ hrs/week" }), ["vet"]);
+});
+
+test("every selected playstyle has to be present", () => {
+  const both = { ...defaultFilters(), playstyles: ["Endgame", "Late Steel Path"] };
+  assert.deepEqual(applyPlayerFilters(PLAYERS, both).map((item) => item.id), ["vet"]);
+  const impossible = { ...defaultFilters(), playstyles: ["Endgame", "Casual"] };
+  assert.deepEqual(applyPlayerFilters(PLAYERS, impossible), []);
+});
+
+test("keyword search reads the headline and summary", () => {
+  assert.deepEqual(
+    applyPlayerFilters(PLAYERS, { ...defaultFilters(), q: "steel path" }).map((item) => item.id),
+    ["vet"]
+  );
+});
+
+test("a hidden profile never appears, filters or not", () => {
+  const hidden = [{ ...veteran, hidden: true }];
+  assert.deepEqual(applyPlayerFilters(hidden, { ...defaultFilters(), recruiting: false }), []);
+});
+
+test("sorting by MR puts the most experienced player first", () => {
+  const ids = applyPlayerFilters(PLAYERS, { ...defaultFilters(), sort: "mr" }).map((item) => item.id);
+  assert.deepEqual(ids, ["vet", "new"]);
+});
+
+test("the default sort is newest, and players who stopped looking sink", () => {
+  const stopped = { ...veteran, id: "stopped", recruiting: false };
+  const ids = applyPlayerFilters([stopped, newbie], { ...defaultFilters(), recruiting: false }).map(
+    (item) => item.id
+  );
+  assert.deepEqual(ids, ["new", "stopped"]);
+});
+
+test("the hours filter round-trips through the URL", () => {
+  const filters = { ...defaultFilters(), hours: "10-20 hrs/week", mr: "12" };
+  const { filters: back } = filtersFromSearch(filtersToSearch(filters));
+  assert.equal(back.hours, "10-20 hrs/week");
+  assert.equal(back.mr, "12");
 });

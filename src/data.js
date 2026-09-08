@@ -286,3 +286,50 @@ export const TIER_CAPS = {
   Mountain: 300,
   Moon: 1000,
 };
+
+// --- Player listings -------------------------------------------------------
+//
+// A player advertises themselves on the same vocabulary a clan advertises on:
+// the playstyle tags, platforms, regions and languages above are shared, not
+// mirrored. A player tagged "Late Steel Path" and a clan tagged the same thing
+// match with no translation table in between, which is the whole point of
+// putting both sides of the board on one tag list.
+
+// How much someone actually plays. Deliberately coarse - nobody knows their
+// weekly hours to a number, and a range is the honest answer.
+export const HOURS = ["Under 5 hrs/week", "5-10 hrs/week", "10-20 hrs/week", "20+ hrs/week"];
+
+// The clan side's `status` says how hard it is to get in. The player side's
+// says how urgently they want out of wherever they are, which is the question
+// a recruiter is actually asking.
+export const PLAYER_STATUSES = ["Looking now", "Casually looking", "Open to offers"];
+
+// A display name, not a listing name: two players may legitimately go by the
+// same handle, so unlike clans this is never checked for conflicts.
+export const PLAYER_NAME_MAX = 32;
+
+// A player is a person, not a server, so the way to reach them on Discord is a
+// username you paste into Add Friend - never an invite link. Clans and
+// alliances still publish invites; only this side of the board changed.
+//
+// Discord's current usernames are 2-32 characters of lowercase letters,
+// digits, `.` and `_`. Legacy names carry a four-digit discriminator, and
+// plenty of people still write theirs that way, so both are accepted. A
+// leading `@` is what you get from copying a mention, and is simply dropped
+// rather than rejected.
+export const DISCORD_NAME_MAX = 37; // 32 + "#0000"
+const DISCORD_NAME = /^[a-zA-Z0-9._]{2,32}(#\d{4})?$/;
+
+export function normalizeDiscordName(value) {
+  return String(value ?? "").trim().replace(/^@+/, "");
+}
+
+export function isDiscordName(value) {
+  return DISCORD_NAME.test(normalizeDiscordName(value));
+}
+
+// What a recruiter is told to do with it. The username is useless on its own -
+// it has to end up in Discord's Add Friend box - so the profile says so.
+export function discordAddFriendHint(name) {
+  return `Add ${normalizeDiscordName(name)} on Discord`;
+}
