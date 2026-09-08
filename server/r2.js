@@ -4,6 +4,16 @@ import path from "node:path";
 const KEY_OK = /^[0-9]+-[a-f0-9]+\.(webp|png|jpe?g|gif)$/i;
 const PREFIX = "listings/";
 
+// AWS SDK v3.729+ sends CRC32 checksums on PutObject by default. R2's S3 API
+// still 501s those headers on full-object uploads, so restore the older
+// "only when required" behaviour before the client is constructed.
+if (!process.env.AWS_REQUEST_CHECKSUM_CALCULATION) {
+  process.env.AWS_REQUEST_CHECKSUM_CALCULATION = "WHEN_REQUIRED";
+}
+if (!process.env.AWS_RESPONSE_CHECKSUM_VALIDATION) {
+  process.env.AWS_RESPONSE_CHECKSUM_VALIDATION = "WHEN_REQUIRED";
+}
+
 let clientLoader = null;
 
 // The bucket setting is often pasted out of the Cloudflare dashboard as the
@@ -94,16 +104,39 @@ function contentTypeFor(filename) {
   return "image/webp";
 }
 
+// The SDK can still attach checksum headers even when WHEN_REQUIRED is set.
+// Strip them before the request is signed so R2 does not 501.
+export function stripR2ChecksumHeaders(headers) {
+  if (!headers || typeof headers !== "object") return headers;
+  for (const key of Object.keys(headers)) {
+    const lower = key.toLowerCase();
+    if (lower.startsWith("x-amz-checksum") || lower === "x-amz-sdk-checksum-algorithm") {
+      delete headers[key];
+    }
+  }
+  return headers;
+}
+
+function applyR2Middleware(client) {
+  const strip = (next) => async (args) => {
+    stripR2ChecksumHeaders(args.request?.headers);
+    return next(args);
+  };
+  // Checksums are attached during build; signing happens in finalizeRequest.
+  // Strip in both so the headers are gone before the request is signed.
+  client.middlewareStack.add(strip, { step: "build", name: "stripR2ChecksumHeadersBuild", priority: "low" });
+  client.middlewareStack.add(strip, { step: "finalizeRequest", name: "stripR2ChecksumHeadersSign", priority: "high" });
+}
+
 async function loadClient() {
   const cfg = r2Config();
   if (!cfg) return null;
   if (!clientLoader) {
     clientLoader = import("@aws-sdk/client-s3")
       .then(({ S3Client }) => {
-        return new S3Client({
+        const client = new S3Client({
           region: "auto",
           endpoint: cfg.endpoint,
-          forcePathStyle: true,
           requestChecksumCalculation: "WHEN_REQUIRED",
           responseChecksumValidation: "WHEN_REQUIRED",
           credentials: {
@@ -111,9 +144,12 @@ async function loadClient() {
             secretAccessKey: cfg.secretAccessKey,
           },
         });
+        applyR2Middleware(client);
+        return client;
       })
       .catch((error) => {
         console.warn("Cloudflare R2 client failed to load:", error.message);
+        clientLoader = null;
         return null;
       });
   }
@@ -123,15 +159,21 @@ async function loadClient() {
 export async function putR2Object(filename, body) {
   const cfg = r2Config();
   const key = objectKey(filename);
-  if (!cfg || !key) return null;
+  if (!cfg) return null;
+  if (!key) {
+    console.warn("R2 put skipped; filename was not a listing object:", filename);
+    return null;
+  }
   const client = await loadClient();
   if (!client) return null;
   const { PutObjectCommand } = await import("@aws-sdk/client-s3");
+  const payload = Buffer.isBuffer(body) ? body : Buffer.from(body);
   await client.send(
     new PutObjectCommand({
       Bucket: cfg.bucket,
       Key: key,
-      Body: body,
+      Body: payload,
+      ContentLength: payload.length,
       ContentType: contentTypeFor(filename),
       CacheControl: "public, max-age=31536000, immutable",
     })

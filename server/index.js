@@ -439,7 +439,7 @@ async function processListingImages(req, res) {
     } catch (error) {
       // Swallowing this is what made a misconfigured bucket look like a
       // browser problem: every upload failed and nothing reached the logs.
-      console.error("Media store failed:", error.message);
+      console.error("Listing image could not be stored on R2:", error);
       discardUploads(req);
       res.status(503).json({ error: "Could not store that image. Try again in a moment." });
       return false;

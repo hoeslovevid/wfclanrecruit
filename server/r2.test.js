@@ -10,6 +10,7 @@ import {
   r2Enabled,
   r2PartialEnv,
   r2PublicUrl,
+  stripR2ChecksumHeaders,
 } from "./r2.js";
 
 const BASE = "https://media.example.com";
@@ -41,6 +42,22 @@ test("object keys are listings/<timestamp>-<hex>.ext and nothing else", () => {
   assert.equal(objectKey("listings/../secret.webp"), null);
   assert.equal(objectKey("note.txt"), null);
   assert.equal(objectKey("gallery.webp"), null);
+});
+
+test("checksum headers R2 rejects are stripped before the request is signed", () => {
+  const headers = {
+    host: "photos.acct.r2.cloudflarestorage.com",
+    "x-amz-checksum-crc32": "Cu/HOQ==",
+    "x-amz-sdk-checksum-algorithm": "CRC32",
+    "X-Amz-Checksum-Mode": "ENABLED",
+    "content-type": "image/webp",
+  };
+  stripR2ChecksumHeaders(headers);
+  assert.equal(headers["x-amz-checksum-crc32"], undefined);
+  assert.equal(headers["x-amz-sdk-checksum-algorithm"], undefined);
+  assert.equal(headers["X-Amz-Checksum-Mode"], undefined);
+  assert.equal(headers["content-type"], "image/webp");
+  assert.equal(headers.host, "photos.acct.r2.cloudflarestorage.com");
 });
 
 test("a public URL only maps back to a key under our host and prefix", () => {
