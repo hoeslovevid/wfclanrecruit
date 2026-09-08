@@ -46,7 +46,9 @@ import {
   sectionTooLong,
 } from "../src/richtext.js";
 import {
+  HEADLINE_MAX,
   LINK_MAX,
+  SUMMARY_MAX,
   TAG_MAX,
   VIDEO_MAX,
   normalizeContact,
@@ -114,7 +116,6 @@ const TIER_CAPS = {
 
 const IMAGE_MAX = 2 * 1024 * 1024;
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
-const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const EXT_BY_TYPE = {
   "image/png": ".png",
   "image/jpeg": ".jpg",
@@ -161,9 +162,13 @@ const upload = multer({
   storage: cappedStorage,
   limits: { fileSize: IMAGE_MAX, files: 1 + MEDIA_MAX },
   fileFilter: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || "").toLowerCase();
     if (file.fieldname === "image" || file.fieldname === "mediaImage") {
-      const ok = IMAGE_TYPES.has(file.mimetype) && IMAGE_EXTS.has(ext);
+      // The type decides, not the name. Chrome on Windows saves JPEGs as
+      // .jfif and a dragged screenshot may have no extension at all - both
+      // used to be rejected as "not an image" while holding a perfectly good
+      // image/jpeg. The name is never trusted for anything else either: the
+      // stored file is named from the MIME type and re-encoded by sharp.
+      const ok = IMAGE_TYPES.has(file.mimetype);
       cb(ok ? null : new Error("Image must be PNG, JPG, WEBP, or GIF."), ok);
       return;
     }
@@ -636,8 +641,8 @@ function parseClanBody(body, user, req) {
       // reads these, and so does anything that has not learned about `media`.
       videos: videoIdsOf(media),
       video: videoIdsOf(media)[0] || null,
-      headline: String(body.headline).slice(0, 90),
-      summary: String(body.summary).slice(0, 220),
+      headline: String(body.headline).slice(0, HEADLINE_MAX),
+      summary: String(body.summary).slice(0, SUMMARY_MAX),
       about,
       offering: sections.offering,
       requirements: sections.requirements,
@@ -705,8 +710,8 @@ function parseAllianceBody(body, user, req) {
       // reads these, and so does anything that has not learned about `media`.
       videos: videoIdsOf(media),
       video: videoIdsOf(media)[0] || null,
-      headline: String(body.headline).slice(0, 90),
-      summary: String(body.summary).slice(0, 220),
+      headline: String(body.headline).slice(0, HEADLINE_MAX),
+      summary: String(body.summary).slice(0, SUMMARY_MAX),
       about,
       offering: sections.offering,
       requirements: sections.requirements,

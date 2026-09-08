@@ -3,6 +3,7 @@ import { filtersToSearch } from "./browse.js";
 import {
   CONTACT_LABELS,
   CONTACT_MODES,
+  HEADLINE_MAX,
   LANGUAGES,
   LINK_KINDS,
   LINK_MAX,
@@ -11,17 +12,22 @@ import {
   PLATFORMS,
   REGIONS,
   STATUSES,
+  SUMMARY_MAX,
   TAG_MAX,
   TIER_CAPS,
   TIERS,
+  cardPlaystyles,
   groupOf,
   normalizeContact,
   normalizeLinks,
   normalizePlaystyles,
+  playstylesByGroup,
   wantsDiscord,
   wantsWhisper,
 } from "./data.js";
 import {
+  PLAIN_MAX,
+  SECTION_PLAIN_MAX,
   isSafeHref,
   sanitizePostHtml,
   sectionIsEmpty,
@@ -34,6 +40,7 @@ import { MEDIA_MAX, isUploadedImage, mediaList } from "./media.js";
 import {
   ROLE_MAX,
   ROLE_NAME_MAX,
+  ROLE_PLAIN_MAX,
   ROLE_STATUSES,
   ROLE_SUGGESTIONS,
   isRoleOpen,
@@ -93,11 +100,38 @@ function chipList(items = []) {
     .join("");
 }
 
-// Ordered by group, then by the order the group lists them, so two clans that
-// picked the same tags always show them in the same order.
-function orderedPlaystyles(items = []) {
-  // normalizePlaystyles already returns them in group order.
-  return normalizePlaystyles(items);
+// One row, always. A card that wrapped its chips onto a second line pushed its
+// roster and buttons out of line with the card beside it, so the overflow is
+// counted rather than shown - and the row is emitted even when a clan has no
+// tags, to keep the height the same either way.
+function cardChips(playstyles) {
+  const { shown, rest } = cardPlaystyles(playstyles, 3);
+  const more = rest ? `<span class="chip chip-more">+${rest} more</span>` : "";
+  return `<div class="chips is-capped">${chipList(shown)}${more}</div>`;
+}
+
+// The post has the room the card does not, so the same tags arrive sorted into
+// what they answer. The labels are shorter than the composer's - the reader is
+// scanning rows, not picking from a list.
+const TAG_ROW_LABELS = {
+  progression: "Playstyle",
+  community: "Community",
+  communication: "Communication",
+  activities: "Activities",
+};
+
+function groupedChips(playstyles) {
+  const groups = playstylesByGroup(playstyles);
+  if (!groups.length) return "";
+  return `<div class="tag-rows">${groups
+    .map(
+      (group) => `
+      <div class="tag-row" data-group="${escapeHtml(group.id)}">
+        <span class="tag-row-label">${escapeHtml(TAG_ROW_LABELS[group.id] || group.label)}</span>
+        <div class="chips">${chipList(group.tags)}</div>
+      </div>`
+    )
+    .join("")}</div>`;
 }
 
 function hueFrom(seed) {
@@ -554,7 +588,7 @@ export function clanCard(clan) {
       <p class="headline">${escapeHtml(clan.headline)}</p>
       <p class="muted">${escapeHtml(clan.summary)}</p>
       ${roleHint(clan)}
-      <div class="chips">${chipList(orderedPlaystyles(clan.playstyles).slice(0, 4))}</div>
+      ${cardChips(clan.playstyles)}
       <div class="stats">
         <div>
           <span>Roster</span>
@@ -705,7 +739,6 @@ export function browseView(clans, filters, pager, roleOptions = []) {
     <section class="page-hero">
       <div class="directory-topline"><p class="eyebrow">Clan directory</p><a class="text-link" href="/post" data-link>Advertise a clan ↗</a></div>
       <h1>Find a clan to call home.</h1>
-      <p class="lead">Find the right people for the way you play. Explore recruitment posts and connect with a clan.</p>
     </section>
     <section class="browse">
       <aside class="filters is-collapsed" data-filters>
@@ -764,7 +797,6 @@ export function alliancesView(alliances, filters, pager) {
     <section class="page-hero">
       <div class="directory-topline"><p class="eyebrow">Alliance directory</p><a class="text-link" href="/post-alliance" data-link>Advertise an alliance ↗</a></div>
       <h1>Find an alliance for your clan.</h1>
-      <p class="lead">Browse alliances, meet other clan leaders, and find people your clan will enjoy playing with.</p>
     </section>
     <section class="browse">
       <aside class="filters is-collapsed" data-filters>
@@ -879,7 +911,7 @@ function imagePicker(label) {
       <span>${escapeHtml(label)}</span>
       <div class="file-picker" data-file-picker="image">
         <div class="file-picker-target">
-          <input class="file-picker-input" name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" />
+          <input class="file-picker-input" name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
           <div class="file-picker-ui">
             <span class="file-picker-preview" data-file-preview aria-hidden="true">
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
@@ -890,12 +922,54 @@ function imagePicker(label) {
             </span>
             <span class="file-picker-copy">
               <strong data-file-label>Upload an image</strong>
-              <small data-file-hint>PNG, JPG, WEBP, GIF, or SVG. Max 2 MB.</small>
+              <small data-file-hint>PNG, JPG, WEBP, or GIF. Crop it after you choose.</small>
             </span>
             <span class="file-picker-action" data-file-action>Choose image</span>
           </div>
         </div>
         <button class="file-picker-clear" type="button" data-file-clear hidden>Remove image</button>
+        <p class="field-error" data-file-error hidden></p>
+      </div>
+    </div>
+  `;
+}
+
+// The emblem is shown as a square everywhere - the card, the post header, the
+// preview - so the leader gets to choose which square, rather than having the
+// middle of their artwork taken for them. What comes back out of the canvas is
+// also a small, clean image, which is why a file the upload used to reject now
+// arrives as something it always accepts.
+export function cropperModal(name) {
+  return `
+    <div class="backdrop" data-cropper>
+      <div class="modal cropper" role="dialog" aria-modal="true" aria-label="Crop ${escapeHtml(name)}">
+        <button class="icon-close" type="button" data-crop-cancel aria-label="Cancel">×</button>
+        <h2 class="cropper-title">Crop your emblem</h2>
+        <div class="cropper-body">
+          <div class="cropper-stage" data-crop-stage>
+            <canvas class="cropper-canvas" data-crop-canvas></canvas>
+            <div class="cropper-mask" aria-hidden="true"></div>
+          </div>
+          <div class="cropper-side">
+            <p class="kicker">Preview</p>
+            <div class="cropper-previews">
+              <span class="cropper-preview is-card" data-crop-preview></span>
+              <span class="cropper-preview is-chip" data-crop-preview></span>
+            </div>
+            <p class="muted">The square you keep is what shows on your card and at the top of your post.</p>
+          </div>
+        </div>
+        <p class="cropper-hint">Drag the image to reposition it.</p>
+        <div class="cropper-tools">
+          <label class="cropper-zoom">
+            <span class="sr-only">Zoom</span>
+            <input type="range" data-crop-zoom min="1" max="4" step="0.01" value="1" />
+          </label>
+          <div class="cropper-actions">
+            <button class="btn btn-ghost" type="button" data-crop-cancel>Cancel</button>
+            <button class="btn btn-primary" type="button" data-crop-save>Use this image</button>
+          </div>
+        </div>
       </div>
     </div>
   `;
@@ -1034,14 +1108,18 @@ function roleRow(role = {}) {
         ${richTextEditor(role.description, {
           label: "What the role does",
           placeholder: "What the role does — a list works well here",
+          limit: ROLE_PLAIN_MAX,
         })}
+        ${charCount(ROLE_PLAIN_MAX)}
       </div>
       <div class="role-body" data-role-field="requirements">
         <span class="role-label">Requirements</span>
         ${richTextEditor(role.requirements, {
           label: "What the role asks for",
           placeholder: "What it asks for — a list works well here",
+          limit: ROLE_PLAIN_MAX,
         })}
+        ${charCount(ROLE_PLAIN_MAX)}
       </div>
     </div>
   `;
@@ -1113,7 +1191,7 @@ function linksField(draft = {}) {
 // control can wear the same frame, so the fields around them stop looking like
 // a different kind of thing. The legend labels the group; the control carries
 // its own aria-label, since a legend is not a label for one input.
-function boxedField(name, label, control, { hint = "", optional = false } = {}) {
+function boxedField(name, label, control, { hint = "", optional = false, limit = 0 } = {}) {
   return `
     <fieldset class="fieldset boxed-field" data-boxed-field="${escapeHtml(name)}">
       <legend>
@@ -1122,8 +1200,17 @@ function boxedField(name, label, control, { hint = "", optional = false } = {}) 
         ${optional ? `<small class="field-optional">optional</small>` : ""}
       </legend>
       ${control}
+      ${charCount(limit)}
     </fieldset>
   `;
+}
+
+// Every box the server trims says up front how much room it has. The number is
+// written by the browser on each keystroke - the markup only reserves the slot
+// and carries the budget.
+function charCount(max) {
+  if (!max) return "";
+  return `<small class="char-count" data-char-count data-max="${max}" aria-live="polite"></small>`;
 }
 
 // The editor itself, without the box around it. Split out so a role row can
@@ -1131,9 +1218,9 @@ function boxedField(name, label, control, { hint = "", optional = false } = {}) 
 //
 // `name` writes to a named textarea the form reads directly; a row inside a
 // repeatable list passes no name and is read out of the DOM into JSON instead.
-function richTextEditor(value, { label, placeholder = "", name = "", video = false, compact = true } = {}) {
+function richTextEditor(value, { label, placeholder = "", name = "", video = false, compact = true, limit = 0 } = {}) {
   return `
-    <div class="richtext" data-rich-editor-shell>
+    <div class="richtext" data-rich-editor-shell ${limit ? `data-plain-limit="${limit}"` : ""}>
       <div class="richtext-toolbar" role="toolbar" aria-label="${escapeHtml(label)} formatting">
         <button class="richtext-btn" type="button" data-rt="bold" title="Bold"><strong>B</strong></button>
         <button class="richtext-btn" type="button" data-rt="italic" title="Italic"><em>I</em></button>
@@ -1157,7 +1244,7 @@ function richTextEditor(value, { label, placeholder = "", name = "", video = fal
   `;
 }
 
-function richTextField(name, label, value, { hint = "", optional = false, video = false, placeholder = "" } = {}) {
+function richTextField(name, label, value, { hint = "", optional = false, video = false, placeholder = "", limit = 0 } = {}) {
   return `
     <fieldset class="fieldset rich-field" data-rich-field="${escapeHtml(name)}">
       <legend>
@@ -1165,7 +1252,8 @@ function richTextField(name, label, value, { hint = "", optional = false, video 
         ${hint ? `<small>${escapeHtml(hint)}</small>` : ""}
         ${optional ? `<small class="field-optional">optional</small>` : ""}
       </legend>
-      ${richTextEditor(value, { label, placeholder, name, video, compact: !video })}
+      ${richTextEditor(value, { label, placeholder, name, video, compact: !video, limit })}
+      ${charCount(limit)}
     </fieldset>
   `;
 }
@@ -1174,7 +1262,11 @@ function richTextField(name, label, value, { hint = "", optional = false, video 
 // array. sectionToHtml turns it back into the bullet list it always rendered
 // as, so opening an old post in the editor shows what the page shows.
 function sectionField(name, label, value, options = {}) {
-  return richTextField(name, label, sectionToHtml(value), { optional: true, ...options });
+  return richTextField(name, label, sectionToHtml(value), {
+    optional: true,
+    limit: SECTION_PLAIN_MAX,
+    ...options,
+  });
 }
 
 // The browse sidebar is narrow, so the groups get a small rail and a label
@@ -1214,6 +1306,7 @@ function aboutComposer(draft = {}) {
     ${richTextField("about", "Full post", draft.about || "", {
       video: true,
       hint: "The body of the listing",
+      limit: PLAIN_MAX,
     })}
     ${videoPicker(draft)}
     <small class="field-help">Select text to format. Click in the post, then Video to place the media band. Insert again to move it.</small>
@@ -1385,14 +1478,14 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
           ${boxedField(
             "headline",
             "Headline",
-            `<input name="headline" aria-label="Headline" required maxlength="90" value="${escapeHtml(draft.headline || "")}" />`,
-            { hint: "One line, shown on the card" }
+            `<input name="headline" aria-label="Headline" required maxlength="${HEADLINE_MAX}" value="${escapeHtml(draft.headline || "")}" />`,
+            { hint: "One line, shown on the card", limit: HEADLINE_MAX }
           )}
           ${boxedField(
             "summary",
             "Short summary",
-            `<textarea name="summary" aria-label="Short summary" required maxlength="220" rows="3">${escapeHtml(draft.summary || "")}</textarea>`,
-            { hint: "A sentence under the headline" }
+            `<textarea name="summary" aria-label="Short summary" required maxlength="${SUMMARY_MAX}" rows="3">${escapeHtml(draft.summary || "")}</textarea>`,
+            { hint: "A sentence under the headline", limit: SUMMARY_MAX }
           )}
           ${aboutComposer(draft)}
           ${sectionField("offering", "What you offer", draft.offering, {
@@ -1481,14 +1574,14 @@ export function alliancePostView({ user, draft = {}, auth = {}, clans = [] }) {
           ${boxedField(
             "headline",
             "Headline",
-            `<input name="headline" aria-label="Headline" required maxlength="90" value="${escapeHtml(draft.headline || "")}" />`,
-            { hint: "One line, shown on the card" }
+            `<input name="headline" aria-label="Headline" required maxlength="${HEADLINE_MAX}" value="${escapeHtml(draft.headline || "")}" />`,
+            { hint: "One line, shown on the card", limit: HEADLINE_MAX }
           )}
           ${boxedField(
             "summary",
             "Short summary",
-            `<textarea name="summary" aria-label="Short summary" required maxlength="220" rows="3">${escapeHtml(draft.summary || "")}</textarea>`,
-            { hint: "A sentence under the headline" }
+            `<textarea name="summary" aria-label="Short summary" required maxlength="${SUMMARY_MAX}" rows="3">${escapeHtml(draft.summary || "")}</textarea>`,
+            { hint: "A sentence under the headline", limit: SUMMARY_MAX }
           )}
           ${aboutComposer(draft)}
           ${sectionField("offering", "What you offer", draft.offering, {
@@ -1881,7 +1974,7 @@ export function clanPage(clan, { admin = false } = {}) {
           </div>
           <h1 id="clan-title">${escapeHtml(clan.name)}</h1>
           <p class="headline">${escapeHtml(clan.headline)}</p>
-          <div class="chips">${chipList(orderedPlaystyles(clan.playstyles))}</div>
+          ${groupedChips(clan.playstyles)}
           ${linkRow(clan)}
         </div>
       </div>

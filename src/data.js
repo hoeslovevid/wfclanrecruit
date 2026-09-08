@@ -149,6 +149,50 @@ export function groupOf(tag) {
   return PLAYSTYLE_GROUP_BY_TAG.get(normalizePlaystyle(tag)) || "activities";
 }
 
+// A card has room for one row of chips. Taking one tag per group before taking
+// a second from any group means those three chips describe a clan from three
+// angles - how far it plays, what it is like to be in, what it runs - instead
+// of three shades of the same group.
+export function cardPlaystyles(list, max = 3) {
+  const tags = normalizePlaystyles(list);
+  const buckets = new Map(PLAYSTYLE_GROUPS.map((group) => [group.id, []]));
+  for (const tag of tags) buckets.get(groupOf(tag)).push(tag);
+  const taken = new Set();
+  // Sweep the groups in order, one tag each, until the row is full or every
+  // bucket is empty. A clan tagged only for Activities still fills its row.
+  while (taken.size < max) {
+    let moved = false;
+    for (const group of PLAYSTYLE_GROUPS) {
+      if (taken.size >= max) break;
+      const next = buckets.get(group.id).shift();
+      if (!next) continue;
+      taken.add(next);
+      moved = true;
+    }
+    if (!moved) break;
+  }
+  // Back into group order, so two clans showing the same chips show them the
+  // same way round.
+  return { shown: tags.filter((tag) => taken.has(tag)), rest: tags.length - taken.size };
+}
+
+// The post page has room to say what each tag means, so it shows the groups
+// rather than one flat run of chips. Empty groups are dropped - a row with a
+// label and nothing beside it is just a hole in the layout.
+export function playstylesByGroup(list) {
+  const tags = normalizePlaystyles(list);
+  return PLAYSTYLE_GROUPS.map((group) => ({
+    id: group.id,
+    label: group.label,
+    tags: tags.filter((tag) => groupOf(tag) === group.id),
+  })).filter((group) => group.tags.length);
+}
+
+// The card and the composer measure the same budget the server enforces, so a
+// leader is never told a headline fits and then finds it cut on the board.
+export const HEADLINE_MAX = 90;
+export const SUMMARY_MAX = 220;
+
 export const REGIONS = ["North America", "Europe", "South America", "Asia", "Oceania", "Global"];
 export const LANGUAGES = [
   "English",

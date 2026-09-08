@@ -15,6 +15,7 @@ import {
   clanCard,
   clanPage,
   clanResultsHtml,
+  cropperModal,
   guideView,
   homeView,
   navAccount,
@@ -39,6 +40,15 @@ import {
   sectionTooLong,
   toEditorHtml,
 } from "./richtext.js";
+import { counterState, fitPlain } from "./limits.js";
+import {
+  centerOffset,
+  clampOffset,
+  clampZoom,
+  coverScale,
+  sourceRect,
+  zoomAbout,
+} from "./crop.js";
 import { parseYouTubeId } from "./video.js";
 import { MEDIA_MAX, parseImageUrl, setUploadPublicBase } from "./media.js";
 import {
@@ -468,6 +478,161 @@ function showNote(el, message, kind = "error") {
 
 const IMAGE_MAX = 2 * 1024 * 1024;
 
+// What the cropper writes back. 512 is the largest the emblem is ever drawn -
+// the post header at 72 on a 3x screen - and a square of it re-encodes small
+// enough that the 2 MB cap stops being something a leader can hit.
+const EMBLEM_SIZE = 512;
+// The stage is square and fixed for the life of one crop - the drag maths is
+// written against it - so it is sized once, to whatever the screen allows.
+function stageSize() {
+  return Math.max(200, Math.min(320, window.innerWidth - 80));
+}
+
+function canvasFile(canvas, name) {
+  return new Promise((resolve) => {
+    // WebP everywhere it is offered; PNG is the fallback that keeps the
+    // transparency an emblem usually has.
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          resolve(null);
+          return;
+        }
+        const ext = blob.type === "image/webp" ? "webp" : "png";
+        resolve(new File([blob], `${name}.${ext}`, { type: blob.type }));
+      },
+      "image/webp",
+      0.9
+    );
+  });
+}
+
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("That image could not be opened. Try a PNG or JPG."));
+    image.src = url;
+  });
+}
+
+// Resolves with the cropped File, or null if the leader backed out. The picker
+// only replaces what it has once something comes back, so cancelling leaves the
+// previous emblem exactly where it was.
+async function openCropper(file, root) {
+  const url = URL.createObjectURL(file);
+  let image;
+  try {
+    image = await loadImage(url);
+  } catch (error) {
+    URL.revokeObjectURL(url);
+    throw error;
+  }
+
+  root.innerHTML = cropperModal(file.name);
+  document.body.classList.add("modal-open");
+  const backdrop = root.querySelector("[data-cropper]");
+  const canvas = root.querySelector("[data-crop-canvas]");
+  const zoom = root.querySelector("[data-crop-zoom]");
+  const previews = [...root.querySelectorAll("[data-crop-preview]")];
+  const STAGE = stageSize();
+  const stage = root.querySelector("[data-crop-stage]");
+  stage.style.width = `${STAGE}px`;
+  stage.style.height = `${STAGE}px`;
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = STAGE * ratio;
+  canvas.height = STAGE * ratio;
+  canvas.style.width = `${STAGE}px`;
+  canvas.style.height = `${STAGE}px`;
+  const ctx = canvas.getContext("2d");
+
+  const base = coverScale(image.naturalWidth, image.naturalHeight, STAGE);
+  const bounds = { width: image.naturalWidth, height: image.naturalHeight, frame: STAGE };
+  let scale = base;
+  let offset = centerOffset({ ...bounds, scale });
+
+  function paint() {
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, STAGE, STAGE);
+    ctx.drawImage(image, offset.x, offset.y, image.naturalWidth * scale, image.naturalHeight * scale);
+    const box = sourceRect({ ...offset, frame: STAGE, scale });
+    for (const preview of previews) {
+      // Each preview is the same crop, scaled to the size it will be shown at.
+      const size = preview.clientWidth || 40;
+      preview.style.backgroundImage = `url("${url}")`;
+      preview.style.backgroundSize = `${(image.naturalWidth / box.size) * size}px ${
+        (image.naturalHeight / box.size) * size
+      }px`;
+      preview.style.backgroundPosition = `${(-box.sx / box.size) * size}px ${
+        (-box.sy / box.size) * size
+      }px`;
+    }
+  }
+
+  function setScale(next) {
+    const wanted = clampZoom(next) * base;
+    offset = zoomAbout({ ...offset, ...bounds, scale, nextScale: wanted });
+    scale = wanted;
+    paint();
+  }
+
+  paint();
+
+  zoom.addEventListener("input", () => setScale(Number(zoom.value)));
+
+  let dragging = null;
+  canvas.addEventListener("pointerdown", (event) => {
+    dragging = { x: event.clientX - offset.x, y: event.clientY - offset.y };
+    canvas.setPointerCapture(event.pointerId);
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    offset = clampOffset({
+      ...bounds,
+      scale,
+      x: event.clientX - dragging.x,
+      y: event.clientY - dragging.y,
+    });
+    paint();
+  });
+  const endDrag = () => {
+    dragging = null;
+  };
+  canvas.addEventListener("pointerup", endDrag);
+  canvas.addEventListener("pointercancel", endDrag);
+
+  return new Promise((resolve) => {
+    function close(result) {
+      document.removeEventListener("keydown", onKey);
+      document.body.classList.remove("modal-open");
+      root.innerHTML = "";
+      URL.revokeObjectURL(url);
+      resolve(result);
+    }
+    function onKey(event) {
+      if (event.key === "Escape") close(null);
+    }
+    document.addEventListener("keydown", onKey);
+    backdrop.addEventListener("click", (event) => {
+      if (event.target === backdrop) close(null);
+    });
+    root.querySelectorAll("[data-crop-cancel]").forEach((button) => {
+      button.addEventListener("click", () => close(null));
+    });
+    root.querySelector("[data-crop-save]").addEventListener("click", async () => {
+      const box = sourceRect({ ...offset, frame: STAGE, scale });
+      const out = document.createElement("canvas");
+      out.width = EMBLEM_SIZE;
+      out.height = EMBLEM_SIZE;
+      out
+        .getContext("2d")
+        .drawImage(image, box.sx, box.sy, box.size, box.size, 0, 0, EMBLEM_SIZE, EMBLEM_SIZE);
+      const cropped = await canvasFile(out, "emblem");
+      close(cropped);
+    });
+  });
+}
+
 function bindImagePicker(form, initialUrl, onUrl) {
   let imageUrl = initialUrl;
   const input = form.image;
@@ -494,11 +659,62 @@ function bindImagePicker(form, initialUrl, onUrl) {
 
   if (initialUrl) setFile(null);
 
+  // Everything the leader picks goes through the cropper, so what the form
+  // finally uploads is always a square the canvas re-encoded - never the raw
+  // file, whatever its extension or size.
+  // Writing to input.files fires another change event. Without this the
+  // cropper would reopen on its own output, forever.
+  let writingBack = false;
+  // The last crop the picker accepted, so cancelling can put it back.
+  let kept = null;
+
+  async function take(file) {
+    if (!file || !input) return;
+    const error = picker?.querySelector("[data-file-error]");
+    if (error) {
+      error.textContent = "";
+      error.hidden = true;
+    }
+    let cropped = null;
+    try {
+      cropped = await openCropper(file, document.getElementById("modal-root"));
+    } catch (failure) {
+      if (error) {
+        error.textContent = failure.message;
+        error.hidden = false;
+      }
+      input.value = "";
+      return;
+    }
+    if (!cropped) {
+      // Cancelled: put back whatever the picker already held, so backing out
+      // of a second choice does not throw away the first one.
+      const transfer = new DataTransfer();
+      if (kept) transfer.items.add(kept);
+      writingBack = true;
+      input.files = transfer.files;
+      writingBack = false;
+      setFile(kept);
+      return;
+    }
+    const transfer = new DataTransfer();
+    transfer.items.add(cropped);
+    writingBack = true;
+    input.files = transfer.files;
+    writingBack = false;
+    kept = cropped;
+    setFile(cropped);
+  }
+
   clear?.addEventListener("click", () => {
     if (input) input.value = "";
+    kept = null;
     setFile(null);
   });
-  input?.addEventListener("change", () => setFile(input.files?.[0] || null));
+  input?.addEventListener("change", () => {
+    if (writingBack) return;
+    take(input.files?.[0] || null);
+  });
 
   ["dragenter", "dragover"].forEach((type) => {
     picker?.addEventListener(type, (event) => {
@@ -510,12 +726,7 @@ function bindImagePicker(form, initialUrl, onUrl) {
   picker?.addEventListener("drop", (event) => {
     event.preventDefault();
     picker.classList.remove("is-dragover");
-    const file = event.dataTransfer?.files?.[0];
-    if (!file || !input) return;
-    const transfer = new DataTransfer();
-    transfer.items.add(file);
-    input.files = transfer.files;
-    setFile(file);
+    take(event.dataTransfer?.files?.[0] || null);
   });
 }
 
@@ -873,6 +1084,12 @@ function bindRichTextField(field, onChange) {
   const textarea = field.querySelector("textarea");
   if (!editor || !textarea) return;
   const hasVideo = Boolean(toolbar?.querySelector("[data-insert-video]"));
+  const shell = field.matches("[data-plain-limit]") ? field : field.querySelector("[data-plain-limit]");
+  const limit = Number(shell?.dataset.plainLimit || 0);
+
+  function roomLeft() {
+    return limit - plainTextFromHtml(editor.innerHTML).length;
+  }
 
   function paintPlaceholder() {
     editor.classList.toggle("is-empty", !plainTextFromHtml(editor.innerHTML).trim());
@@ -931,6 +1148,18 @@ function bindRichTextField(field, onChange) {
     sync();
   });
 
+  // The budget has to bite while typing, or the leader writes a paragraph the
+  // server will quietly cut. Deleting and replacing a selection always pass -
+  // both of those are how you get back under the limit.
+  if (limit) {
+    editor.addEventListener("beforeinput", (event) => {
+      if (!event.inputType?.startsWith("insert")) return;
+      if (!window.getSelection()?.isCollapsed) return;
+      if (roomLeft() > 0) return;
+      event.preventDefault();
+    });
+  }
+
   editor.addEventListener("input", sync);
   editor.addEventListener("blur", paintPlaceholder);
   editor.addEventListener("click", (event) => {
@@ -940,10 +1169,18 @@ function bindRichTextField(field, onChange) {
     event.preventDefault();
     const html = event.clipboardData?.getData("text/html");
     const text = event.clipboardData?.getData("text/plain") || "";
-    const clean = html
-      ? sanitizePostHtml(html)
-      : sanitizePostHtml(text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>"));
-    document.execCommand("insertHTML", false, clean || text);
+    // Paste is the one way past the keystroke cap, so what lands is trimmed to
+    // what is left. Formatting goes with it - a clip that has to be cut is
+    // pasted as the plain text that fits.
+    const room = limit ? roomLeft() : Infinity;
+    if (limit && room <= 0) return;
+    const fits = !limit || plainTextFromHtml(html || text).length <= room;
+    const source = fits ? html : "";
+    const plain = fits ? text : fitPlain(text, room);
+    const clean = source
+      ? sanitizePostHtml(source)
+      : sanitizePostHtml(plain.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>"));
+    document.execCommand("insertHTML", false, clean || plain);
     sync();
   });
 }
@@ -974,9 +1211,32 @@ function previewHtml(cardHtml, form, media) {
   )}${sections}</div>`;
 }
 
+// A field's budget is only useful while it is being spent, so the count is
+// repainted on the same pass that repaints the preview. The control it belongs
+// to is whichever one shares its box - a rich editor if there is one, the
+// input or textarea otherwise.
+function usedChars(box) {
+  const editor = box.querySelector("[data-rich-editor]");
+  if (editor) return plainTextFromHtml(editor.innerHTML).length;
+  return (box.querySelector("input, textarea")?.value || "").length;
+}
+
+function paintCharCounts(root) {
+  root.querySelectorAll("[data-char-count]").forEach((count) => {
+    const box = count.closest("fieldset, .role-body") || root;
+    const state = counterState(usedChars(box), Number(count.dataset.max));
+    count.textContent = `${state.used} / ${state.max}`;
+    count.classList.toggle("is-near", state.near);
+    count.classList.toggle("is-over", state.over);
+  });
+}
+
 function bindListingComposer(form, { imageUrl = null, onChange }) {
   const media = { image: imageUrl, entries: [] };
-  const refresh = () => onChange(media);
+  const refresh = () => {
+    paintCharCounts(form);
+    onChange(media);
+  };
   bindRichText(form, refresh);
   bindImagePicker(form, imageUrl, (url) => {
     media.image = url;

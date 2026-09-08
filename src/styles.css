@@ -836,6 +836,46 @@ select {
   font-weight: 650;
 }
 .file-picker-clear:hover { color: var(--danger); }
+.field-error { margin: 6px 0 0; font-size: 12px; color: var(--danger); }
+
+/* The cropper. The stage is a fixed square because the crop is a fixed square -
+   letting it flex would mean recomputing the geometry on every resize. */
+.cropper { width: min(680px, 100%); }
+.cropper-title { margin: 0 0 18px; font-size: 24px; }
+.cropper-body { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+.cropper-stage {
+  position: relative;
+  flex: none;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--input);
+}
+.cropper-canvas { display: block; cursor: grab; touch-action: none; }
+.cropper-canvas:active { cursor: grabbing; }
+/* The frame is the whole stage, so the mask is a border rather than a hole. */
+.cropper-mask {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  pointer-events: none;
+}
+.cropper-side { flex: 1 1 200px; min-width: 180px; }
+.cropper-side .kicker { margin: 0 0 10px; }
+.cropper-side .muted { font-size: 13px; margin: 14px 0 0; }
+.cropper-previews { display: flex; align-items: center; gap: 14px; }
+.cropper-preview { display: block; border-radius: 10px; background: var(--input) no-repeat; }
+.cropper-preview.is-card { width: 64px; height: 64px; }
+.cropper-preview.is-chip { width: 34px; height: 34px; border-radius: 8px; }
+.cropper-hint { margin: 16px 0 0; font-size: 12px; color: var(--muted); text-align: center; }
+.cropper-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin-top: 12px; }
+.cropper-zoom { flex: 1 1 220px; }
+.cropper-zoom input { width: 100%; }
+.cropper-actions { display: flex; gap: 10px; margin-left: auto; }
+@media (max-width: 620px) {
+  .cropper-actions { margin-left: 0; width: 100%; }
+  .cropper-actions .btn { flex: 1; }
+}
 
 .fieldset {
   border: 1px solid var(--line);
@@ -1087,6 +1127,9 @@ select {
   overflow: auto;
   padding: 11px 12px;
   outline: none;
+  /* A pasted wall with no spaces in it - a long link, usually - must wrap
+     rather than stretch the composer sideways. */
+  overflow-wrap: anywhere;
 }
 /* The three optional boxes are summaries, not the post body. Start them short
    so a composer with four editors does not read as four full-page fields. */
@@ -1133,6 +1176,7 @@ select {
 .rt-video-mark:empty::before { content: "Media appears here"; }
 .post-body {
   margin: 0 0 18px;
+  overflow-wrap: anywhere;
 }
 .post-body:empty { display: none; }
 .post-media,
@@ -2008,6 +2052,50 @@ code {
 .chip[data-group="communication"] { --group: var(--group-communication); }
 .chip[data-group="activities"] { --group: var(--group-activities); }
 
+/* The card's row never wraps: what does not fit is counted by .chip-more
+   instead, so every card spends exactly one line on tags. */
+.chips.is-capped { flex-wrap: nowrap; overflow: hidden; height: 27px; align-items: center; }
+.chips.is-capped .chip { white-space: nowrap; }
+.chip-more {
+  background: transparent;
+  border: 1px dashed var(--line-strong);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* The post page has the room the card does not, so the tags arrive in labelled
+   rows carrying their group's colour. */
+.tag-rows { display: grid; gap: 8px; margin: 10px 0 0; }
+.tag-row { display: grid; grid-template-columns: 108px minmax(0, 1fr); align-items: start; gap: 12px; }
+.tag-row-label {
+  font-size: 11px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--group, var(--muted));
+  padding-top: 4px;
+}
+.tag-row[data-group="progression"] { --group: var(--group-progression); }
+.tag-row[data-group="community"] { --group: var(--group-community); }
+.tag-row[data-group="communication"] { --group: var(--group-communication); }
+.tag-row[data-group="activities"] { --group: var(--group-activities); }
+@media (max-width: 620px) {
+  .tag-row { grid-template-columns: 1fr; gap: 4px; }
+  .tag-row-label { padding-top: 0; }
+}
+
+/* The budget, spent in the open. Amber is a warning; red means the box is
+   already past what gets published. */
+.char-count {
+  display: block;
+  text-align: right;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.char-count.is-near { color: var(--warn); }
+.char-count.is-over { color: var(--danger); font-weight: 600; }
+
 /* ---------------------------------------------------------------------------
    Links, how-to-join, and the video strip
    --------------------------------------------------------------------------- */
@@ -2211,9 +2299,30 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .card-head h3 { font-size: 21px; overflow-wrap: anywhere; }
 .card-head .muted { font-size: 12px; }
 .card-pills { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; align-items: center; }
-.card > .muted { font-size: 14px; line-height: 1.65; margin: 0; }
+/* Three lines, then stop. A long summary used to push one card's roster and
+   buttons out of line with the card beside it. */
+.card > .muted {
+  font-size: 14px;
+  line-height: 1.65;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: calc(3 * 1.65 * 14px);
+}
+/* One or two lines, never three, so a long headline cannot walk the card's
+   summary and tags out of line with the card beside it. */
+.card .headline {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .card .headline { font-size: 16px; }
-.card .stats { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 4px; }
+/* The stats strip is pinned to the bottom of the card, so a short summary or
+   an untagged clan cannot leave one card's roster sitting above its neighbour's. */
+.card .stats { border-top: 1px solid var(--line); padding-top: 18px; margin-top: auto; }
 .card-foot { flex-wrap: wrap; padding-top: 8px; }
 .card-foot .btn { min-height: 42px; font-size: 12px; }
 .empty { background: var(--surface); border-style: solid; padding: 42px 24px; }
