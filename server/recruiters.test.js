@@ -4,6 +4,7 @@ import {
   RECRUITER_MAX,
   acceptedRecruiterIds,
   bestPresence,
+  canEditListing,
   findInvitee,
   inviteBlocker,
   listingContacts,
@@ -168,4 +169,58 @@ test("suggestions are capped", () => {
 
 test("a listing with no recruiters yet still filters its owner out", () => {
   assert.deepEqual(searchRecruiterCandidates(USERS, { ownerId: OWNER.id }, "Gun"), []);
+});
+
+test("a recruiter defaults to answering whispers and nothing more", () => {
+  const [entry] = normalizeRecruiters([{ userId: "u1", status: "accepted" }]);
+  assert.equal(entry.role, "recruiter");
+  const [bogus] = normalizeRecruiters([{ userId: "u1", status: "accepted", role: "owner" }]);
+  assert.equal(bogus.role, "recruiter");
+  const [editor] = normalizeRecruiters([{ userId: "u1", status: "accepted", role: "editor" }]);
+  assert.equal(editor.role, "editor");
+});
+
+test("the owner and the operator can always edit", () => {
+  const post = listing([]);
+  assert.equal(canEditListing(OWNER, post), true);
+  assert.equal(canEditListing({ id: "u-admin", admin: true }, post), true);
+  assert.equal(canEditListing(null, post), false);
+});
+
+test("an accepted editor can edit; a plain recruiter cannot", () => {
+  const asEditor = listing([{ userId: MATE.id, status: "accepted", role: "editor" }]);
+  assert.equal(canEditListing(MATE, asEditor), true);
+  const asRecruiter = listing([{ userId: MATE.id, status: "accepted", role: "recruiter" }]);
+  assert.equal(canEditListing(MATE, asRecruiter), false);
+});
+
+test("a pending editor can do nothing until they accept", () => {
+  const pending = listing([{ userId: MATE.id, status: "pending", role: "editor" }]);
+  assert.equal(canEditListing(MATE, pending), false);
+});
+
+test("someone with no entry on the listing cannot edit it", () => {
+  assert.equal(canEditListing({ id: "u-stranger" }, listing([])), false);
+});
+
+test("accepting an invite keeps the role it was sent with", () => {
+  const [entry] = normalizeRecruiters([
+    { userId: MATE.id, status: "pending", role: "editor" },
+  ]);
+  const accepted = normalizeRecruiters([{ ...entry, status: "accepted" }]);
+  assert.equal(accepted[0].role, "editor");
+});
+
+test("what someone recruits for says which of them they can edit", () => {
+  const db = {
+    clans: [
+      { id: "c1", name: "One", tag: "ONE", ownerId: OWNER.id, recruiters: [{ userId: MATE.id, status: "accepted", role: "editor" }] },
+      { id: "c2", name: "Two", tag: "TWO", ownerId: OWNER.id, recruiters: [{ userId: MATE.id, status: "accepted" }] },
+      { id: "c3", name: "Three", tag: "THR", ownerId: OWNER.id, recruiters: [{ userId: MATE.id, status: "pending", role: "editor" }] },
+    ],
+  };
+  assert.deepEqual(
+    recruitingOn(db, MATE.id).map((item) => [item.id, item.role]),
+    [["c1", "editor"], ["c2", "recruiter"]]
+  );
 });

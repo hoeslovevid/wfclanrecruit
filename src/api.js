@@ -42,8 +42,13 @@ export const api = {
   roster: (id) => request(`/api/clans/${id}/recruiters`),
   searchRecruiters: (id, q) =>
     request(`/api/clans/${id}/recruiters/search?q=${encodeURIComponent(q)}`),
-  inviteRecruiter: (id, username) =>
-    request(`/api/clans/${id}/recruiters`, { method: "POST", body: JSON.stringify({ username }) }),
+  inviteRecruiter: (id, username, role) =>
+    request(`/api/clans/${id}/recruiters`, { method: "POST", body: JSON.stringify({ username, role }) }),
+  setRecruiterRole: (id, userId, role) =>
+    request(`/api/clans/${id}/recruiters/${encodeURIComponent(userId)}/role`, {
+      method: "POST",
+      body: JSON.stringify({ role }),
+    }),
   removeRecruiter: (id, userId) =>
     request(`/api/clans/${id}/recruiters/${encodeURIComponent(userId)}`, { method: "DELETE" }),
   respondToInvite: (id, accept) =>

@@ -74,8 +74,11 @@ import {
   listingContacts,
   normalizeRecruiters,
   pendingInvitesFor,
+  RECRUITER_ROLES,
   RECRUITER_SEARCH_MAX,
+  canEditListing,
   findInvitee,
+  normalizeRecruiterRole,
   recruiterEntry,
   searchRecruiterCandidates,
   recruitingOn,
@@ -861,6 +864,7 @@ function rosterFor(clan, db) {
       username: user?.username || "(deleted account)",
       forumName: user?.forumName || null,
       status: entry.status,
+      role: entry.role,
     };
   });
 }
@@ -1439,9 +1443,9 @@ app.put("/api/clans/:id", requirePoster, listingUpload, async (req, res) => {
       res.status(404).json({ error: "Clan not found." });
       return db;
     }
-    if (!canRemove(req.user, clan)) {
+    if (!canEditListing(req.user, clan)) {
       discardUploads(req);
-      res.status(403).json({ error: "You can only edit your own posts." });
+      res.status(403).json({ error: "You do not have edit access to that post." });
       return db;
     }
     const taken = listingTaken(db, { ...invited, id: clan.id });
@@ -1470,8 +1474,8 @@ app.post("/api/clans/:id/bump", requirePoster, async (req, res) => {
     res.status(404).json({ error: "Clan not found." });
     return;
   }
-  if (!canRemove(req.user, current)) {
-    res.status(403).json({ error: "You can only bump your own posts." });
+  if (!canEditListing(req.user, current)) {
+    res.status(403).json({ error: "You do not have edit access to that post." });
     return;
   }
   const wait = bumpWaitMessage(current);
@@ -1513,8 +1517,8 @@ app.get("/api/clans/:id/recruiters", requireUser, (req, res) => {
     res.status(404).json({ error: "Clan not found." });
     return;
   }
-  if (!canRemove(req.user, clan)) {
-    res.status(403).json({ error: "You can only see the roster of your own posts." });
+  if (!canEditListing(req.user, clan)) {
+    res.status(403).json({ error: "You do not have edit access to that post." });
     return;
   }
   res.json({ roster: rosterFor(clan, db), max: RECRUITER_MAX });
@@ -1541,6 +1545,7 @@ app.get("/api/clans/:id/recruiters/search", requireUser, recruiterSearchLimiter,
 
 app.post("/api/clans/:id/recruiters", requireUser, (req, res) => {
   const username = String(req.body?.username || "").trim();
+  const role = normalizeRecruiterRole(req.body?.role);
   writeDb((db) => {
     const clan = db.clans.find((item) => item.id === req.params.id);
     if (!clan) {
@@ -1559,8 +1564,37 @@ app.post("/api/clans/:id/recruiters", requireUser, (req, res) => {
     }
     clan.recruiters = [
       ...normalizeRecruiters(clan.recruiters),
-      { userId: invitee.id, status: "pending", invitedAt: new Date().toISOString(), respondedAt: null },
+      { userId: invitee.id, status: "pending", role, invitedAt: new Date().toISOString(), respondedAt: null },
     ];
+    res.json({ clan: decorateClan(clan, db), roster: rosterFor(clan, db) });
+    return db;
+  });
+});
+
+app.post("/api/clans/:id/recruiters/:userId/role", requireUser, (req, res) => {
+  const role = normalizeRecruiterRole(req.body?.role);
+  if (!RECRUITER_ROLES.includes(String(req.body?.role || ""))) {
+    res.status(400).json({ error: "Unknown role." });
+    return;
+  }
+  writeDb((db) => {
+    const clan = db.clans.find((item) => item.id === req.params.id);
+    if (!clan) {
+      res.status(404).json({ error: "Clan not found." });
+      return db;
+    }
+    if (!canRemove(req.user, clan)) {
+      res.status(403).json({ error: "Only the owner can change what a recruiter can do." });
+      return db;
+    }
+    const entries = normalizeRecruiters(clan.recruiters);
+    const entry = entries.find((item) => item.userId === req.params.userId);
+    if (!entry) {
+      res.status(404).json({ error: "They are not on this listing." });
+      return db;
+    }
+    entry.role = role;
+    clan.recruiters = entries;
     res.json({ clan: decorateClan(clan, db), roster: rosterFor(clan, db) });
     return db;
   });
@@ -1614,8 +1648,8 @@ app.post("/api/clans/:id/pause", requireUser, (req, res) => {
       res.status(404).json({ error: "Clan not found." });
       return db;
     }
-    if (!canRemove(req.user, clan)) {
-      res.status(403).json({ error: "You can only pause your own posts." });
+    if (!canEditListing(req.user, clan)) {
+      res.status(403).json({ error: "You do not have edit access to that post." });
       return db;
     }
     clan.paused = Boolean(req.body.paused);

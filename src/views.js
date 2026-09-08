@@ -1467,8 +1467,10 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
             <legend>Recruiters</legend>
             ${
               editing
-                ? `<p class="field-help">Other verified players who share the whispers for this clan. They have to accept before their name appears, and they get no access to edit this post.</p>
-              <div data-roster-for="${escapeHtml(draft.id)}">
+                ? `<p class="field-help">Other verified players who share the whispers for this clan. They have to accept before their name appears. Give someone edit access and they can change this post, bump it, and pause it — they still cannot delete it or decide who else is on it.</p>
+              <div data-roster-for="${escapeHtml(draft.id)}" data-roster-owner="${
+                draft.ownerId && user?.id && draft.ownerId !== user.id && !user.admin ? "false" : "true"
+              }">
                 <div data-roster-slot><p class="muted">Loading…</p></div>
               </div>`
                 : `<p class="field-help">Publish the clan first, then come back here to invite recruiters.</p>`
@@ -1776,10 +1778,19 @@ function recruitingOnPanel(user) {
           <div class="list-row">
             <div>
               <strong>${escapeHtml(item.name)}</strong>
-              <p class="muted">[${escapeHtml(item.tag)}] · your name is on this post</p>
+              <p class="muted">[${escapeHtml(item.tag)}] · ${
+                item.role === "editor"
+                  ? "your name is on this post, and you can edit it"
+                  : "your name is on this post"
+              }</p>
             </div>
             <div class="list-actions">
               <a class="btn btn-ghost" href="/clans/${escapeHtml(item.id)}" data-link>Open</a>
+              ${
+                item.role === "editor"
+                  ? `<a class="btn btn-ghost" href="/post?id=${escapeHtml(item.id)}" data-link>Edit</a>`
+                  : ""
+              }
               <button class="btn btn-ghost btn-danger" type="button" data-recruiter-leave="${escapeHtml(item.id)}">Leave</button>
             </div>
           </div>`
@@ -1793,7 +1804,29 @@ function recruitingOnPanel(user) {
 // Deliberately not a <form>: this panel renders inside the post editor's form,
 // and HTML forbids nested forms - the browser drops the inner one, which left
 // the Invite button submitting the listing instead of sending an invite.
-export function rosterPanel(roster = [], max = 5) {
+const ROLE_LABELS = {
+  recruiter: "Answers whispers",
+  editor: "Answers whispers and can edit",
+};
+
+function roleSelect(value, { name = "", userId = "", disabled = false } = {}) {
+  const role = value === "editor" ? "editor" : "recruiter";
+  return `<select
+    class="roster-role"
+    aria-label="What they can do"
+    ${name ? `data-roster-new-role` : `data-roster-role="${escapeHtml(userId)}"`}
+    ${disabled ? "disabled" : ""}
+  >${Object.entries(ROLE_LABELS)
+    .map(
+      ([key, label]) =>
+        `<option value="${key}" ${key === role ? "selected" : ""}>${escapeHtml(label)}</option>`
+    )
+    .join("")}</select>`;
+}
+
+// `owner` is false when an editor is looking: they see who else is on the post
+// but cannot change it, because deciding who has access is the owner's alone.
+export function rosterPanel(roster = [], max = 5, { owner = true } = {}) {
   const rows = roster.length
     ? roster
         .map(
@@ -1805,16 +1838,22 @@ export function rosterPanel(roster = [], max = 5) {
             entry.forumName ? `signs in as ${escapeHtml(entry.username)}` : "no in-game name"
           }</span>
         </div>
+        ${roleSelect(entry.role, { userId: entry.userId, disabled: !owner })}
         <span class="pill ${entry.status === "accepted" ? "is-open" : "is-selective"}">${
           entry.status === "accepted" ? "Recruiting" : "Invite pending"
         }</span>
-        <button class="btn btn-ghost btn-small" type="button" data-roster-remove="${escapeHtml(entry.userId)}">Remove</button>
+        ${
+          owner
+            ? `<button class="btn btn-ghost btn-small" type="button" data-roster-remove="${escapeHtml(entry.userId)}">Remove</button>`
+            : ""
+        }
       </div>`
         )
         .join("")
     : `<p class="muted">No recruiters yet. Invite up to ${max} verified players to share the whispers.</p>`;
   // The listing shows a recruiter by their verified Warframe name, so that is
   // the name the box asks for.
+  if (!owner) return `<div class="roster">${rows}</div>`;
   return `
     <div class="roster">
       ${rows}
@@ -1834,6 +1873,7 @@ export function rosterPanel(roster = [], max = 5) {
             <ul class="combo-list" id="roster-suggestions" role="listbox" aria-label="Matching players" data-roster-suggestions hidden></ul>
           </div>
         </label>
+        ${roleSelect("recruiter", { name: "new" })}
         <button class="btn btn-ghost" type="button" data-roster-invite ${roster.length >= max ? "disabled" : ""}>Invite</button>
       </div>
       <p class="muted" data-roster-note hidden></p>

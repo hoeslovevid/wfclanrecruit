@@ -10,6 +10,17 @@
 export const RECRUITER_MAX = 5;
 export const RECRUITER_STATES = ["pending", "accepted"];
 
+// What a recruiter is allowed to do. "recruiter" is the original deal - a name
+// on the post that answers whispers. "editor" also works on the post itself:
+// text, images, tags, bump and pause. Neither can delete the listing or decide
+// who else is on it, so the owner stays the only route to access and the only
+// person who can make the post disappear.
+export const RECRUITER_ROLES = ["recruiter", "editor"];
+
+export function normalizeRecruiterRole(role) {
+  return RECRUITER_ROLES.includes(role) ? role : "recruiter";
+}
+
 export function normalizeRecruiters(list) {
   if (!Array.isArray(list)) return [];
   const seen = new Set();
@@ -21,6 +32,7 @@ export function normalizeRecruiters(list) {
     out.push({
       userId,
       status: RECRUITER_STATES.includes(entry?.status) ? entry.status : "pending",
+      role: normalizeRecruiterRole(entry?.role),
       invitedAt: entry?.invitedAt || null,
       respondedAt: entry?.respondedAt || null,
     });
@@ -110,6 +122,16 @@ export function searchRecruiterCandidates(users, listing, query, limit = RECRUIT
   return matches.slice(0, limit).map((item) => item.name);
 }
 
+// Editing is the one power that is delegated, and only to someone who took the
+// invite: a pending editor can do nothing until they accept. The owner and the
+// operator are in here too, so every caller can ask one question.
+export function canEditListing(user, listing) {
+  if (!user) return false;
+  if (user.admin || listing?.ownerId === user.id) return true;
+  const entry = recruiterEntry(listing, user.id);
+  return Boolean(entry && entry.status === "accepted" && entry.role === "editor");
+}
+
 export function inviteBlocker(listing, invitee, owner) {
   if (!invitee) return "No verified player with that Warframe name.";
   if (invitee.id === owner.id) return "You are already the owner of this listing.";
@@ -135,6 +157,7 @@ export function pendingInvitesFor(db, userId) {
 // Listings this user already answers for, so they can walk away from one.
 export function recruitingOn(db, userId) {
   return (db.clans || [])
-    .filter((clan) => recruiterEntry(clan, userId)?.status === "accepted")
-    .map((clan) => ({ id: clan.id, name: clan.name, tag: clan.tag }));
+    .map((clan) => ({ clan, entry: recruiterEntry(clan, userId) }))
+    .filter(({ entry }) => entry?.status === "accepted")
+    .map(({ clan, entry }) => ({ id: clan.id, name: clan.name, tag: clan.tag, role: entry.role }));
 }

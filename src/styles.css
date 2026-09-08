@@ -1571,6 +1571,14 @@ code {
   gap: 8px;
 }
 .roster-add .field { flex: 1; margin: 0; }
+.roster-role {
+  flex: none;
+  width: auto;
+  min-height: 42px;
+  font-size: 13px;
+  padding-inline: 10px;
+}
+.roster-row .roster-role { max-width: 220px; }
 
 /* The suggestion list, drawn by us rather than by the browser, so it carries
    the page's surface, border and radius instead of system chrome. */

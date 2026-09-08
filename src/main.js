@@ -363,15 +363,19 @@ function bindRecruiters() {
   app.querySelectorAll("[data-roster-for]").forEach((box) => {
     const id = box.dataset.rosterFor;
     const slot = box.querySelector("[data-roster-slot]");
+    // An editor may read the roster but not change it, so the panel it gets has
+    // no invite row, no Remove, and role pickers it cannot move.
+    const owner = box.dataset.rosterOwner !== "false";
     const paint = (roster, max) => {
-      slot.innerHTML = rosterPanel(roster, max);
+      slot.innerHTML = rosterPanel(roster, max, { owner });
       const input = slot.querySelector("[data-roster-username]");
       const invite = async () => {
         const username = input.value.trim();
         if (!username) return;
         const note = slot.querySelector("[data-roster-note]");
+        const role = slot.querySelector("[data-roster-new-role]")?.value;
         try {
-          const { roster: next } = await api.inviteRecruiter(id, username);
+          const { roster: next } = await api.inviteRecruiter(id, username, role);
           paint(next, max);
           showNote(
             slot.querySelector("[data-roster-note]"),
@@ -510,6 +514,27 @@ function bindRecruiters() {
             const { roster: next } = await api.removeRecruiter(id, button.dataset.rosterRemove);
             paint(next, max);
           } catch (error) {
+            showNote(slot.querySelector("[data-roster-note]"), error.message);
+          }
+        });
+      });
+
+      slot.querySelectorAll("[data-roster-role]").forEach((select) => {
+        // Repainting would steal focus mid-change, so the row is left as it is
+        // and only the note speaks. The select already shows the new value.
+        const previous = select.value;
+        select.addEventListener("change", async () => {
+          try {
+            await api.setRecruiterRole(id, select.dataset.rosterRole, select.value);
+            showNote(
+              slot.querySelector("[data-roster-note]"),
+              select.value === "editor"
+                ? "They can edit this post now."
+                : "They answer whispers only now.",
+              "muted"
+            );
+          } catch (error) {
+            select.value = previous;
             showNote(slot.querySelector("[data-roster-note]"), error.message);
           }
         });
@@ -1558,8 +1583,13 @@ async function render() {
       app.innerHTML = `<section class="auth-card"><h1>Listing not found</h1><p class="muted">That clan post is gone or the link is wrong.</p></section>`;
       return;
     }
-    if (draft && state.user && draft.ownerId !== state.user.id && !state.user.admin) {
-      app.innerHTML = `<section class="auth-card"><h1>Not allowed</h1><p class="muted">You can only edit your own posts.</p></section>`;
+    // An editor on the listing gets the same form; the server is the authority,
+    // and this only decides whether to bother rendering it.
+    const editorHere = (state.user?.recruitingOn || []).some(
+      (item) => item.id === draft?.id && item.role === "editor"
+    );
+    if (draft && state.user && draft.ownerId !== state.user.id && !state.user.admin && !editorHere) {
+      app.innerHTML = `<section class="auth-card"><h1>Not allowed</h1><p class="muted">You do not have edit access to that post.</p></section>`;
       return;
     }
     app.innerHTML = postView({ user: state.user, alliances: state.alliances, draft: draft || {}, auth: state.auth });
