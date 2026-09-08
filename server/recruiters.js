@@ -72,8 +72,46 @@ export function bestPresence(contacts) {
   return { online: false, presenceStatus: "offline" };
 }
 
+// The invite matches the verified Warframe name, which is the name the listing
+// shows and the name a recruit whispers. It used to match the account username
+// instead, so an owner looking at "--Gunson--" on the post had to work out that
+// the Discord handle behind it was "Gunson".
+export function findInvitee(users, name) {
+  const wanted = String(name || "").trim().toLowerCase();
+  if (!wanted) return null;
+  return (
+    (users || []).find(
+      (user) => user.forumVerified && String(user.forumName || "").toLowerCase() === wanted
+    ) || null
+  );
+}
+
+// Suggestions for the invite box. Only verified players can be recruiters, so
+// only they are offered - and never the owner or anyone already on this
+// listing, since inviting them is the one thing that cannot work.
+export const RECRUITER_SEARCH_MIN = 2;
+export const RECRUITER_SEARCH_MAX = 8;
+
+export function searchRecruiterCandidates(users, listing, query, limit = RECRUITER_SEARCH_MAX) {
+  const wanted = String(query || "").trim().toLowerCase();
+  if (wanted.length < RECRUITER_SEARCH_MIN) return [];
+  const taken = new Set([listing?.ownerId, ...normalizeRecruiters(listing?.recruiters).map((item) => item.userId)]);
+  const matches = [];
+  for (const user of users || []) {
+    if (!user?.forumVerified || !user.forumName || taken.has(user.id)) continue;
+    const name = String(user.forumName);
+    const at = name.toLowerCase().indexOf(wanted);
+    if (at < 0) continue;
+    matches.push({ name, at });
+  }
+  // A name that starts with what was typed is the one being looked for; the
+  // rest are offered underneath, alphabetically, so the list is stable.
+  matches.sort((a, b) => a.at - b.at || a.name.localeCompare(b.name));
+  return matches.slice(0, limit).map((item) => item.name);
+}
+
 export function inviteBlocker(listing, invitee, owner) {
-  if (!invitee) return "No account with that username.";
+  if (!invitee) return "No verified player with that Warframe name.";
   if (invitee.id === owner.id) return "You are already the owner of this listing.";
   if (!invitee.forumVerified || !invitee.forumName) {
     return "That player has not verified a Warframe Forum profile yet, so they have no in-game name to whisper.";

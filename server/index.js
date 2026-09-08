@@ -74,7 +74,10 @@ import {
   listingContacts,
   normalizeRecruiters,
   pendingInvitesFor,
+  RECRUITER_SEARCH_MAX,
+  findInvitee,
   recruiterEntry,
+  searchRecruiterCandidates,
   recruitingOn,
 } from "./recruiters.js";
 import {
@@ -270,6 +273,10 @@ const forumCheckLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
   message: "Too many verification checks. Wait a few minutes and try again.",
 });
+// Typing into the invite box fires one of these per keystroke burst, so the
+// window is generous - it is here to stop the endpoint being walked, not to
+// slow down someone adding a recruiter.
+const recruiterSearchLimiter = rateLimit({ name: "recruiter-search", limit: 120, windowMs: 10 * 60 * 1000 });
 const loginLimiter = rateLimit({
   name: "login",
   limit: 5,
@@ -1513,6 +1520,25 @@ app.get("/api/clans/:id/recruiters", requireUser, (req, res) => {
   res.json({ roster: rosterFor(clan, db), max: RECRUITER_MAX });
 });
 
+// Suggestions for the invite box. Scoped to a listing the caller owns rather
+// than open to anyone signed in: the names offered are verified Warframe names,
+// and the fewer places they can be enumerated from the better.
+app.get("/api/clans/:id/recruiters/search", requireUser, recruiterSearchLimiter, (req, res) => {
+  const db = readDb();
+  const clan = db.clans.find((item) => item.id === req.params.id);
+  if (!clan) {
+    res.status(404).json({ error: "Clan not found." });
+    return;
+  }
+  if (!canRemove(req.user, clan)) {
+    res.status(403).json({ error: "You can only add recruiters to your own posts." });
+    return;
+  }
+  res.json({
+    names: searchRecruiterCandidates(db.users, clan, req.query?.q, RECRUITER_SEARCH_MAX),
+  });
+});
+
 app.post("/api/clans/:id/recruiters", requireUser, (req, res) => {
   const username = String(req.body?.username || "").trim();
   writeDb((db) => {
@@ -1525,9 +1551,7 @@ app.post("/api/clans/:id/recruiters", requireUser, (req, res) => {
       res.status(403).json({ error: "You can only add recruiters to your own posts." });
       return db;
     }
-    const invitee = db.users.find(
-      (user) => user.username.toLowerCase() === username.toLowerCase()
-    );
+    const invitee = findInvitee(db.users, username);
     const blocked = inviteBlocker(clan, invitee, { id: clan.ownerId });
     if (blocked) {
       res.status(400).json({ error: blocked });

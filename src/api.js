@@ -40,6 +40,8 @@ export const api = {
   deleteClan: (id) => request(`/api/clans/${id}`, { method: "DELETE" }),
   countWhisper: (id) => request(`/api/clans/${id}/whisper`, { method: "POST", body: "{}" }),
   roster: (id) => request(`/api/clans/${id}/recruiters`),
+  searchRecruiters: (id, q) =>
+    request(`/api/clans/${id}/recruiters/search?q=${encodeURIComponent(q)}`),
   inviteRecruiter: (id, username) =>
     request(`/api/clans/${id}/recruiters`, { method: "POST", body: JSON.stringify({ username }) }),
   removeRecruiter: (id, userId) =>

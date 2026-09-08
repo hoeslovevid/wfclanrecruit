@@ -389,6 +389,41 @@ function bindRecruiters() {
         event.preventDefault();
         invite();
       });
+
+      // Suggestions arrive as the owner types. The request is debounced and
+      // the answer is dropped if it comes back after a newer one, so the list
+      // never shows results for a query that has already been typed past.
+      const suggestions = slot.querySelector("[data-roster-suggestions]");
+      let lookupTimer;
+      let lookupSeq = 0;
+      input?.addEventListener("input", () => {
+        const q = input.value.trim();
+        clearTimeout(lookupTimer);
+        if (q.length < 2) {
+          suggestions.replaceChildren();
+          return;
+        }
+        const seq = ++lookupSeq;
+        lookupTimer = setTimeout(async () => {
+          try {
+            const { names } = await api.searchRecruiters(id, q);
+            if (seq !== lookupSeq) return;
+            // Built as nodes rather than markup: a Warframe name is someone
+            // else's text, and it never becomes HTML on the way in.
+            suggestions.replaceChildren(
+              ...names.map((name) => {
+                const option = document.createElement("option");
+                option.value = name;
+                return option;
+              })
+            );
+          } catch {
+            // A failed lookup just means no suggestions; the owner can still
+            // type the name in full.
+            if (seq === lookupSeq) suggestions.replaceChildren();
+          }
+        }, 180);
+      });
       slot.querySelectorAll("[data-roster-remove]").forEach((button) => {
         button.addEventListener("click", async () => {
           try {

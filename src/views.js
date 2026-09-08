@@ -1800,8 +1800,10 @@ export function rosterPanel(roster = [], max = 5) {
           (entry) => `
       <div class="roster-row">
         <div>
-          <strong>${escapeHtml(entry.username)}</strong>
-          <span class="muted">${entry.forumName ? escapeHtml(entry.forumName) : "no in-game name"}</span>
+          <strong>${escapeHtml(entry.forumName || entry.username)}</strong>
+          <span class="muted">${
+            entry.forumName ? `signs in as ${escapeHtml(entry.username)}` : "no in-game name"
+          }</span>
         </div>
         <span class="pill ${entry.status === "accepted" ? "is-open" : "is-selective"}">${
           entry.status === "accepted" ? "Recruiting" : "Invite pending"
@@ -1811,11 +1813,14 @@ export function rosterPanel(roster = [], max = 5) {
         )
         .join("")
     : `<p class="muted">No recruiters yet. Invite up to ${max} verified players to share the whispers.</p>`;
+  // The listing shows a recruiter by their verified Warframe name, so that is
+  // the name the box asks for.
   return `
     <div class="roster">
       ${rows}
       <div class="row roster-add">
-        <label class="field"><span class="sr-only">Username</span><input data-roster-username placeholder="Their username here" maxlength="20" /></label>
+        <label class="field"><span class="sr-only">Warframe name</span><input data-roster-username list="roster-suggestions" autocomplete="off" placeholder="Their Warframe name" maxlength="32" /></label>
+        <datalist id="roster-suggestions" data-roster-suggestions></datalist>
         <button class="btn btn-ghost" type="button" data-roster-invite ${roster.length >= max ? "disabled" : ""}>Invite</button>
       </div>
       <p class="muted" data-roster-note hidden></p>

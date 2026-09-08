@@ -8,7 +8,7 @@ export function privacyView() {
       <p class="eyebrow">Legal</p>
       <h1>Privacy Policy</h1>
       <p class="lead">This page explains what WF Clan Recruit collects, why, who sees it, how long it stays, and how you can opt out. It describes this website as it works today, not a generic template.</p>
-      <p class="muted">Last updated 6 September 2026. This site is independent and is not affiliated with Digital Extremes, Warframe, Discord, or Google.</p>
+      <p class="muted">Last updated 7 September 2026. This site is independent and is not affiliated with Digital Extremes, Warframe, Discord, or Google.</p>
     </section>
 
     <section class="policy-page">
@@ -19,6 +19,7 @@ export function privacyView() {
           <li>You can browse the board without an account. We do not require cookies to read listings.</li>
           <li>We do not run ads, analytics pixels, or social tracking scripts.</li>
           <li>If you sign in, we store account, Discord, and (if you verify) Warframe Forum details so you can post.</li>
+          <li>Verifying makes your Warframe name findable by clan leaders adding a recruiter to their own listing.</li>
           <li>Listings you publish are public, including images, any YouTube video you link, Discord invites, and whatever you write in the post. Each listing has a shareable URL.</li>
           <li>You can report a dead or dishonest listing. Reports are not public; only the site operator can read them.</li>
           <li>You can download your data, remove listings, sign out, or delete your account from the ${jump("opt-out", "opt-out section")} or your <a href="/account" data-link>account page</a>.</li>
@@ -106,7 +107,8 @@ export function privacyView() {
               <tr><td>Discord display name</td><td>Yes</td><td>No. Visible to you on your account page.</td></tr>
               <tr><td>Discord email</td><td>Yes, if Discord returns one</td><td>No. We do not print it on listings or in the public API account object.</td></tr>
               <tr><td>Discord email-verified flag</td><td>Checked at sign-in in production; not stored as its own field</td><td>No</td></tr>
-              <tr><td>Forum profile URL and derived name</td><td>Yes, after you paste a profile link</td><td>No, except you may repeat your in-game name in a public post</td></tr>
+              <tr><td>Forum profile URL</td><td>Yes, after you paste a profile link</td><td>No</td></tr>
+              <tr><td>Verified Warframe name (derived from that profile)</td><td>Yes, after you paste a profile link</td><td>Not on its own. Once you verify, a clan leader adding a recruiter to their own listing can find you by typing part of this name. It becomes public on a listing only if you own one or accept a recruiter invite.</td></tr>
               <tr><td>Forum verification code</td><td>Yes, until you verify</td><td>No, except you place it on your Warframe Forum About Me yourself</td></tr>
               <tr><td>Forum verified flag and timestamps</td><td>Yes</td><td>No</td></tr>
               <tr><td>Recruiter roster</td><td>Which listings you were invited to, and which you accepted</td><td>Only after you accept. Your in-game name then appears on that listing as a contact. A pending invite is never public.</td></tr>
@@ -233,6 +235,7 @@ export function privacyView() {
         <h2>What is public</h2>
         <p>Treat every listing as public. That includes Discord invite links, leader names, screenshots, linked video, and the full post. Listing URLs also expose an Open Graph title, description, and image so Discord and similar apps can show a card. Other visitors, scrapers, and archives may copy public pages. Removing a listing from this site does not erase copies someone else already saved.</p>
         <p>Forum verification requires you to put a short code on your Warframe Forum About Me. That code is public on Digital Extremes’ forums until you delete it. After you verify here, you should remove the code from About Me if you do not want it sitting on the forum.</p>
+        <p>Verifying a Warframe Forum profile makes your verified Warframe name findable when a clan leader adds a recruiter. The box on their listing suggests names as they type: it needs at least two characters, returns at most eight names, and only a signed-in leader can run it, and only against a listing they own. It offers nothing else about you — no Discord name, no email, no listings you are on — and it never suggests someone who is already a recruiter on that listing. This is how a leader can add you without you first having to hand them your exact spelling. If you have not verified a forum profile, you are not in it at all.</p>
         <p>A clan leader can invite you to be a recruiter on their listing. Nothing is published until you accept: while an invite is pending, only you and that listing's owner can see it. Once you accept, your in-game name and online status appear on their public post so recruits can whisper you, and you can leave from your account page at any time. Recruiters cannot edit, bump, pause, or remove the listing.</p>
         <p>While you have the site open, your listing can show an online dot so recruits can tell whether it is worth whispering you. New accounts start as Online; pick Invisible in the status menu to turn it off, and nothing about your presence is published. The status is self-declared, including “Online in game” — we cannot see what you are doing in Warframe.</p>
         <p>Your Discord email, Discord id, password hash, and session tokens are not shown on listing cards.</p>
@@ -334,6 +337,7 @@ export function privacyView() {
               <tr><td>Correct listing text, Discord invite, or images</td><td>Edit the listing from your account page.</td></tr>
               <tr><td>Take a listing off the board</td><td>Pause recruiting (hides Discord) or remove it from your account page. Removing deletes that post’s uploads. A moderator can hide a listing from the public board without deleting it.</td></tr>
               <tr><td>Report a listing</td><td>Open the listing URL and use Report this listing. You do not need an account.</td></tr>
+              <tr><td>Stop appearing in the recruiter search</td><td>Delete the account. Verification is what puts you there, and it is also what lets you publish a listing or answer whispers, so there is no way to stay verified and stay out of it.</td></tr>
               <tr><td>Stop being verified on a forum URL</td><td>Delete the account, or paste a different profile URL (that resets verification). Also delete the code from Warframe Forum About Me.</td></tr>
               <tr><td>Erase the account</td><td>Delete my account on the account page. This removes your user row, sessions, listings you own, and those uploads. Admin accounts cannot use this button so the board cannot be locked out.</td></tr>
               <tr><td>Revoke Discord access</td><td>Discord → User Settings → Authorized Apps → remove WF Clan Recruit. Also delete the account here, or we will still have the Discord id we already stored until you delete.</td></tr>
