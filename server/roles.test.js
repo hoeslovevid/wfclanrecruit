@@ -4,6 +4,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  CONTACT_LABEL_MAX,
+  normalizeContactLabel,
   ROLE_MAX,
   ROLE_NAME_MAX,
   ROLE_PLAIN_MAX,
@@ -112,4 +114,23 @@ test("filter options come from open roles, commonest first", () => {
     ["Architect:2", "Recruiter:1"]
   );
   assert.deepEqual(roleFilterOptions([]), []);
+});
+
+// A label is what a clan calls someone, so the board does not get a say in the
+// vocabulary - only in how long it is and that it is there at all.
+test("a contact label keeps whatever the clan invented", () => {
+  assert.equal(normalizeContactLabel("Warlord", "Leader"), "Warlord");
+  assert.equal(normalizeContactLabel("  Recruitment   Officer  "), "Recruitment Officer");
+});
+
+test("an empty label falls back to what that side of the post is called", () => {
+  assert.equal(normalizeContactLabel("", "Leader"), "Leader");
+  assert.equal(normalizeContactLabel("   ", "Leader"), "Leader");
+  assert.equal(normalizeContactLabel(null), "Recruiter");
+  assert.equal(normalizeContactLabel(undefined), "Recruiter");
+});
+
+test("a label too long for a whisper row is cut, not refused", () => {
+  const label = normalizeContactLabel("x".repeat(200), "Leader");
+  assert.equal(label.length, CONTACT_LABEL_MAX);
 });

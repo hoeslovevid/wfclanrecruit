@@ -12,9 +12,11 @@ import { initStorage, paths, postgresEnabled, readDb, storageLabel, writeDb, clo
 import { rateLimit } from "./ratelimit.js";
 import {
   BODY_MAX,
+  blockedBetween,
   bodyError,
   normalizeBody,
   openError,
+  parseThreadId,
   previewOf,
   threadId as threadIdFor,
 } from "./messages.js";
@@ -22,7 +24,7 @@ import * as store from "./store.js";
 import { PING_MS, publish, subscribe } from "./live.js";
 import { dropLegacyVideos } from "../src/video.js";
 import { MEDIA_MAX, mediaList, normalizeMedia, setUploadPublicBase, uploadedUrls, videoIdsOf } from "../src/media.js";
-import { normalizeRoles, roleTextError } from "../src/roles.js";
+import { normalizeContactLabel, normalizeRoles, roleTextError } from "../src/roles.js";
 import { resizeListingImage } from "./image.js";
 import { deleteR2Object, putR2Object, r2Enabled, r2PartialEnv, r2PublicUrl, readLocalFile } from "./r2.js";
 import {
@@ -98,6 +100,14 @@ import {
   searchRecruiterCandidates,
   recruitingOn,
 } from "./recruiters.js";
+import {
+  applyTransfer,
+  clearTransfer,
+  normalizeTransfer,
+  offerTransfer,
+  transferBlocker,
+  transfersFor,
+} from "./ownership.js";
 import {
   DISCORD_MIN_AGE_DAYS,
   FORUM_CHECK_COOLDOWN_MS,
@@ -682,6 +692,10 @@ function parseClanBody(body, user, req) {
       language: String(body.language || "English"),
       status: String(body.status || "Open"),
       leader: String(body.leader || user.forumName || user.username).slice(0, 32),
+      // What the post calls whoever holds the account, which is not always the
+      // leader: a recruiter can set a listing up for their clan. Free text
+      // because a clan's hierarchy is its own - see normalizeContactLabel.
+      ownerLabel: normalizeContactLabel(body.ownerLabel, "Leader"),
       contact,
       discord,
       links: parsedLinks.links,
@@ -962,7 +976,9 @@ function decorateClan(clan, db) {
   // already public through `contacts`; a pending one has not agreed to be named
   // yet, so the raw roster never leaves the server.
   // `stats` is the owner's business, not a competitor's.
-  const { recruiters, stats, hiddenBy, hiddenAt, ...publicClan } = clan;
+  // `transfer` names a user id and is nobody's business but the owner's; it
+  // reaches the composer through the roster route, which is already owner-only.
+  const { recruiters, stats, hiddenBy, hiddenAt, transfer, ...publicClan } = clan;
   return withBumpState({
     ...publicClan,
     // Renamed tags land here rather than in every reader. The stored value is
@@ -993,8 +1009,22 @@ function rosterFor(clan, db) {
       forumName: user?.forumName || null,
       status: entry.status,
       role: entry.role,
+      label: entry.label,
     };
   });
+}
+
+// What the composer shows an owner about a pending offer: the name they typed,
+// not the user id they never saw.
+function transferView(clan, db) {
+  const pending = normalizeTransfer(clan);
+  if (!pending) return null;
+  const user = (db.users || []).find((item) => item.id === pending.toUserId);
+  return {
+    userId: pending.toUserId,
+    name: user?.forumName || user?.username || "(deleted account)",
+    invitedAt: pending.invitedAt,
+  };
 }
 
 function decorateAlliance(alliance, db, user = null) {
@@ -1048,6 +1078,7 @@ app.get("/api/auth/me", (req, res) => {
           presence: { ...presenceOf(user), keepMinutes: keepMinutesOf(user) },
           keepMinutes: KEEP_MINUTES,
           invites: pendingInvitesFor(readDb(), user.id),
+          transferInvites: transfersFor(readDb(), user.id),
           recruitingOn: recruitingOn(readDb(), user.id),
         }
       : null,
@@ -1425,6 +1456,7 @@ app.get("/api/auth/export", requireUser, exportLimiter, (req, res) => {
     // Listings that are not yours but carry your name as a contact.
     recruitingOn: recruitingOn(db, user.id),
     recruiterInvites: pendingInvitesFor(db, user.id),
+    transferInvites: transfersFor(db, user.id),
     clans: (db.clans || []).filter((item) => item.ownerId === user.id),
     alliances: (db.alliances || []).filter((item) => item.ownerId === user.id),
     players: (db.players || []).filter((item) => item.ownerId === user.id),
@@ -1463,6 +1495,12 @@ app.delete("/api/auth/account", requireUser, (req, res) => {
         recruiterEntry(clan, userId)
           ? { ...clan, recruiters: normalizeRecruiters(clan.recruiters).filter((item) => item.userId !== userId) }
           : clan
+      )
+      // Same for an ownership offer waiting on them: there is nobody left to
+      // accept it, and an offer that can never be answered blocks the owner
+      // from making another one.
+      .map((clan) =>
+        normalizeTransfer(clan)?.toUserId === userId ? { ...clan, transfer: null } : clan
       );
     db.alliances = (db.alliances || []).filter((item) => item.ownerId !== userId);
     db.reports = (db.reports || []).map((item) =>
@@ -1624,6 +1662,10 @@ app.put("/api/clans/:id", requirePoster, listingUpload, async (req, res) => {
     dropUnusedMedia(clan, invited.media);
     Object.assign(clan, invited, {
       image: nextImage(clan.image, listingFile(req, "image")),
+      // The owner's label is theirs. An editor saving the post keeps whatever
+      // is already there rather than resetting it to the default their own
+      // form sent, since their form does not offer the field at all.
+      ownerLabel: clan.ownerId === req.user.id ? invited.ownerLabel : clan.ownerLabel || null,
     });
     res.json({ clan: decorateClan(clan, db) });
     return db;
@@ -1683,7 +1725,12 @@ app.get("/api/clans/:id/recruiters", requireUser, (req, res) => {
     res.status(403).json({ error: "You do not have edit access to that post." });
     return;
   }
-  res.json({ roster: rosterFor(clan, db), max: RECRUITER_MAX });
+  res.json({
+    roster: rosterFor(clan, db),
+    max: RECRUITER_MAX,
+    ownerLabel: clan.ownerLabel || null,
+    transfer: canRemove(req.user, clan) ? transferView(clan, db) : null,
+  });
 });
 
 // Suggestions for the invite box. Scoped to a listing the caller owns rather
@@ -1708,6 +1755,7 @@ app.get("/api/clans/:id/recruiters/search", requireUser, recruiterSearchLimiter,
 app.post("/api/clans/:id/recruiters", requireUser, (req, res) => {
   const username = String(req.body?.username || "").trim();
   const role = normalizeRecruiterRole(req.body?.role);
+  const label = normalizeContactLabel(req.body?.label, "Recruiter");
   writeDb((db) => {
     const clan = db.clans.find((item) => item.id === req.params.id);
     if (!clan) {
@@ -1726,19 +1774,24 @@ app.post("/api/clans/:id/recruiters", requireUser, (req, res) => {
     }
     clan.recruiters = [
       ...normalizeRecruiters(clan.recruiters),
-      { userId: invitee.id, status: "pending", role, invitedAt: new Date().toISOString(), respondedAt: null },
+      { userId: invitee.id, status: "pending", role, label, invitedAt: new Date().toISOString(), respondedAt: null },
     ];
     res.json({ clan: decorateClan(clan, db), roster: rosterFor(clan, db) });
     return db;
   });
 });
 
+// One route for both halves of a roster row, because they are edited together:
+// `role` is what they can do, `label` is what the post calls them. Only the
+// label may arrive on its own - changing a title is not changing access.
 app.post("/api/clans/:id/recruiters/:userId/role", requireUser, (req, res) => {
-  const role = normalizeRecruiterRole(req.body?.role);
-  if (!RECRUITER_ROLES.includes(String(req.body?.role || ""))) {
+  const roleGiven = RECRUITER_ROLES.includes(String(req.body?.role || ""));
+  const labelGiven = req.body?.label !== undefined;
+  if (!roleGiven && !labelGiven) {
     res.status(400).json({ error: "Unknown role." });
     return;
   }
+  const role = normalizeRecruiterRole(req.body?.role);
   writeDb((db) => {
     const clan = db.clans.find((item) => item.id === req.params.id);
     if (!clan) {
@@ -1755,7 +1808,8 @@ app.post("/api/clans/:id/recruiters/:userId/role", requireUser, (req, res) => {
       res.status(404).json({ error: "They are not on this listing." });
       return db;
     }
-    entry.role = role;
+    if (roleGiven) entry.role = role;
+    if (labelGiven) entry.label = normalizeContactLabel(req.body.label, "Recruiter");
     clan.recruiters = entries;
     res.json({ clan: decorateClan(clan, db), roster: rosterFor(clan, db) });
     return db;
@@ -1799,6 +1853,71 @@ app.delete("/api/clans/:id/recruiters/:userId", requireUser, (req, res) => {
     }
     clan.recruiters = normalizeRecruiters(clan.recruiters).filter((item) => item.userId !== target);
     res.json({ ok: true, roster: rosterFor(clan, db) });
+    return db;
+  });
+});
+
+// Ownership moves, because the person who wrote the post is not always the
+// person it belongs to - a recruiter sets one up, a leader steps down, someone
+// builds the account on their leader's behalf. It moves the same way a
+// recruiter invite does: an offer, pending until the other side accepts, since
+// ownership carries delete rights and nobody should wake up holding those.
+app.post("/api/clans/:id/transfer", requireUser, (req, res) => {
+  const username = String(req.body?.username || "").trim();
+  writeDb((db) => {
+    const clan = db.clans.find((item) => item.id === req.params.id);
+    if (!clan) {
+      res.status(404).json({ error: "Clan not found." });
+      return db;
+    }
+    if (!canRemove(req.user, clan)) {
+      res.status(403).json({ error: "Only the owner can hand this listing over." });
+      return db;
+    }
+    const invitee = findInvitee(db.users, username);
+    const blocked = transferBlocker(clan, invitee);
+    if (blocked) {
+      res.status(400).json({ error: blocked });
+      return db;
+    }
+    offerTransfer(clan, invitee.id);
+    res.json({ transfer: transferView(clan, db) });
+    return db;
+  });
+});
+
+app.delete("/api/clans/:id/transfer", requireUser, (req, res) => {
+  writeDb((db) => {
+    const clan = db.clans.find((item) => item.id === req.params.id);
+    if (!clan) {
+      res.status(404).json({ error: "Clan not found." });
+      return db;
+    }
+    if (!canRemove(req.user, clan)) {
+      res.status(403).json({ error: "Only the owner can cancel this offer." });
+      return db;
+    }
+    clearTransfer(clan);
+    res.json({ transfer: null });
+    return db;
+  });
+});
+
+app.post("/api/clans/:id/transfer/respond", requireUser, (req, res) => {
+  const accept = req.body?.accept === true || req.body?.accept === "true";
+  writeDb((db) => {
+    const clan = db.clans.find((item) => item.id === req.params.id);
+    if (!clan) {
+      res.status(404).json({ error: "Clan not found." });
+      return db;
+    }
+    if (normalizeTransfer(clan)?.toUserId !== req.user.id) {
+      res.status(404).json({ error: "No pending offer for you on that listing." });
+      return db;
+    }
+    if (accept) applyTransfer(clan, req.user.id);
+    else clearTransfer(clan);
+    res.json({ ok: true, accepted: accept });
     return db;
   });
 });
@@ -2381,7 +2500,11 @@ function messengerOf(db, userId) {
   };
 }
 
-async function decorateThread(db, thread, userId) {
+// `blocks` is the caller's own block list, read once per request and passed in:
+// a block is what decides whether the conversation renders a composer at all,
+// and asking the store for it once per thread would turn an inbox of thirty
+// into thirty queries.
+async function decorateThread(db, thread, userId, blocks = []) {
   const members = await store.membersOf(thread.id);
   const otherId = members.map((item) => item.userId).find((id) => id !== userId) || null;
   return {
@@ -2389,7 +2512,16 @@ async function decorateThread(db, thread, userId) {
     with: messengerOf(db, otherId),
     href: listingPath(thread.kind, thread.listingId),
     preview: thread.last ? previewOf(thread.last.body) : "",
+    // Without this the client had no way of knowing, so a block held until the
+    // page was reloaded and then quietly appeared to have come undone.
+    blocked: Boolean(otherId) && blockedBetween(blocks, userId, otherId),
   };
+}
+
+// Where this person's view of a conversation starts. Null unless they have
+// deleted it, in which case everything up to that moment is not theirs to read.
+function clearedAtFor(members, userId) {
+  return members.find((item) => item.userId === userId)?.clearedAt || null;
 }
 
 // Membership is the authorisation. There is no "view any thread" path, for
@@ -2412,8 +2544,9 @@ async function requireMember(req, res) {
 app.get("/api/messages", requireUser, requireStore, async (req, res) => {
   const db = readDb();
   const threads = await store.inboxFor(req.user.id);
+  const blocks = await store.blocksFor(req.user.id);
   const decorated = [];
-  for (const thread of threads) decorated.push(await decorateThread(db, thread, req.user.id));
+  for (const thread of threads) decorated.push(await decorateThread(db, thread, req.user.id, blocks));
   res.json({ threads: decorated });
 });
 
@@ -2470,39 +2603,78 @@ app.post("/api/messages/block", requireUser, requireStore, async (req, res) => {
   res.json({ blocked: on });
 });
 
-// Opening a conversation is separate from sending one, so the compose box can
-// show the history with someone you have already written to rather than
-// silently starting a second thread about the same listing.
-app.post("/api/messages/open", requireUser, requireStore, threadOpenLimiter, async (req, res) => {
-  const kind = String(req.body.kind || "");
-  const listingId = String(req.body.listingId || "");
+// Everything that decides whether these two may talk about this listing, in one
+// place. The open route and the first send both run it, because the thread is
+// no longer written until someone actually says something - so the send is
+// where a brand new conversation gets checked.
+async function conversationCheck(user, kind, listingId, otherId = null) {
   const db = readDb();
   const listing = listingFor(db, kind, listingId);
   const problem = openError({
-    senderId: req.user.id,
+    senderId: user.id,
     ownerId: listing?.ownerId,
     listingId: listing?.id,
   });
-  if (problem) {
-    res.status(400).json({ error: problem });
+  if (problem) return { status: 400, error: problem };
+  // Only ever the listing's owner. An id naming anyone else is not a
+  // conversation this board offers, however well-formed it looks.
+  if (otherId && otherId !== listing.ownerId) {
+    return { status: 403, error: "That is not your conversation." };
+  }
+  const blocks = await store.blocksFor(user.id);
+  if (blockedBetween(blocks, user.id, listing.ownerId)) {
+    return { status: 403, error: "You cannot message that person." };
+  }
+  return { db, listing, blocks };
+}
+
+// Opening a conversation is separate from sending one, so the compose box can
+// show the history with someone you have already written to rather than
+// silently starting a second thread about the same listing.
+//
+// It deliberately writes nothing. Pressing Message and thinking better of it
+// used to put an empty conversation in a stranger's inbox, which is a knock on
+// the door from someone who never said anything. The thread starts at the first
+// message; until then this hands back a draft, which is a real id and no row.
+app.post("/api/messages/open", requireUser, requireStore, threadOpenLimiter, async (req, res) => {
+  const kind = String(req.body.kind || "");
+  const listingId = String(req.body.listingId || "");
+  const checked = await conversationCheck(req.user, kind, listingId);
+  if (checked.error) {
+    res.status(checked.status).json({ error: checked.error });
     return;
   }
-  const blocks = await store.blocksFor(req.user.id);
-  if (blocks.some((row) => row.userId === listing.ownerId || row.blockedId === listing.ownerId)) {
-    res.status(403).json({ error: "You cannot message that person." });
-    return;
-  }
+  const { db, listing, blocks } = checked;
   const id = threadIdFor(kind, listing.id, req.user.id, listing.ownerId);
-  const thread = await store.openThread({
-    id,
-    kind,
-    listingId: listing.id,
-    listingName: listing.name,
-    userIds: [req.user.id, listing.ownerId],
-  });
-  const messages = await store.messagesIn(thread.id);
+  const existing = await store.getThread(id);
+  if (!existing) {
+    res.json({
+      thread: {
+        id,
+        kind,
+        listingId: listing.id,
+        listingName: listing.name,
+        draft: true,
+        with: messengerOf(db, listing.ownerId),
+        href: listingPath(kind, listing.id),
+        preview: "",
+        unread: 0,
+        blocked: false,
+      },
+      messages: [],
+    });
+    return;
+  }
+  const members = await store.membersOf(id);
+  const messages = await store.messagesIn(id, { since: clearedAtFor(members, req.user.id) });
+  await store.markRead(id, req.user.id);
   res.json({
-    thread: await decorateThread(db, { ...thread, last: messages[messages.length - 1] || null }, req.user.id),
+    thread: await decorateThread(
+      db,
+      { ...existing, last: messages[messages.length - 1] || null },
+      req.user.id,
+      blocks
+    ),
     messages: messages.map((item) => ({ ...item, from: messengerOf(db, item.senderId) })),
   });
 });
@@ -2511,29 +2683,82 @@ app.get("/api/messages/:id", requireUser, requireStore, async (req, res) => {
   const found = await requireMember(req, res);
   if (!found) return;
   const db = readDb();
-  const messages = await store.messagesIn(found.thread.id);
+  const messages = await store.messagesIn(found.thread.id, {
+    since: clearedAtFor(found.members, req.user.id),
+  });
   await store.markRead(found.thread.id, req.user.id);
   res.json({
     thread: await decorateThread(
       db,
       { ...found.thread, last: messages[messages.length - 1] || null },
-      req.user.id
+      req.user.id,
+      await store.blocksFor(req.user.id)
     ),
     messages: messages.map((item) => ({ ...item, from: messengerOf(db, item.senderId) })),
   });
 });
 
-app.post("/api/messages/:id", requireUser, requireStore, messageLimiter, async (req, res) => {
+// Deleting a conversation is one-sided: it leaves your inbox, the other person
+// keeps theirs. A thread nobody can delete out from under the other side is
+// also a thread that can still be reported after the fact.
+app.delete("/api/messages/:id", requireUser, requireStore, async (req, res) => {
   const found = await requireMember(req, res);
   if (!found) return;
+  await store.clearThread(found.thread.id, req.user.id);
+  res.json({ ok: true, unread: await store.unreadTotal(req.user.id) });
+});
+
+// The first message is what creates the thread, so this is the one route that
+// tolerates an id with no row behind it. The id is only a description of what
+// to look up - kind, listing, and the two people - and every part of it is
+// checked against the listing again before anything is written, which is the
+// same check /open ran. An id naming a stranger, a gone listing, or a pair the
+// caller is not half of buys nothing.
+async function threadForSend(req, res) {
+  const existing = await requireMemberQuietly(req);
+  if (existing) return existing;
+  const parsed = parseThreadId(req.params.id);
+  if (!parsed || !parsed.userIds.includes(req.user.id)) {
+    res.status(404).json({ error: "Conversation not found." });
+    return null;
+  }
+  const otherId = parsed.userIds.find((id) => id !== req.user.id);
+  const checked = await conversationCheck(req.user, parsed.kind, parsed.listingId, otherId);
+  if (checked.error) {
+    res.status(checked.status).json({ error: checked.error });
+    return null;
+  }
+  const thread = await store.openThread({
+    id: req.params.id,
+    kind: parsed.kind,
+    listingId: checked.listing.id,
+    listingName: checked.listing.name,
+    userIds: parsed.userIds,
+  });
+  return { thread, members: await store.membersOf(thread.id) };
+}
+
+// requireMember without the response: a missing thread is not yet an error on
+// the send path, it is a conversation about to start.
+async function requireMemberQuietly(req) {
+  const thread = await store.getThread(req.params.id);
+  if (!thread) return null;
+  const members = await store.membersOf(thread.id);
+  if (!members.some((item) => item.userId === req.user.id)) return null;
+  return { thread, members };
+}
+
+app.post("/api/messages/:id", requireUser, requireStore, messageLimiter, async (req, res) => {
   const problem = bodyError(req.body.body);
   if (problem) {
     res.status(400).json({ error: problem });
     return;
   }
+  const found = await threadForSend(req, res);
+  if (!found) return;
   const otherId = found.members.map((item) => item.userId).find((id) => id !== req.user.id) || null;
   const blocks = await store.blocksFor(req.user.id);
-  if (otherId && blocks.some((row) => row.userId === otherId || row.blockedId === otherId)) {
+  if (otherId && blockedBetween(blocks, req.user.id, otherId)) {
     res.status(403).json({ error: "You cannot message that person." });
     return;
   }

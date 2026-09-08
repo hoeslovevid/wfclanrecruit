@@ -28,6 +28,43 @@ export const ROLE_SUGGESTIONS = [
   "Artist",
 ];
 
+// What a contact on a listing is called where recruits whisper them. A clan
+// invents its own hierarchy - warlord, co-leader, recruitment officer - so this
+// is free text with suggestions for the same reason a role is: a rank nobody
+// can name is worse than an untidy list.
+//
+// It is a title and nothing else. What someone can actually do is `role` in
+// recruiters.js, and the two must never be read as one thing: a contact
+// labelled "Co-Leader" with role "recruiter" still cannot touch the post.
+export const CONTACT_LABEL_MAX = 24;
+
+// Long enough for "Recruitment Officer", short enough that a whisper row stays
+// on one line.
+export const CONTACT_LABEL_SUGGESTIONS = [
+  "Leader",
+  "Warlord",
+  "Co-Leader",
+  "Officer",
+  "Recruiter",
+  "Recruitment Officer",
+  "Moderator",
+  "Veteran",
+];
+
+// The fallbacks are what every listing written before this said, so an
+// untouched post reads exactly as it did.
+export const OWNER_LABEL_DEFAULT = "Leader";
+export const RECRUITER_LABEL_DEFAULT = "Recruiter";
+
+export function normalizeContactLabel(value, fallback = RECRUITER_LABEL_DEFAULT) {
+  const text = String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, CONTACT_LABEL_MAX)
+    .trim();
+  return text || fallback;
+}
+
 // Per role, not per listing: a clan can be full of members and still short an
 // architect. Closed is kept rather than deleted so a listing can show the shape
 // of its team without pretending every seat is open.

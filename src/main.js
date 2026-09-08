@@ -41,6 +41,7 @@ import {
   readLinkRows,
   readRoleRows,
   rosterPanel,
+  transferPanel,
 } from "./views.js";
 import { ROLE_MAX, roleFilterOptions } from "./roles.js";
 import { privacyView } from "./privacy.js";
@@ -331,11 +332,32 @@ async function loadInbox(activeId = "") {
   }
 }
 
+// A thread id is `kind:listingId:userA:userB` (threadId in server/messages.js),
+// so a conversation nobody has written in yet can still be addressed by one.
+// The user ids are the server's business; what this needs is the subject.
+function threadSubject(id) {
+  const [kind, listingId] = String(id || "").split(":");
+  return kind && listingId ? { kind, listingId } : null;
+}
+
+// Two ways in, one function. A thread that exists is read; one that does not is
+// a conversation that was opened and never sent - the row is only written by
+// the first message - so it is re-derived from the listing instead of 404ing.
+async function readConversation(id) {
+  try {
+    return await api.thread(id);
+  } catch (error) {
+    const subject = threadSubject(id);
+    if (!subject) throw error;
+    return api.openThread(subject.kind, subject.listingId);
+  }
+}
+
 async function openConversation(id) {
   const panel = app.querySelector("[data-conversation]");
   if (!panel) return;
   try {
-    const { thread, messages } = await api.thread(id);
+    const { thread, messages } = await readConversation(id);
     panel.dataset.threadId = thread.id;
     panel.innerHTML = conversationHtml(thread, messages, state.user?.id);
     const bubbles = panel.querySelector("[data-bubbles]");
@@ -380,13 +402,53 @@ function bindConversation(panel, thread) {
   box?.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) submit(event);
   });
+  // Re-opened rather than overwritten with a sentence. The old version painted
+  // "Blocked." straight into the panel, so the block looked like it had come
+  // undone the moment the page was reloaded - the state was never on the
+  // thread, only on the screen. Now the server reports it and the conversation
+  // is drawn again from what it says.
   panel.querySelector("[data-block-user]")?.addEventListener("click", async (event) => {
-    const userId = event.currentTarget.dataset.blockUser;
-    if (!confirm("Block this person? Neither of you will be able to message the other.")) return;
+    const button = event.currentTarget;
+    const userId = button.dataset.blockUser;
+    const blocking = !button.dataset.blocked;
+    if (
+      blocking &&
+      !confirm("Block this person? Neither of you will be able to message the other.")
+    ) {
+      return;
+    }
     try {
-      await api.blockUser(userId, true);
-      panel.innerHTML = `<div class="conversation-empty"><p class="muted">Blocked. They can no longer message you.</p></div>`;
+      await api.blockUser(userId, blocking);
+      if (thread.draft && blocking) {
+        // Nothing was ever written, and the open route now refuses this pair.
+        // There is no conversation to redraw - only an inbox to go back to.
+        panel.innerHTML = conversationHtml(null, [], state.user?.id);
+        delete panel.dataset.threadId;
+        await loadInbox();
+        return;
+      }
+      await openConversation(thread.id);
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  // One-sided: the other person keeps their copy, and a reply brings this one
+  // back holding only what is new. Worth saying, or Delete reads as "erase the
+  // conversation" and gets pressed for the wrong reason.
+  panel.querySelector("[data-delete-thread]")?.addEventListener("click", async (event) => {
+    if (
+      !confirm(
+        "Delete this conversation? It leaves your inbox. The other person keeps their copy, and if they write again the conversation comes back with just the new messages."
+      )
+    ) {
+      return;
+    }
+    try {
+      await api.deleteThread(event.currentTarget.dataset.deleteThread);
+      panel.innerHTML = conversationHtml(null, [], state.user?.id);
       delete panel.dataset.threadId;
+      await refreshUnread();
       await loadInbox();
     } catch (error) {
       alert(error.message);
@@ -574,6 +636,59 @@ async function fullListing(kind, id) {
   }
 }
 
+// The composer's Owner box. It reads from the same owner-only roster route the
+// recruiter panel does, so the offer arrives with the roster rather than in a
+// second round trip.
+function bindTransfer() {
+  const box = app.querySelector("[data-transfer-for]");
+  if (!box) return;
+  const id = box.dataset.transferFor;
+  const slot = box.querySelector("[data-transfer-slot]");
+  const paint = (transfer) => {
+    slot.innerHTML = transferPanel(transfer);
+    const note = () => slot.querySelector("[data-transfer-note]");
+    const input = slot.querySelector("[data-transfer-username]");
+    slot.querySelector("[data-transfer-offer]")?.addEventListener("click", async () => {
+      const username = input.value.trim();
+      if (!username) return;
+      // The one control here that gives away the ability to delete the post, so
+      // it asks first and names what is being handed over.
+      if (
+        !confirm(
+          `Offer this listing to ${username}? If they accept, the post becomes theirs — you keep edit access, but you will no longer be able to delete it.`
+        )
+      ) {
+        return;
+      }
+      try {
+        const { transfer } = await api.offerTransfer(id, username);
+        paint(transfer);
+        showNote(
+          slot.querySelector("[data-transfer-note]"),
+          "Offer sent. Nothing moves until they accept.",
+          "muted"
+        );
+      } catch (error) {
+        showNote(note(), error.message);
+      }
+    });
+    slot.querySelector("[data-transfer-cancel]")?.addEventListener("click", async () => {
+      try {
+        await api.cancelTransfer(id);
+        paint(null);
+      } catch (error) {
+        showNote(note(), error.message);
+      }
+    });
+  };
+  api
+    .roster(id)
+    .then(({ transfer }) => paint(transfer || null))
+    .catch((error) => {
+      slot.innerHTML = `<p class="muted">${error.message}</p>`;
+    });
+}
+
 function bindRecruiters() {
   app.querySelectorAll("[data-roster-for]").forEach((box) => {
     const id = box.dataset.rosterFor;
@@ -589,8 +704,9 @@ function bindRecruiters() {
         if (!username) return;
         const note = slot.querySelector("[data-roster-note]");
         const role = slot.querySelector("[data-roster-new-role]")?.value;
+        const label = slot.querySelector("[data-roster-new-label]")?.value;
         try {
-          const { roster: next } = await api.inviteRecruiter(id, username, role);
+          const { roster: next } = await api.inviteRecruiter(id, username, role, label);
           paint(next, max);
           showNote(
             slot.querySelector("[data-roster-note]"),
@@ -740,7 +856,7 @@ function bindRecruiters() {
         const previous = select.value;
         select.addEventListener("change", async () => {
           try {
-            await api.setRecruiterRole(id, select.dataset.rosterRole, select.value);
+            await api.setRecruiterRole(id, select.dataset.rosterRole, { role: select.value });
             showNote(
               slot.querySelector("[data-roster-note]"),
               select.value === "editor"
@@ -754,6 +870,28 @@ function bindRecruiters() {
           }
         });
       });
+
+      // A title, not access - so it saves the same quiet way the role does, on
+      // blur rather than per keystroke, and never repaints the row underneath
+      // the person still typing in it.
+      slot.querySelectorAll("[data-roster-label]").forEach((input) => {
+        let previous = input.value;
+        input.addEventListener("change", async () => {
+          const label = input.value.trim();
+          try {
+            await api.setRecruiterRole(id, input.dataset.rosterLabel, { label });
+            previous = label;
+            showNote(
+              slot.querySelector("[data-roster-note]"),
+              label ? `The post calls them "${label}" now.` : "Back to the default label.",
+              "muted"
+            );
+          } catch (error) {
+            input.value = previous;
+            showNote(slot.querySelector("[data-roster-note]"), error.message);
+          }
+        });
+      });
     };
     api
       .roster(id)
@@ -762,6 +900,8 @@ function bindRecruiters() {
         slot.innerHTML = `<p class="muted">${error.message}</p>`;
       });
   });
+
+  bindTransfer();
 
   const note = app.querySelector("[data-invite-note]");
   const respond = async (id, accept) => {
@@ -779,6 +919,31 @@ function bindRecruiters() {
   app.querySelectorAll("[data-invite-decline]").forEach((button) =>
     button.addEventListener("click", () => respond(button.dataset.inviteDecline, false))
   );
+  const transferNote = app.querySelector("[data-transfer-invite-note]");
+  const answerTransfer = async (id, accept) => {
+    if (
+      accept &&
+      !confirm(
+        "Take ownership of this listing? It becomes yours to edit, bump and delete, and recruits will whisper your verified Warframe name."
+      )
+    ) {
+      return;
+    }
+    try {
+      await api.respondToTransfer(id, accept);
+      await refresh();
+      await render();
+    } catch (error) {
+      showNote(transferNote, error.message);
+    }
+  };
+  app.querySelectorAll("[data-transfer-accept]").forEach((button) =>
+    button.addEventListener("click", () => answerTransfer(button.dataset.transferAccept, true))
+  );
+  app.querySelectorAll("[data-transfer-decline]").forEach((button) =>
+    button.addEventListener("click", () => answerTransfer(button.dataset.transferDecline, false))
+  );
+
   app.querySelectorAll("[data-recruiter-leave]").forEach((button) =>
     button.addEventListener("click", async () => {
       try {

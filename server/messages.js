@@ -38,6 +38,22 @@ export function threadId(kind, listingId, a, b) {
   return `${kind}:${listingId}:${pair[0]}:${pair[1]}`;
 }
 
+// The inverse of threadId. A thread is not written until someone actually says
+// something, so the first send arrives quoting an id for a row that does not
+// exist yet - and the id is the only description of it we have. Reading it back
+// is safe because every part of it is checked again against the listing before
+// anything is written: this says what to look up, never what to trust.
+//
+// User ids never contain a colon (they are minted by newId), so the first two
+// segments split cleanly and the rest is the pair.
+export function parseThreadId(id) {
+  const parts = String(id || "").split(":");
+  if (parts.length !== 4) return null;
+  const [kind, listingId, a, b] = parts;
+  if (!THREAD_KINDS.includes(kind) || !listingId || !a || !b || a === b) return null;
+  return { kind, listingId, userIds: [a, b] };
+}
+
 // You cannot message yourself, and you cannot open a thread about a listing
 // with someone who has nothing to do with it. The caller supplies the owner;
 // this only decides whether the pairing makes sense.

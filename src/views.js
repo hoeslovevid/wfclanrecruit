@@ -44,6 +44,8 @@ import {
 import { youTubeEmbedUrl, youTubeThumbUrl } from "./video.js";
 import { MEDIA_MAX, isUploadedImage, mediaList } from "./media.js";
 import {
+  CONTACT_LABEL_MAX,
+  CONTACT_LABEL_SUGGESTIONS,
   ROLE_MAX,
   ROLE_NAME_MAX,
   ROLE_PLAIN_MAX,
@@ -456,7 +458,7 @@ function whisperBox(clan) {
         <div class="whisper-row">
           <div class="whisper-who">
             <strong>${escapeHtml(contact.name)}</strong>
-            <span class="muted">${contact.owner ? "Leader" : "Recruiter"}</span>
+            <span class="muted">${escapeHtml(contact.label || (contact.owner ? "Leader" : "Recruiter"))}</span>
             ${presenceDot(contact)}
           </div>
           <code class="whisper-text">${escapeHtml(message)}</code>
@@ -477,7 +479,7 @@ function whisperCardButton(clan) {
   const first = whisperContacts(clan)[0];
   const message = first ? whisperMessage(clan, first.name) : null;
   if (!message) return "";
-  return `<button class="btn btn-ghost btn-small" type="button" title="Copy the /w message for this clan's leader" data-copy-listing="${escapeHtml(clan.id)}" data-copy-text="${escapeHtml(message)}">Whisper</button>`;
+  return `<button class="btn btn-ghost btn-small" type="button" title="Copy the /w message for this clan" data-copy-listing="${escapeHtml(clan.id)}" data-copy-text="${escapeHtml(message)}">Whisper</button>`;
 }
 
 // "Offline" rather than "Invisible": it is the default now, and a default
@@ -1471,9 +1473,14 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
             <label class="field"><span>Clan name</span><input name="name" required maxlength="48" value="${escapeHtml(draft.name || "")}" /></label>
             <label class="field"><span>Tag</span><input name="tag" required maxlength="${TAG_MAX}" value="${escapeHtml(draft.tag || "")}" /></label>
             <label class="field"><span>In-game leader</span><input name="leader" required maxlength="32" value="${escapeHtml(draft.leader || user.forumName || user.username)}" /></label>
+            <label class="field"><span>Your label on this post <small class="field-optional">how recruits see you</small></span><input name="ownerLabel" list="contact-labels" maxlength="${CONTACT_LABEL_MAX}" placeholder="Leader" value="${escapeHtml(draft.ownerLabel || "")}" ${
+              draft.ownerId && user?.id && draft.ownerId !== user.id ? "disabled" : ""
+            } /></label>
             <label class="field"><span>Founded</span><input name="founded" maxlength="8" value="${escapeHtml(draft.founded || "")}" placeholder="2019" /></label>
           </div>
           <p class="muted">Name and tag must be unique on the board. You can post more than one clan.</p>
+          <p class="field-help">The leader name is what the post displays. Your label is what sits beside <em>your</em> name where recruits whisper — set it to Recruiter if you run the post for someone else.</p>
+          ${contactLabelOptions()}
           ${imagePicker("Clan image")}
         </div>
         <div class="form-block">
@@ -1517,6 +1524,7 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
                 : `<p class="field-help">Publish the clan first, then come back here to invite recruiters.</p>`
             }
           </fieldset>
+          ${transferField(draft, user)}
           <div class="playstyle-groups">${playstyleGroups(draft.playstyles || [])}</div>
           ${rolesField(draft)}
         </div>
@@ -1758,6 +1766,7 @@ export function accountView({ user, clans, alliances, players = [], reports = []
       <div class="section-head"><h2>${admin ? "Clan posts" : "Your clans"}</h2><a class="text-link" href="/post" data-link>New clan</a></div>
       ${listingList(clans, "clan", "You have not posted a clan yet.", { admin })}
     </section>
+    ${transferInvitesPanel(user)}
     ${recruiterInvitesPanel(user)}
     ${recruitingOnPanel(user)}
     <section class="section">
@@ -1781,6 +1790,42 @@ export function accountView({ user, clans, alliances, players = [], reports = []
           ${admin ? "" : `<button class="btn btn-ghost btn-danger" type="button" data-delete-account>Delete my account</button>`}
         </div>
         ${admin ? `<p class="muted">Admin accounts cannot be deleted from this page so the board cannot be locked out.</p>` : ""}
+      </div>
+    </section>
+  `;
+}
+
+// Louder than the recruiter panel on purpose: accepting a recruiter invite puts
+// your name on a post, accepting this makes the post yours, with everything
+// that follows from that.
+function transferInvitesPanel(user) {
+  const offers = user.transferInvites || [];
+  if (!offers.length) return "";
+  return `
+    <section class="section">
+      <div class="panel">
+        <p class="kicker">Ownership offers</p>
+        <h2>${offers.length === 1 ? "A clan post has been offered to you" : "Clan posts have been offered to you"}</h2>
+        <p class="muted">Accepting makes the listing yours: you edit it, bump it, decide who else is on it, and you are the only one who can delete it. Whoever offered it keeps edit access, and recruits whisper the Warframe name on your verified profile.</p>
+        <div class="list">
+          ${offers
+            .map(
+              (offer) => `
+            <div class="list-row">
+              <div>
+                <strong>${escapeHtml(offer.name)}</strong>
+                <p class="muted">[${escapeHtml(offer.tag)}]</p>
+              </div>
+              <div class="list-actions">
+                <a class="btn btn-ghost" href="/clans/${escapeHtml(offer.id)}" data-link>Read the post</a>
+                <button class="btn btn-ghost" type="button" data-transfer-accept="${escapeHtml(offer.id)}">Accept</button>
+                <button class="btn btn-ghost btn-danger" type="button" data-transfer-decline="${escapeHtml(offer.id)}">Decline</button>
+              </div>
+            </div>`
+            )
+            .join("")}
+        </div>
+        <p class="muted" data-transfer-invite-note hidden></p>
       </div>
     </section>
   `;
@@ -1863,6 +1908,28 @@ const ROLE_LABELS = {
   editor: "Answers whispers and can edit",
 };
 
+// Suggestions, not a vocabulary: a clan's ranks are its own, so the list is
+// offered and anything typed is kept. One datalist serves every label input on
+// the page - the owner's own and each roster row's.
+export function contactLabelOptions(id = "contact-labels") {
+  return `<datalist id="${escapeHtml(id)}">${CONTACT_LABEL_SUGGESTIONS.map(
+    (name) => `<option value="${escapeHtml(name)}"></option>`
+  ).join("")}</datalist>`;
+}
+
+function labelInput(value, { userId = "", disabled = false } = {}) {
+  return `<input
+    class="roster-label"
+    aria-label="What the post calls them"
+    list="contact-labels"
+    maxlength="${CONTACT_LABEL_MAX}"
+    placeholder="Recruiter"
+    value="${escapeHtml(value || "")}"
+    ${userId ? `data-roster-label="${escapeHtml(userId)}"` : "data-roster-new-label"}
+    ${disabled ? "disabled" : ""}
+  />`;
+}
+
 function roleSelect(value, { name = "", userId = "", disabled = false } = {}) {
   const role = value === "editor" ? "editor" : "recruiter";
   return `<select
@@ -1892,6 +1959,7 @@ export function rosterPanel(roster = [], max = 5, { owner = true } = {}) {
             entry.forumName ? `signs in as ${escapeHtml(entry.username)}` : "no in-game name"
           }</span>
         </div>
+        ${labelInput(entry.label, { userId: entry.userId, disabled: !owner })}
         ${roleSelect(entry.role, { userId: entry.userId, disabled: !owner })}
         <span class="pill ${entry.status === "accepted" ? "is-open" : "is-selective"}">${
           entry.status === "accepted" ? "Recruiting" : "Invite pending"
@@ -1927,10 +1995,62 @@ export function rosterPanel(roster = [], max = 5, { owner = true } = {}) {
             <ul class="combo-list" id="roster-suggestions" role="listbox" aria-label="Matching players" data-roster-suggestions hidden></ul>
           </div>
         </label>
+        ${labelInput("")}
         ${roleSelect("recruiter", { name: "new" })}
         <button class="btn btn-ghost" type="button" data-roster-invite ${roster.length >= max ? "disabled" : ""}>Invite</button>
       </div>
       <p class="muted" data-roster-note hidden></p>
+    </div>
+  `;
+}
+
+// Handing the post over. Owner-only and deliberately plain about what it costs:
+// this is the one control on the page that gives away the ability to delete the
+// listing, so it says so before it is used rather than after.
+function transferField(draft, user) {
+  const owner = Boolean(draft.id) && (!draft.ownerId || !user?.id || draft.ownerId === user.id || user.admin);
+  if (!draft.id || !owner) return "";
+  return `
+    <fieldset class="fieldset" data-transfer-for="${escapeHtml(draft.id)}">
+      <legend>Owner</legend>
+      <p class="field-help">Hand this listing to someone else — the leader it belongs to, or whoever takes over next. They have to accept, and nothing moves until they do. Once they do, the post is theirs: you keep edit access, but not the ability to delete it.</p>
+      <div data-transfer-slot><p class="muted">Loading…</p></div>
+    </fieldset>
+  `;
+}
+
+// Painted after the roster loads, since both come from the same owner-only
+// route. Two states: an offer waiting on someone, or the box to make one.
+export function transferPanel(transfer) {
+  if (transfer) {
+    return `
+      <div class="roster">
+        <div class="roster-row">
+          <div>
+            <strong>${escapeHtml(transfer.name)}</strong>
+            <span class="muted">has been offered this listing</span>
+          </div>
+          <span class="pill is-selective">Waiting on them</span>
+          <button class="btn btn-ghost btn-danger btn-small" type="button" data-transfer-cancel>Cancel</button>
+        </div>
+        <p class="muted" data-transfer-note hidden></p>
+      </div>
+    `;
+  }
+  return `
+    <div class="roster">
+      <div class="row roster-add">
+        <label class="field"><span class="sr-only">Warframe name</span>
+          <input
+            data-transfer-username
+            autocomplete="off"
+            placeholder="Their Warframe name"
+            maxlength="32"
+          />
+        </label>
+        <button class="btn btn-ghost btn-danger" type="button" data-transfer-offer>Offer ownership</button>
+      </div>
+      <p class="muted" data-transfer-note hidden></p>
     </div>
   `;
 }
@@ -2691,7 +2811,7 @@ export function threadRow(thread, activeId = "") {
 
 export function threadListHtml(threads, activeId = "") {
   if (!threads.length) {
-    return `<p class="muted thread-empty">No conversations yet. Open a clan or a player profile and press Message.</p>`;
+    return `<p class="muted thread-empty">No conversations yet. Whatever you send lands here, and so does their reply.</p>`;
   }
   return threads.map((thread) => threadRow(thread, activeId)).join("");
 }
@@ -2727,8 +2847,16 @@ export function conversationHtml(thread, messages, meId) {
           thread.with?.id
             ? `<button class="btn btn-ghost btn-small" type="button" data-block-user="${escapeHtml(
                 thread.with.id
-              )}">Block</button>`
+              )}" data-blocked="${thread.blocked ? "1" : ""}">${thread.blocked ? "Unblock" : "Block"}</button>`
             : ""
+        }
+        ${
+          // A draft has nothing stored to delete, so the button would be a lie.
+          thread.draft
+            ? ""
+            : `<button class="btn btn-ghost btn-small btn-danger" type="button" data-delete-thread="${escapeHtml(
+                thread.id
+              )}">Delete</button>`
         }
       </div>
     </header>
@@ -2739,13 +2867,19 @@ export function conversationHtml(thread, messages, meId) {
           : `<p class="muted">No messages yet. Say hello.</p>`
       }
     </div>
-    ${reportForm("message", thread.id)}
+    ${
+      // A block is mutual, so there is nothing to compose and nothing to report
+      // that is still arriving. Saying so beats a Send button that always fails.
+      thread.blocked
+        ? `<p class="muted conversation-blocked">Blocked. Neither of you can write to the other. Unblock to start again.</p>`
+        : `${reportForm("message", thread.id)}
     <form class="composer-bar" data-send-form>
       <label class="sr-only" for="message-body">Message</label>
       <textarea id="message-body" name="body" rows="2" maxlength="${MESSAGE_MAX}" placeholder="Write a message… (Enter to send)"></textarea>
       <button class="btn btn-primary" type="submit">Send</button>
       <p class="error" data-send-note hidden></p>
-    </form>
+    </form>`
+    }
   `;
 }
 
@@ -2756,7 +2890,12 @@ export function messagesView({ user, threads, activeId = "" }) {
   // With nothing in the inbox there is no conversation to pick, so the split
   // layout is just two empty boxes asking a question with no answer. Say what
   // to do instead, and point at the two places you can do it from.
-  if (!threads.length) {
+  //
+  // Unless one is being opened. A conversation is not written until the first
+  // message is sent, so someone who has just pressed Message on a post arrives
+  // here with an empty inbox and a conversation to write in - and the layout
+  // has to hold it.
+  if (!threads.length && !activeId) {
     return `
       <section class="page-hero">
         <p class="eyebrow">Messages</p>

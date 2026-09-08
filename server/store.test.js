@@ -146,3 +146,63 @@ test("stamps never go backwards, however fast they are asked for", () => {
   assert.deepEqual(stamps, sorted);
   assert.equal(new Set(stamps).size, stamps.length, "and never repeat");
 });
+
+// Deleting a DM is one-sided. Nothing is removed - the other person keeps the
+// whole conversation - so what is worth pinning is that the two sides genuinely
+// disagree about what is there.
+test("clearing a conversation empties one inbox and leaves the other alone", async () => {
+  const id = threadId("clan", "clearing", "user-c", "user-d");
+  await store.openThread({
+    id,
+    kind: "clan",
+    listingId: "clearing",
+    listingName: "Clearing",
+    userIds: ["user-c", "user-d"],
+  });
+  await store.addMessage({ threadId: id, senderId: "user-c", body: "First" });
+  await store.addMessage({ threadId: id, senderId: "user-d", body: "Second" });
+
+  await store.clearThread(id, "user-c");
+
+  const gone = (await store.inboxFor("user-c")).find((item) => item.id === id);
+  assert.equal(gone, undefined, "it left their inbox");
+  const kept = (await store.inboxFor("user-d")).find((item) => item.id === id);
+  assert.equal(kept.last.body, "Second", "and stayed in the other one, whole");
+  assert.deepEqual(
+    (await store.messagesIn(id, { since: "9999-01-01T00:00:00.000Z" })).map((m) => m.body),
+    [],
+    "nothing before the moment it was cleared is theirs to read"
+  );
+  assert.equal(
+    (await store.messagesIn(id)).length,
+    2,
+    "and the messages themselves are still there"
+  );
+});
+
+test("a reply brings a cleared conversation back holding only what is new", async () => {
+  const id = threadId("clan", "revived", "user-e", "user-f");
+  await store.openThread({
+    id,
+    kind: "clan",
+    listingId: "revived",
+    listingName: "Revived",
+    userIds: ["user-e", "user-f"],
+  });
+  await store.addMessage({ threadId: id, senderId: "user-f", body: "Old news" });
+  await store.clearThread(id, "user-e");
+  assert.equal(await store.unreadTotal("user-e"), 0, "cleared is read");
+
+  await store.addMessage({ threadId: id, senderId: "user-f", body: "Still there?" });
+
+  const row = (await store.inboxFor("user-e")).find((item) => item.id === id);
+  assert.equal(row.last.body, "Still there?");
+  assert.equal(row.unread, 1, "and the badge counts the new message, not the old one");
+  assert.equal(await store.unreadTotal("user-e"), 1);
+
+  const member = (await store.membersOf(id)).find((item) => item.userId === "user-e");
+  assert.deepEqual(
+    (await store.messagesIn(id, { since: member.clearedAt })).map((m) => m.body),
+    ["Still there?"]
+  );
+});

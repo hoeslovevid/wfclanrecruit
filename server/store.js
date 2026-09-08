@@ -87,6 +87,11 @@ export async function initStore(dataDir) {
         thread_id TEXT NOT NULL,
         user_id TEXT NOT NULL,
         read_at TIMESTAMPTZ,
+        -- When this side last cleared the conversation. Deleting a DM is
+        -- one-sided: the other person keeps their copy, so nothing is removed -
+        -- everything up to this moment simply stops being theirs to see. A
+        -- later message brings the thread back with only what is new in it.
+        cleared_at TIMESTAMPTZ,
         PRIMARY KEY (thread_id, user_id)
       );
       CREATE TABLE IF NOT EXISTS messages (
@@ -110,6 +115,9 @@ export async function initStore(dataDir) {
       CREATE INDEX IF NOT EXISTS messages_thread ON messages (thread_id, created_at);
       CREATE INDEX IF NOT EXISTS threads_last ON threads (last_message_at DESC);
     `);
+    // CREATE TABLE IF NOT EXISTS is a no-op against a table that already
+    // exists, so a column added after the first deploy needs saying twice.
+    await query("ALTER TABLE thread_members ADD COLUMN IF NOT EXISTS cleared_at TIMESTAMPTZ");
     return;
   }
   filePath = path.join(dataDir, "messages.json");
@@ -164,7 +172,12 @@ export async function getThread(id) {
 export async function membersOf(threadId) {
   if (usingPostgres) {
     const { rows } = await query("SELECT * FROM thread_members WHERE thread_id = $1", [threadId]);
-    return rows.map((row) => ({ threadId: row.thread_id, userId: row.user_id, readAt: iso(row.read_at) }));
+    return rows.map((row) => ({
+      threadId: row.thread_id,
+      userId: row.user_id,
+      readAt: iso(row.read_at),
+      clearedAt: iso(row.cleared_at),
+    }));
   }
   return cache.members.filter((item) => item.threadId === threadId);
 }
@@ -218,14 +231,18 @@ export async function inboxFor(userId, limit = 50) {
               (SELECT count(*) FROM messages u
                 WHERE u.thread_id = t.id
                   AND u.sender_id IS DISTINCT FROM $1
-                  AND (m.read_at IS NULL OR u.created_at > m.read_at))::int AS unread
+                  AND (m.read_at IS NULL OR u.created_at > m.read_at)
+                  AND (m.cleared_at IS NULL OR u.created_at > m.cleared_at))::int AS unread
          FROM thread_members m
          JOIN threads t ON t.id = m.thread_id
          LEFT JOIN LATERAL (
             SELECT body, created_at, sender_id FROM messages
-             WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1
+             WHERE thread_id = t.id
+               AND (m.cleared_at IS NULL OR created_at > m.cleared_at)
+             ORDER BY created_at DESC LIMIT 1
          ) last ON true
         WHERE m.user_id = $1
+          AND (m.cleared_at IS NULL OR t.last_message_at > m.cleared_at)
         ORDER BY t.last_message_at DESC
         LIMIT $2`,
       [userId, limit]
@@ -244,9 +261,16 @@ export async function inboxFor(userId, limit = 50) {
     .map((member) => {
       const thread = cache.threads.find((item) => item.id === member.threadId);
       if (!thread) return null;
+      const cleared = member.clearedAt ? new Date(member.clearedAt).getTime() : 0;
       const messages = cache.messages
-        .filter((item) => item.threadId === thread.id)
+        .filter(
+          (item) =>
+            item.threadId === thread.id && new Date(item.createdAt).getTime() > cleared
+        )
         .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      // Cleared and nothing said since: this side is not in the conversation
+      // any more until someone writes again.
+      if (cleared && !messages.length) return null;
       const since = member.readAt ? new Date(member.readAt).getTime() : 0;
       return {
         ...thread,
@@ -269,7 +293,8 @@ export async function unreadTotal(userId) {
          FROM messages msg
          JOIN thread_members m ON m.thread_id = msg.thread_id AND m.user_id = $1
         WHERE msg.sender_id IS DISTINCT FROM $1
-          AND (m.read_at IS NULL OR msg.created_at > m.read_at)`,
+          AND (m.read_at IS NULL OR msg.created_at > m.read_at)
+          AND (m.cleared_at IS NULL OR msg.created_at > m.cleared_at)`,
       [userId]
     );
     return rows[0]?.total || 0;
@@ -280,16 +305,22 @@ export async function unreadTotal(userId) {
 
 // --- Messages --------------------------------------------------------------
 
-export async function messagesIn(threadId, limit = 200) {
+// `since` is the caller's own cleared_at: a conversation they deleted comes back
+// holding only what arrived after they deleted it, never the history they let
+// go of.
+export async function messagesIn(threadId, { limit = 200, since = null } = {}) {
   if (usingPostgres) {
     const { rows } = await query(
-      "SELECT * FROM messages WHERE thread_id = $1 ORDER BY created_at ASC LIMIT $2",
-      [threadId, limit]
+      `SELECT * FROM messages
+        WHERE thread_id = $1 AND ($3::timestamptz IS NULL OR created_at > $3)
+        ORDER BY created_at ASC LIMIT $2`,
+      [threadId, limit, since]
     );
     return rows.map(rowToMessage);
   }
+  const after = since ? new Date(since).getTime() : 0;
   return cache.messages
-    .filter((item) => item.threadId === threadId)
+    .filter((item) => item.threadId === threadId && new Date(item.createdAt).getTime() > after)
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
     .slice(-limit);
 }
@@ -323,6 +354,29 @@ export async function addMessage({ threadId, senderId, body }) {
     const member = db.members.find((item) => item.threadId === threadId && item.userId === senderId);
     if (member) member.readAt = message.createdAt;
     return message;
+  });
+}
+
+// Deleting a DM, from one side. Nothing is removed: the row that says where
+// this person's view of the conversation starts simply moves to now. The other
+// side is untouched, which is the point - someone cannot delete a conversation
+// out from under the person who may need to report it.
+export async function clearThread(threadId, userId) {
+  const now = nextStamp();
+  if (usingPostgres) {
+    await query(
+      "UPDATE thread_members SET cleared_at = $3, read_at = $3 WHERE thread_id = $1 AND user_id = $2",
+      [threadId, userId, now]
+    );
+    return now;
+  }
+  return write((db) => {
+    const member = db.members.find((item) => item.threadId === threadId && item.userId === userId);
+    if (member) {
+      member.clearedAt = now;
+      member.readAt = now;
+    }
+    return now;
   });
 }
 

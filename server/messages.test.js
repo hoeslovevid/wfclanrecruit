@@ -9,6 +9,7 @@ import {
   previewOf,
   threadId,
   unreadIn,
+  parseThreadId,
 } from "./messages.js";
 import { listenerCount, publish, reset, subscribe, STREAMS_PER_USER } from "./live.js";
 
@@ -124,4 +125,25 @@ test("too many tabs drops the oldest, never the newest", () => {
   assert.equal(listenerCount("user-1"), STREAMS_PER_USER);
   publish("user-1", "message", {});
   assert.ok(!seen.includes(0), "the first tab is the one that was dropped");
+});
+
+// The thread is not written until the first message is sent, so that send
+// arrives quoting an id for a row that does not exist. Reading it back is how
+// the server knows what to check it against.
+test("a thread id reads back as what it describes", () => {
+  const id = threadId("clan", "clan-a", "u-b", "u-a");
+  assert.deepEqual(parseThreadId(id), {
+    kind: "clan",
+    listingId: "clan-a",
+    userIds: ["u-a", "u-b"],
+  });
+});
+
+test("an id that is not one describes nothing", () => {
+  assert.equal(parseThreadId(""), null);
+  assert.equal(parseThreadId("clan:clan-a"), null);
+  assert.equal(parseThreadId("clan:clan-a:u-a:u-b:extra"), null);
+  assert.equal(parseThreadId("nonsense:clan-a:u-a:u-b"), null, "kind has to be one we serve");
+  assert.equal(parseThreadId("clan::u-a:u-b"), null);
+  assert.equal(parseThreadId("clan:clan-a:u-a:u-a"), null, "nobody messages themselves");
 });

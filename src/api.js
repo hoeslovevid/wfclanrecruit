@@ -42,17 +42,25 @@ export const api = {
   roster: (id) => request(`/api/clans/${id}/recruiters`),
   searchRecruiters: (id, q) =>
     request(`/api/clans/${id}/recruiters/search?q=${encodeURIComponent(q)}`),
-  inviteRecruiter: (id, username, role) =>
-    request(`/api/clans/${id}/recruiters`, { method: "POST", body: JSON.stringify({ username, role }) }),
-  setRecruiterRole: (id, userId, role) =>
+  inviteRecruiter: (id, username, role, label) =>
+    request(`/api/clans/${id}/recruiters`, {
+      method: "POST",
+      body: JSON.stringify({ username, role, label }),
+    }),
+  setRecruiterRole: (id, userId, body) =>
     request(`/api/clans/${id}/recruiters/${encodeURIComponent(userId)}/role`, {
       method: "POST",
-      body: JSON.stringify({ role }),
+      body: JSON.stringify(body),
     }),
   removeRecruiter: (id, userId) =>
     request(`/api/clans/${id}/recruiters/${encodeURIComponent(userId)}`, { method: "DELETE" }),
   respondToInvite: (id, accept) =>
     request(`/api/clans/${id}/recruiters/respond`, { method: "POST", body: JSON.stringify({ accept }) }),
+  offerTransfer: (id, username) =>
+    request(`/api/clans/${id}/transfer`, { method: "POST", body: JSON.stringify({ username }) }),
+  cancelTransfer: (id) => request(`/api/clans/${id}/transfer`, { method: "DELETE" }),
+  respondToTransfer: (id, accept) =>
+    request(`/api/clans/${id}/transfer/respond`, { method: "POST", body: JSON.stringify({ accept }) }),
   alliances: () => request("/api/alliances"),
   alliance: (id) => request(`/api/alliances/${id}`),
   createAlliance: (formData) => request("/api/alliances", { method: "POST", body: formData }),
@@ -82,6 +90,7 @@ export const api = {
   openThread: (kind, listingId) =>
     request("/api/messages/open", { method: "POST", body: JSON.stringify({ kind, listingId }) }),
   thread: (id) => request(`/api/messages/${encodeURIComponent(id)}`),
+  deleteThread: (id) => request(`/api/messages/${encodeURIComponent(id)}`, { method: "DELETE" }),
   send: (id, body) =>
     request(`/api/messages/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify({ body }) }),
   readThread: (id) =>

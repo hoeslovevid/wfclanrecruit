@@ -7,6 +7,12 @@
 // are contacts, nothing more: they cannot edit, bump, pause or delete, so the
 // worst a hostile one can do is stop answering.
 
+import {
+  OWNER_LABEL_DEFAULT,
+  RECRUITER_LABEL_DEFAULT,
+  normalizeContactLabel,
+} from "../src/roles.js";
+
 export const RECRUITER_MAX = 5;
 export const RECRUITER_STATES = ["pending", "accepted"];
 
@@ -21,6 +27,18 @@ export function normalizeRecruiterRole(role) {
   return RECRUITER_ROLES.includes(role) ? role : "recruiter";
 }
 
+// The title beside their name on the public post. Separate from `role` on
+// purpose: what a clan calls someone and what the board lets them do are two
+// different questions, and merging them would mean typing "Co-Leader" handed
+// out edit access.
+export function recruiterLabel(entry) {
+  return normalizeContactLabel(entry?.label, RECRUITER_LABEL_DEFAULT);
+}
+
+export function ownerLabel(listing) {
+  return normalizeContactLabel(listing?.ownerLabel, OWNER_LABEL_DEFAULT);
+}
+
 export function normalizeRecruiters(list) {
   if (!Array.isArray(list)) return [];
   const seen = new Set();
@@ -33,6 +51,7 @@ export function normalizeRecruiters(list) {
       userId,
       status: RECRUITER_STATES.includes(entry?.status) ? entry.status : "pending",
       role: normalizeRecruiterRole(entry?.role),
+      label: recruiterLabel(entry),
       invitedAt: entry?.invitedAt || null,
       respondedAt: entry?.respondedAt || null,
     });
@@ -56,15 +75,21 @@ export function acceptedRecruiterIds(listing) {
 // without one there is no in-game name to whisper.
 export function listingContacts(listing, users, presenceOf, now = Date.now()) {
   const byId = new Map((users || []).map((user) => [user.id, user]));
+  const entries = normalizeRecruiters(listing?.recruiters);
   const ids = [listing.ownerId, ...acceptedRecruiterIds(listing)];
   const out = [];
   for (const id of ids) {
     const user = byId.get(id);
     if (!user?.forumVerified || !user.forumName) continue;
     const { status, online } = presenceOf(user, now);
+    const owner = id === listing.ownerId;
     out.push({
       name: user.forumName,
-      owner: id === listing.ownerId,
+      owner,
+      // The owner is not necessarily the leader - they may have set the post up
+      // for someone else - so the label is theirs to choose rather than derived
+      // from the fact that they hold the account.
+      label: owner ? ownerLabel(listing) : recruiterLabel(entries.find((item) => item.userId === id)),
       online,
       presenceStatus: online ? status : "offline",
     });

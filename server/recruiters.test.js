@@ -55,6 +55,44 @@ test("contacts list the owner first and skip unverified or pending people", () =
   );
 });
 
+// The owner is not necessarily the leader - a recruiter can set the post up for
+// their clan - so what the whisper box calls each contact is typed, not derived
+// from who holds the account.
+test("contacts carry the label the post gives them", () => {
+  const item = {
+    ownerId: OWNER.id,
+    ownerLabel: "Recruiter",
+    recruiters: [{ userId: MATE.id, status: "accepted", label: "Warlord" }],
+  };
+  assert.deepEqual(
+    listingContacts(item, USERS, offline).map((c) => [c.name, c.label]),
+    [
+      ["--Gunson--", "Recruiter"],
+      ["Tiltskillet", "Warlord"],
+    ]
+  );
+});
+
+test("a listing written before labels reads exactly as it did", () => {
+  const item = listing([{ userId: MATE.id, status: "accepted" }]);
+  assert.deepEqual(
+    listingContacts(item, USERS, offline).map((c) => c.label),
+    ["Leader", "Recruiter"]
+  );
+});
+
+test("a roster entry keeps its label, and a label is not access", () => {
+  const [entry] = normalizeRecruiters([
+    { userId: "a", status: "accepted", role: "recruiter", label: "Co-Leader" },
+  ]);
+  assert.equal(entry.label, "Co-Leader");
+  assert.equal(entry.role, "recruiter", "a grand title is still not edit access");
+  assert.equal(
+    canEditListing({ id: "a" }, { ownerId: "someone-else", recruiters: [entry] }),
+    false
+  );
+});
+
 test("a pending recruiter is not a contact", () => {
   const item = listing([{ userId: MATE.id, status: "pending" }]);
   assert.equal(listingContacts(item, USERS, offline).length, 1, "owner only");

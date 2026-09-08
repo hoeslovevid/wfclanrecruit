@@ -1580,6 +1580,26 @@ code {
 }
 .roster-row .roster-role { max-width: 220px; }
 
+/* The title beside a name on the post, next to the select that says what they
+   can actually do. Narrower than the select on purpose: two controls the same
+   width read as one setting asked twice. */
+.roster-label {
+  flex: none;
+  width: 150px;
+  min-height: 42px;
+  font-size: 13px;
+  padding-inline: 10px;
+}
+
+/* Where the composer would be. A block is mutual, so the slot holds a sentence
+   rather than a Send button that is guaranteed to fail. */
+.conversation-blocked {
+  margin: 0;
+  padding: 16px;
+  border-top: 1px solid var(--line);
+  text-align: center;
+}
+
 /* The suggestion list, drawn by us rather than by the browser, so it carries
    the page's surface, border and radius instead of system chrome. */
 .combo { position: relative; }
@@ -2642,6 +2662,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .conversation-empty { display: grid; place-items: center; min-height: 260px; text-align: center; }
 .conversation-head { display: flex; justify-content: space-between; gap: 14px; align-items: start; }
 .conversation-head h2 { margin: 0; font-size: 20px; }
+/* Two buttons now, and on a narrow screen they wrap under the name rather than
+   squeezing it. */
+.conversation-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 
 .bubbles {
   display: grid;
