@@ -99,6 +99,7 @@ export const api = {
     request(`/api/messages/${encodeURIComponent(id)}/report`, { method: "POST", body: JSON.stringify(body) }),
   blockUser: (userId, blocked) =>
     request("/api/messages/block", { method: "POST", body: JSON.stringify({ userId, blocked }) }),
+  blockedList: () => request("/api/messages/blocked"),
   reports: () => request("/api/reports"),
   resolveReport: (id, status) =>
     request(`/api/reports/${id}/resolve`, { method: "POST", body: JSON.stringify({ status }) }),

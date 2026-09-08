@@ -457,7 +457,13 @@ function whisperBox(clan) {
       return `
         <div class="whisper-row">
           <div class="whisper-who">
-            <strong>${escapeHtml(contact.name)}</strong>
+            <strong>${escapeHtml(contact.name)}</strong>${
+              // Everyone in this list is verified by construction -
+              // listingContacts on the server skips anyone without a verified
+              // forum name, because without one there is no in-game name to
+              // whisper in the first place.
+              verifiedTick(true)
+            }
             <span class="muted">${escapeHtml(contact.label || (contact.owner ? "Leader" : "Recruiter"))}</span>
             ${presenceDot(contact)}
           </div>
@@ -1729,7 +1735,7 @@ export function accountView({ user, clans, alliances, players = [], reports = []
         ${userAvatar(user, 64, "account-avatar")}
         <div>
           <p class="eyebrow">${admin ? "Moderator" : "Account"}</p>
-          <h1>${escapeHtml(displayName(user))}</h1>
+          <h1>${escapeHtml(displayName(user))}${verifiedTick(user.forumVerified)}</h1>
         </div>
       </div>
       ${
@@ -2233,7 +2239,7 @@ export function clanPage(clan, { admin = false, user = null } = {}) {
         }</dd></div>
         <div><dt>Region</dt><dd>${escapeHtml(clan.region)}</dd></div>
         <div><dt>Language</dt><dd>${escapeHtml(clan.language)}</dd></div>
-        <div><dt>Leader</dt><dd>${escapeHtml(clan.leader)} ${presenceDot(clan)}</dd></div>
+        <div><dt>Leader</dt><dd>${escapeHtml(clan.leader)}${verifiedTick(clan.ownerVerified)} ${presenceDot(clan)}</dd></div>
         <div><dt>${postedStat(clan).label}</dt><dd>${timeAgo(postedStat(clan).at)}</dd></div>
       </dl>
       <div class="meter tall"><i style="width:${fillPercent(clan)}%"></i></div>
@@ -2373,6 +2379,22 @@ export function displayName(user) {
   return (user?.forumVerified && user?.forumName) || user?.username || "";
 }
 
+// The tick beside a name: this account proved a Warframe Forum identity.
+//
+// It is a decoration and nothing else. Verification is optional here -
+// messaging a clan and posting a looking-for-clan profile both work without
+// it - so the absence of a tick says "did not bother", never "not allowed".
+// The only thing verification still gates is publishing a specific in-game
+// name, which is a claim about a name rather than a permission to speak.
+//
+// Inline SVG rather than ✓ or an emoji: a glyph renders at the mercy of
+// whatever font the platform picks, and lands as a box on the ones that have
+// no such glyph at all.
+export function verifiedTick(verified) {
+  if (!verified) return "";
+  return `<span class="verified-tick" title="Warframe Forum verified" aria-label="Verified"><svg viewBox="0 0 16 16" width="1em" height="1em" aria-hidden="true" focusable="false"><path d="M8 .8 9.9 2.4l2.4-.3 1 2.3 2.2 1.1-.5 2.4 1.4 2-1.6 1.8.3 2.4-2.3 1-1.1 2.2-2.4-.5-2 1.4-1.8-1.6-2.4.3-1-2.3-2.2-1.1.5-2.4L.8 8l1.6-1.8L2.1 3.8l2.3-1L5.5.6l2.4.5Z" fill="currentColor" opacity=".16"/><path d="M4.6 8.3 7 10.7l4.4-4.9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>`;
+}
+
 // The signed-in person's own face, from the Discord account they signed in
 // with. Same fallback as a player card, so an account with no Discord picture
 // lands on the mark rather than a broken image or an empty circle - and the
@@ -2399,7 +2421,7 @@ export function navAccount(user, { discord = false, messaging = true } = {}) {
       }
       <a class="btn btn-ghost nav-account" href="/account" data-link>${userAvatar(user)}<span>${escapeHtml(
         displayName(user)
-      )}</span>${badge}</a>
+      )}</span>${verifiedTick(user.forumVerified)}${badge}</a>
       <button class="btn btn-ghost" type="button" data-logout>Sign out</button>
     `;
   }
@@ -2498,7 +2520,7 @@ export function playerCard(player) {
         ${playerPhoto(player)}
         <div>
           <p class="kicker">Player</p>
-          <h3>${escapeHtml(player.name)}</h3>
+          <h3>${escapeHtml(player.name)}${verifiedTick(player.ownerVerified)}</h3>
           <p class="muted">${escapeHtml(player.platform)} · ${escapeHtml(player.region)}</p>
           <span class="card-presence">${presenceDot(player)}</span>
         </div>
@@ -2612,7 +2634,7 @@ export function playerPage(player, { admin = false, mine = false, user = null } 
             <span class="pill ${statusClass(player.status)}">${escapeHtml(player.status)}</span>
             ${listingBadges(player)}
           </div>
-          <h1 id="player-title">${escapeHtml(player.name)}</h1>
+          <h1 id="player-title">${escapeHtml(player.name)}${verifiedTick(player.ownerVerified)}</h1>
           <p class="headline">${escapeHtml(player.headline)}</p>
           ${groupedChips(player.playstyles)}
           ${linkRow(player)}
@@ -2790,23 +2812,85 @@ function messageTime(iso) {
     : at.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
+// "Last update 60 days ago" rather than a bare date. An inbox is read for how
+// stale a conversation is, not for the calendar day it happened on - and past a
+// year the age stops being the useful part, so it hands back to the date.
+export function relativeTime(iso) {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  const seconds = Math.max(0, Math.round((Date.now() - at.getTime()) / 1000));
+  if (seconds < 60) return "just now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.round(hours / 24);
+  if (days < 365) return `${days} day${days === 1 ? "" : "s"} ago`;
+  return messageTime(iso);
+}
+
+// Presence in the inbox says OFFLINE out loud, where a listing card says
+// nothing. The difference is deliberate: on the board offline is the resting
+// state of nearly every listing and printing it on all of them would be noise,
+// but in a conversation "are they there right now" is the question you opened
+// the page with, and an absent dot does not answer it.
+export function messagePresence(person) {
+  if (!person?.online) {
+    return `<span class="presence is-offline"><i aria-hidden="true"></i>Offline</span>`;
+  }
+  return presenceDot(person);
+}
+
 // Threads are grouped by nothing and sorted by recency, which is what an inbox
 // is. The unread count sits on the row rather than the thread, because the same
 // thread is read for one person and unread for the other.
 export function threadRow(thread, activeId = "") {
+  const who = thread.with || {};
+  const updated = thread.lastMessageAt || thread.last?.createdAt || "";
   return `
     <button class="thread-row${thread.id === activeId ? " is-active" : ""}${
       thread.unread ? " is-unread" : ""
     }" type="button" data-thread="${escapeHtml(thread.id)}">
-      <span class="thread-top">
-        <strong>${escapeHtml(thread.with?.name || "(deleted account)")}</strong>
-        <span class="muted">${escapeHtml(thread.last ? messageTime(thread.last.createdAt) : "")}</span>
+      <span class="thread-avatar">${userAvatar(who, 40, "thread-face")}</span>
+      <span class="thread-body">
+        <span class="thread-top">
+          <strong>${escapeHtml(who.name || "(deleted account)")}</strong>${verifiedTick(who.verified)}
+          <span class="thread-presence" data-thread-presence>${messagePresence(who)}</span>
+        </span>
+        <span class="thread-about muted">About ${escapeHtml(thread.listingName || "a listing")}</span>
+        <span class="thread-updated muted">${
+          updated ? `Last update ${escapeHtml(relativeTime(updated))}` : "No messages yet"
+        }</span>
+        <span class="thread-preview">${escapeHtml(thread.preview || "No messages yet.")}</span>
       </span>
-      <span class="thread-about muted">About ${escapeHtml(thread.listingName || "a listing")}</span>
-      <span class="thread-preview">${escapeHtml(thread.preview || "No messages yet.")}</span>
       ${thread.unread ? `<span class="thread-badge">${thread.unread}</span>` : ""}
     </button>
   `;
+}
+
+// The people you have chosen not to hear from. The row carries the same
+// data-block-user hook the conversation menu does, already flipped to
+// "currently blocked", so lifting it here runs the identical path.
+export function ignoreRow(person) {
+  return `
+    <li class="ignore-row">
+      <span class="ignore-face">${userAvatar(person, 40, "thread-face")}</span>
+      <span class="ignore-who">
+        <strong>${escapeHtml(person.name || "(deleted account)")}</strong>${verifiedTick(person.verified)}
+        ${person.since ? `<span class="muted">Ignored ${escapeHtml(relativeTime(person.since))}</span>` : ""}
+      </span>
+      <button class="btn btn-ghost btn-small" type="button" data-block-user="${escapeHtml(
+        person.id || ""
+      )}" data-blocked="1">Un-ignore</button>
+    </li>
+  `;
+}
+
+export function ignoreListHtml(blocked = []) {
+  if (!blocked.length) {
+    return `<p class="muted thread-empty">You have not ignored anyone. Ignoring someone from a conversation stops you both writing to the other, and they turn up here to undo.</p>`;
+  }
+  return `<ul class="ignore-list">${blocked.map(ignoreRow).join("")}</ul>`;
 }
 
 export function threadListHtml(threads, activeId = "") {
@@ -2821,9 +2905,9 @@ export function messageBubble(message, meId) {
   return `
     <div class="bubble-row${mine ? " is-mine" : ""}">
       <div class="bubble">
-        <p class="bubble-who muted">${escapeHtml(message.from?.name || "(deleted account)")} · ${escapeHtml(
-          messageTime(message.createdAt)
-        )}</p>
+        <p class="bubble-who muted">${escapeHtml(
+          message.from?.name || "(deleted account)"
+        )}${verifiedTick(message.from?.verified)} · ${escapeHtml(messageTime(message.createdAt))}</p>
         <p class="bubble-body">${escapeHtml(message.body)}</p>
       </div>
     </div>
@@ -2834,31 +2918,48 @@ export function conversationHtml(thread, messages, meId) {
   if (!thread) {
     return `<div class="conversation-empty"><p class="muted">Pick a conversation.</p></div>`;
   }
+  // Both actions here are ones you press once and rarely: they sat side by side
+  // above every conversation, which gave a destructive button the same weight
+  // as the message you came to read. Behind a menu they are still one press
+  // away and no longer the first thing in the panel.
+  const actions = `
+    ${
+      thread.with?.id
+        ? `<button class="btn btn-ghost btn-small" type="button" data-block-user="${escapeHtml(
+            thread.with.id
+          )}" data-blocked="${thread.blocked ? "1" : ""}">${
+            thread.blocked ? "Stop ignoring" : "Ignore user"
+          }</button>`
+        : ""
+    }
+    ${
+      // A draft has nothing stored to leave, so the button would be a lie.
+      thread.draft
+        ? ""
+        : `<button class="btn btn-ghost btn-small btn-danger" type="button" data-delete-thread="${escapeHtml(
+            thread.id
+          )}">Leave chat</button>`
+    }
+  `.trim();
   return `
     <header class="conversation-head">
-      <div>
-        <h2>${escapeHtml(thread.with?.name || "(deleted account)")}</h2>
+      <div class="conversation-who">
+        <h2>${escapeHtml(thread.with?.name || "(deleted account)")}${verifiedTick(
+          thread.with?.verified
+        )}</h2>
+        <span class="thread-presence">${messagePresence(thread.with)}</span>
         <p class="muted">About <a href="${escapeHtml(thread.href)}" data-link>${escapeHtml(
           thread.listingName || "a listing"
         )}</a></p>
       </div>
-      <div class="conversation-actions">
-        ${
-          thread.with?.id
-            ? `<button class="btn btn-ghost btn-small" type="button" data-block-user="${escapeHtml(
-                thread.with.id
-              )}" data-blocked="${thread.blocked ? "1" : ""}">${thread.blocked ? "Unblock" : "Block"}</button>`
-            : ""
-        }
-        ${
-          // A draft has nothing stored to delete, so the button would be a lie.
-          thread.draft
-            ? ""
-            : `<button class="btn btn-ghost btn-small btn-danger" type="button" data-delete-thread="${escapeHtml(
-                thread.id
-              )}">Delete</button>`
-        }
-      </div>
+      ${
+        actions
+          ? `<details class="thread-menu">
+        <summary title="More">More</summary>
+        <div class="thread-menu-panel">${actions}</div>
+      </details>`
+          : ""
+      }
     </header>
     <div class="bubbles" data-bubbles>
       ${
@@ -2871,9 +2972,10 @@ export function conversationHtml(thread, messages, meId) {
       // A block is mutual, so there is nothing to compose and nothing to report
       // that is still arriving. Saying so beats a Send button that always fails.
       thread.blocked
-        ? `<p class="muted conversation-blocked">Blocked. Neither of you can write to the other. Unblock to start again.</p>`
+        ? `<p class="muted conversation-blocked">Ignored. Neither of you can write to the other. Stop ignoring them to start again.</p>`
         : `${reportForm("message", thread.id)}
     <form class="composer-bar" data-send-form>
+      <p class="composer-count muted" data-count aria-hidden="true">0/${MESSAGE_MAX} chars.</p>
       <label class="sr-only" for="message-body">Message</label>
       <textarea id="message-body" name="body" rows="2" maxlength="${MESSAGE_MAX}" placeholder="Write a message… (Enter to send)"></textarea>
       <button class="btn btn-primary" type="submit">Send</button>
@@ -2883,9 +2985,31 @@ export function conversationHtml(thread, messages, meId) {
   `;
 }
 
-export function messagesView({ user, threads, activeId = "" }) {
+export function messagesView({ user, threads, activeId = "", tab = "chats" }) {
   if (!user) {
     return `<section class="auth-card"><p class="eyebrow">Account required</p><h1>Sign in to read your messages</h1><p class="lead">Conversations are between two accounts, so this page needs one.</p><div class="row"><a class="btn btn-primary" href="/login?next=/messages" data-link>Sign in</a></div></section>`;
+  }
+  const ignoring = tab === "ignore";
+  // The tabs live inside the hero, the way the composer's Clan / Alliance pair
+  // does. Outside it they sit against the window edge instead of lining up with
+  // the heading above them.
+  const hero = `
+    <section class="page-hero">
+      <p class="eyebrow">Messages</p>
+      <h1>Your conversations</h1>
+      <div class="tabs" role="tablist" aria-label="Messages">
+        <a class="tab${ignoring ? "" : " is-active"}" href="/messages" data-link>Chats</a>
+        <a class="tab${ignoring ? " is-active" : ""}" href="/messages?tab=ignore" data-link>Ignore list</a>
+      </div>
+    </section>
+  `;
+  // The list is fetched after the page paints, the same way the inbox is, so
+  // this renders the container and a holding line rather than the rows.
+  if (ignoring) {
+    return `
+      ${hero}
+      <section class="ignore-pane" data-ignore-list><p class="muted thread-empty">Loading…</p></section>
+    `;
   }
   // With nothing in the inbox there is no conversation to pick, so the split
   // layout is just two empty boxes asking a question with no answer. Say what
@@ -2897,10 +3021,7 @@ export function messagesView({ user, threads, activeId = "" }) {
   // has to hold it.
   if (!threads.length && !activeId) {
     return `
-      <section class="page-hero">
-        <p class="eyebrow">Messages</p>
-        <h1>Your conversations</h1>
-      </section>
+      ${hero}
       <section class="auth-card inbox-empty">
         <h2>No conversations yet</h2>
         <p class="lead">Conversations start from a post. Open a clan or a player profile and press <strong>Message</strong> — whatever you send lands here, and so does their reply.</p>
@@ -2912,10 +3033,7 @@ export function messagesView({ user, threads, activeId = "" }) {
     `;
   }
   return `
-    <section class="page-hero">
-      <p class="eyebrow">Messages</p>
-      <h1>Your conversations</h1>
-    </section>
+    ${hero}
     <section class="inbox">
       <aside class="thread-list" data-thread-list>${threadListHtml(threads, activeId)}</aside>
       <div class="conversation" data-conversation>${conversationHtml(null, [], user.id)}</div>

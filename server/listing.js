@@ -74,3 +74,16 @@ export function whisperName(listing, users) {
   if (!owner?.forumVerified) return null;
   return owner.forumName || null;
 }
+
+// Whether the person behind a post has proved a Warframe Forum identity. This
+// is what the tick beside a name means, and it is deliberately separate from
+// `whisperName`: someone can be verified and still choose Discord as the way
+// clans reach them, and the tick should not depend on that choice.
+//
+// Verification is optional everywhere it is not a claim about a specific
+// in-game name - an unverified account posts and messages exactly the same -
+// so a false here is a missing badge, never a missing permission.
+export function ownerVerified(listing, users) {
+  const owner = (users || []).find((user) => user.id === listing.ownerId);
+  return Boolean(owner?.forumVerified);
+}

@@ -20,8 +20,10 @@ import {
   homeView,
   navAccount,
   conversationHtml,
+  ignoreListHtml,
   listingSections,
   messageBubble,
+  messagePresence,
   messagesView,
   threadListHtml,
   unreadBadge,
@@ -287,6 +289,18 @@ function startLive() {
     }
     onIncoming(payload);
   });
+  // Presence rides the same stream a message does. Without it the ONLINE label
+  // on a thread row is only ever as fresh as the last page load, which for a
+  // page you sit on waiting for a reply is not fresh at all.
+  live.addEventListener("presence", (event) => {
+    let payload = null;
+    try {
+      payload = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    onPresence(payload);
+  });
   // Left to the browser: closing the source here would stop it retrying.
   live.addEventListener("error", () => {});
 }
@@ -321,6 +335,27 @@ function onIncoming(message) {
   if (window.location.pathname === "/messages") loadInbox();
 }
 
+// Repaint the dot where that person's name appears, rather than reloading the
+// inbox: a status change must not reorder rows or drop the conversation that
+// is open. The cached threads are updated too, so the next render agrees with
+// the screen.
+function onPresence({ userId, status, online }) {
+  if (!userId) return;
+  for (const thread of state.threads) {
+    if (thread.with?.id !== userId) continue;
+    thread.with.online = Boolean(online);
+    thread.with.presenceStatus = online ? status : "offline";
+    const row = app.querySelector(`[data-thread="${CSS.escape(thread.id)}"]`);
+    const slot = row?.querySelector("[data-thread-presence]");
+    if (slot) slot.innerHTML = messagePresence(thread.with);
+  }
+  const head = app.querySelector(".conversation-head .thread-presence");
+  const open = state.threads.find(
+    (thread) => thread.id === app.querySelector("[data-conversation]")?.dataset.threadId
+  );
+  if (head && open?.with?.id === userId) head.innerHTML = messagePresence(open.with);
+}
+
 async function loadInbox(activeId = "") {
   try {
     const { threads } = await api.inbox();
@@ -330,6 +365,42 @@ async function loadInbox(activeId = "") {
   } catch {
     /* leave whatever is already on screen */
   }
+}
+
+// The ignore tab. Un-ignoring runs the same block route the conversation menu
+// does, only with `blocked` false, so there is one way to change a block and
+// one place it is recorded.
+async function paintIgnoreList() {
+  const pane = app.querySelector("[data-ignore-list]");
+  if (!pane) return;
+  try {
+    const { blocked } = await api.blockedList();
+    pane.innerHTML = ignoreListHtml(blocked);
+  } catch (error) {
+    pane.innerHTML = `<p class="error">${error.message}</p>`;
+  }
+}
+
+// Painting and binding are separate because the pane repaints itself after
+// every un-ignore: binding inside the paint would stack a second listener on
+// the same element each time round, and the third un-ignore would fire three
+// requests. Delegated once, it survives every repaint.
+async function loadIgnoreList() {
+  const pane = app.querySelector("[data-ignore-list]");
+  if (!pane) return;
+  pane.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-block-user]");
+    if (!button) return;
+    button.disabled = true;
+    try {
+      await api.blockUser(button.dataset.blockUser, false);
+      await paintIgnoreList();
+    } catch (error) {
+      button.disabled = false;
+      alert(error.message);
+    }
+  });
+  await paintIgnoreList();
 }
 
 // A thread id is `kind:listingId:userA:userB` (threadId in server/messages.js),
@@ -374,6 +445,13 @@ function bindConversation(panel, thread) {
   const form = panel.querySelector("[data-send-form]");
   const note = panel.querySelector("[data-send-note]");
   const box = form?.querySelector("textarea");
+  const count = panel.querySelector("[data-count]");
+  // Kept in step with the textarea's own maxlength rather than trusted to
+  // agree with it: the limit is MESSAGE_MAX in views.js, and reading it off
+  // the element means the counter cannot drift from what is enforced.
+  const paintCount = () => {
+    if (count && box) count.textContent = `${box.value.length}/${box.maxLength} chars.`;
+  };
   const submit = async (event) => {
     event?.preventDefault();
     const body = box.value.trim();
@@ -390,13 +468,17 @@ function bindConversation(panel, thread) {
         bubbles.scrollTop = bubbles.scrollHeight;
       }
       showNote(note, "", "muted");
+      paintCount();
       await loadInbox(thread.id);
     } catch (error) {
       box.value = body;
+      paintCount();
       showNote(note, error.message);
     }
   };
   form?.addEventListener("submit", submit);
+  box?.addEventListener("input", paintCount);
+  paintCount();
   // Enter sends, Shift+Enter is a newline. Without this a two-line message
   // becomes two messages.
   box?.addEventListener("keydown", (event) => {
@@ -413,7 +495,7 @@ function bindConversation(panel, thread) {
     const blocking = !button.dataset.blocked;
     if (
       blocking &&
-      !confirm("Block this person? Neither of you will be able to message the other.")
+      !confirm("Ignore this person? Neither of you will be able to message the other.")
     ) {
       return;
     }
@@ -439,7 +521,7 @@ function bindConversation(panel, thread) {
   panel.querySelector("[data-delete-thread]")?.addEventListener("click", async (event) => {
     if (
       !confirm(
-        "Delete this conversation? It leaves your inbox. The other person keeps their copy, and if they write again the conversation comes back with just the new messages."
+        "Leave this chat? It leaves your inbox. The other person keeps their copy, and if they write again the conversation comes back with just the new messages."
       )
     ) {
       return;
@@ -1969,6 +2051,14 @@ async function render() {
     document.title = "Messages — WF Clan Recruit";
     if (!state.user) {
       app.innerHTML = messagesView({ user: null, threads: [] });
+      return;
+    }
+    // The ignore list is its own tab rather than its own page: it is the same
+    // inbox seen from the other side, and the only place a block can be lifted
+    // once you have stopped opening the conversation it was made in.
+    if (params.tab === "ignore") {
+      app.innerHTML = messagesView({ user: state.user, threads: [], tab: "ignore" });
+      await loadIgnoreList();
       return;
     }
     try {

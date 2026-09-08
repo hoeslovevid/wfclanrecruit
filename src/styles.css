@@ -494,7 +494,7 @@ h2 { font-size: clamp(26px, 3vw, 36px); }
 .lead, .muted { color: var(--muted); }
 .lead { max-width: 620px; }
 
-.hero, .section, .page-hero, .browse, .composer, .guide-page, .policy-page, .auth-card, .inbox {
+.hero, .section, .page-hero, .browse, .composer, .guide-page, .policy-page, .auth-card, .inbox, .ignore-pane {
   position: relative;
   z-index: 1;
   width: min(1120px, calc(100% - 40px));
@@ -1485,6 +1485,9 @@ code {
   vertical-align: middle;
 }
 .presence.is-ingame { color: #8b5cf6; }
+/* Only the inbox prints this one. A listing card stays silent when nobody is
+   around; a conversation says so, because "are they there" is the question. */
+.presence.is-offline { color: var(--muted); }
 .presence i {
   width: 8px;
   height: 8px;
@@ -2607,8 +2610,12 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 
 .thread-row {
   position: relative;
+  /* Face in a fixed column, everything else in a flexible one, so a long name
+     or a long preview shortens itself instead of shoving the avatar. */
   display: grid;
-  gap: 4px;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 12px;
+  align-items: start;
   padding: 12px 14px;
   text-align: left;
   cursor: pointer;
@@ -2625,8 +2632,17 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .thread-row.is-unread { border-left: 3px solid var(--accent); }
 .thread-row.is-unread .thread-preview { color: var(--text); font-weight: 600; }
 
-.thread-top { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.thread-avatar { display: flex; }
+.thread-face { border-radius: 50%; object-fit: cover; }
+.thread-body { display: grid; gap: 4px; min-width: 0; }
+.thread-top { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+/* The name may run out of room; the status must not, or the row loses the one
+   fact it is scanned for. */
+.thread-top strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-presence { display: inline-flex; }
+.thread-presence .presence { margin-top: 0; text-transform: uppercase; letter-spacing: 0.03em; }
 .thread-about { font-size: 12px; }
+.thread-updated { font-size: 12px; }
 .thread-preview {
   font-size: 13px;
   color: var(--muted);
@@ -2662,9 +2678,44 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .conversation-empty { display: grid; place-items: center; min-height: 260px; text-align: center; }
 .conversation-head { display: flex; justify-content: space-between; gap: 14px; align-items: start; }
 .conversation-head h2 { margin: 0; font-size: 20px; }
-/* Two buttons now, and on a narrow screen they wrap under the name rather than
-   squeezing it. */
-.conversation-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.conversation-who { display: grid; gap: 4px; min-width: 0; }
+.conversation-who .presence { margin-top: 0; text-transform: uppercase; letter-spacing: 0.03em; }
+
+/* Ignore and Leave, behind one press. Same disclosure the presence picker in
+   the nav uses, so there is one menu pattern on the site rather than two. */
+.thread-menu { position: relative; flex: none; }
+.thread-menu > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  list-style: none;
+  user-select: none;
+}
+.thread-menu > summary::-webkit-details-marker { display: none; }
+.thread-menu > summary::before { content: "•••"; letter-spacing: 1px; }
+.thread-menu > summary:hover { background: var(--ghost-hover); }
+.thread-menu[open] > summary { border-color: var(--accent); }
+.thread-menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  display: grid;
+  gap: 6px;
+  min-width: 180px;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgb(0 0 0 / 18%);
+}
+.thread-menu-panel .btn { justify-content: flex-start; width: 100%; }
 
 .bubbles {
   display: grid;
@@ -2690,12 +2741,44 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .bubble-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .composer-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+.composer-count { grid-column: 1 / -1; margin: 0; font-size: 12px; text-align: right; }
 .composer-bar textarea { resize: vertical; min-height: 46px; }
 .composer-bar .error { grid-column: 1 / -1; }
+
+/* The ignore list. One row per person, the un-ignore button pinned right so
+   the column of buttons reads as a column whatever the names are. */
+.ignore-pane { padding-bottom: 72px; }
+.ignore-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.ignore-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.ignore-who { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; min-width: 0; }
+.ignore-who strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ignore-who .muted { font-size: 12px; }
 
 .inbox-empty { text-align: center; }
 .inbox-empty .lead { margin: 12px auto 20px; }
 .inbox-empty .row { justify-content: center; }
+
+/* The verified tick. Sized in em so it tracks whatever it sits beside - a
+   card heading, an inbox row, a bubble byline - without a rule per place. */
+.verified-tick {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  color: var(--accent);
+  font-size: 0.9em;
+  vertical-align: baseline;
+  flex: none;
+}
+.verified-tick svg { display: block; }
 
 .nav-messages { position: relative; }
 .unread-badge {
@@ -2718,6 +2801,11 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
     max-height: 280px;
   }
   .bubble { max-width: 88%; }
+  /* The menu is anchored to the right edge of a header that is now the width
+     of the screen, so let it fill rather than hang off it. */
+  .thread-menu-panel { right: 0; left: auto; min-width: 200px; }
+  .ignore-row { grid-template-columns: auto minmax(0, 1fr); }
+  .ignore-row .btn { grid-column: 2; justify-self: start; }
 }
 
 /* The delete control in a composer. Set apart from the save row so it reads as

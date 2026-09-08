@@ -286,6 +286,36 @@ export async function inboxFor(userId, limit = 50) {
     .slice(0, limit);
 }
 
+// Everyone who shares at least one conversation with this person, as a flat
+// list of ids. Its one job is to answer "who is looking at a row with this
+// person's name on it right now" when their status changes, so it is a single
+// query rather than an inbox read followed by a membership read per thread -
+// a status change is cheap and must stay that way.
+//
+// Unbounded on purpose: a status change should reach every open inbox, not the
+// fifty most recent. It is a list of ids, and the fan-out past it drops anyone
+// with no stream open.
+export async function partnersOf(userId) {
+  if (usingPostgres) {
+    const { rows } = await query(
+      `SELECT DISTINCT other.user_id
+         FROM thread_members mine
+         JOIN thread_members other ON other.thread_id = mine.thread_id
+        WHERE mine.user_id = $1 AND other.user_id <> $1`,
+      [userId]
+    );
+    return rows.map((row) => row.user_id);
+  }
+  const threads = new Set(
+    cache.members.filter((item) => item.userId === userId).map((item) => item.threadId)
+  );
+  const out = new Set();
+  for (const member of cache.members) {
+    if (member.userId !== userId && threads.has(member.threadId)) out.add(member.userId);
+  }
+  return [...out];
+}
+
 export async function unreadTotal(userId) {
   if (usingPostgres) {
     const { rows } = await query(

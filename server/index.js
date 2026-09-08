@@ -46,6 +46,7 @@ import {
   applyAllianceRoster,
   isHidden,
   listingConflict,
+  ownerVerified,
   whisperName,
   withListingState,
 } from "./listing.js";
@@ -987,6 +988,7 @@ function decorateClan(clan, db) {
     allianceName: alliance?.name || null,
     allianceTag: alliance?.tag || null,
     whisperName: whisperName(clan, db.users),
+    ownerVerified: ownerVerified(clan, db.users),
     contacts,
     ...bestPresence(contacts),
   });
@@ -1031,6 +1033,7 @@ function decorateAlliance(alliance, db, user = null) {
   const { hiddenBy, hiddenAt, ...publicAlliance } = alliance;
   return withBumpState({
     ...publicAlliance,
+    ownerVerified: ownerVerified(alliance, db.users),
     ...listingPresence(alliance, db.users),
     memberClans: (db.clans || [])
       .filter((clan) => clan.allianceId === alliance.id && canSeeListing(user, clan))
@@ -1054,6 +1057,7 @@ function decoratePlayer(player, db) {
     // Discord picture means no image, and the card falls back to the mark.
     image: discordAvatarUrl(owner),
     whisperName: whisperName(player, db.users),
+    ownerVerified: Boolean(owner?.forumVerified),
     ...listingPresence(player, db.users),
   });
 }
@@ -1117,6 +1121,28 @@ app.post("/api/presence/heartbeat", requireUser, presenceLimiter, (req, res) => 
   });
 });
 
+// A status change is a fact about someone that other people's inboxes are
+// already showing. Push it down the stream that is open anyway rather than
+// making every inbox poll for it: the alternative is an ONLINE label that only
+// becomes true when the page is reloaded.
+//
+// Deliberately not awaited and deliberately silent. Presence is decoration -
+// failing to deliver it must never fail the write that changed it, and
+// messaging being down is a reason to skip this, not to error.
+function announcePresence(userId, status) {
+  if (!messagingUp) return;
+  store
+    .partnersOf(userId)
+    .then((ids) => {
+      for (const id of ids) {
+        publish(id, "presence", { userId, status, online: status !== "invisible" });
+      }
+    })
+    .catch((error) => {
+      console.error("Could not announce a presence change:", error.message);
+    });
+}
+
 app.post("/api/presence", requireUser, presenceLimiter, async (req, res) => {
   const status = normalizeStatus(req.body?.status);
   if (!STATUSES.includes(req.body?.status)) {
@@ -1142,6 +1168,7 @@ app.post("/api/presence", requireUser, presenceLimiter, async (req, res) => {
   // heartbeat window.
   if (status === "invisible") forgetPresence(req.user.id);
   else touchPresence(req.user.id);
+  announcePresence(req.user.id, status);
   res.json({ presence: { status, online: status !== "invisible", until, keepMinutes: minutes } });
 });
 
@@ -2489,15 +2516,37 @@ function listingPath(kind, id) {
 // Who someone is inside a conversation. Never the account username - the board
 // knows people by their verified in-game name or their Discord handle, and the
 // inbox should call them the same thing the listing did.
+// The forum name is only theirs to be called while the verification behind it
+// stands. Changing a profile URL clears `forumVerified` and leaves `forumName`
+// where it was (see the forum check route), so reading the name without the
+// flag would keep introducing someone by a claim they no longer hold. This
+// matches displayName() on the client.
 function messengerOf(db, userId) {
-  if (!userId) return { id: null, name: "(deleted account)", gone: true };
+  if (!userId) return { id: null, name: "(deleted account)", gone: true, verified: false };
   const user = (db.users || []).find((item) => item.id === userId);
-  if (!user) return { id: userId, name: "(deleted account)", gone: true };
+  if (!user) return { id: userId, name: "(deleted account)", gone: true, verified: false };
   return {
     id: user.id,
-    name: user.forumName || user.discordUsername || user.username,
+    name: (user.forumVerified && user.forumName) || user.discordUsername || user.username,
+    // The tick. Optional: nothing about messaging depends on it, and an
+    // unverified account writes and is written to exactly the same.
+    verified: Boolean(user.forumVerified),
+    avatarUrl: discordAvatarUrl(user),
     gone: false,
   };
+}
+
+// The same self-declared status a listing card shows, on the person at the
+// other end of a conversation. Shaped as `online` + `presenceStatus` because
+// that is the pair presenceDot() on the client already reads, so the inbox row
+// and the listing card draw the identical dot from the identical fields.
+function withPresence(db, messenger) {
+  if (!messenger?.id || messenger.gone) {
+    return { ...messenger, online: false, presenceStatus: "offline" };
+  }
+  const user = (db.users || []).find((item) => item.id === messenger.id);
+  const { status, online } = presenceOf(user);
+  return { ...messenger, online, presenceStatus: online ? status : "offline" };
 }
 
 // `blocks` is the caller's own block list, read once per request and passed in:
@@ -2509,7 +2558,7 @@ async function decorateThread(db, thread, userId, blocks = []) {
   const otherId = members.map((item) => item.userId).find((id) => id !== userId) || null;
   return {
     ...thread,
-    with: messengerOf(db, otherId),
+    with: withPresence(db, messengerOf(db, otherId)),
     href: listingPath(thread.kind, thread.listingId),
     preview: thread.last ? previewOf(thread.last.body) : "",
     // Without this the client had no way of knowing, so a block held until the
@@ -2603,6 +2652,29 @@ app.post("/api/messages/block", requireUser, requireStore, async (req, res) => {
   res.json({ blocked: on });
 });
 
+// The people you have chosen not to hear from, as a list you can undo from.
+// Until now a block could only be lifted from inside the conversation it was
+// made in, which is exactly the conversation you stopped looking at.
+//
+// `blocksFor` returns rows in both directions, because deciding whether two
+// people may talk does not care who pressed the button. This page does: it is
+// your list of your own decisions, so only rows you own belong on it. Someone
+// who ignored you is not shown - telling you would hand out a fact they did
+// not choose to publish.
+//
+// Must stay above "/api/messages/:id" - Express matches in declaration order,
+// and the parameter would happily swallow the literal "blocked". Same trap the
+// stream route carries a note about.
+app.get("/api/messages/blocked", requireUser, requireStore, async (req, res) => {
+  const db = readDb();
+  const rows = await store.blocksFor(req.user.id);
+  const blocked = rows
+    .filter((row) => row.userId === req.user.id)
+    .map((row) => ({ ...messengerOf(db, row.blockedId), since: row.createdAt }))
+    .sort((a, b) => new Date(b.since) - new Date(a.since));
+  res.json({ blocked });
+});
+
 // Everything that decides whether these two may talk about this listing, in one
 // place. The open route and the first send both run it, because the thread is
 // no longer written until someone actually says something - so the send is
@@ -2655,7 +2727,7 @@ app.post("/api/messages/open", requireUser, requireStore, threadOpenLimiter, asy
         listingId: listing.id,
         listingName: listing.name,
         draft: true,
-        with: messengerOf(db, listing.ownerId),
+        with: withPresence(db, messengerOf(db, listing.ownerId)),
         href: listingPath(kind, listing.id),
         preview: "",
         unread: 0,

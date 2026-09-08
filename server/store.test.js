@@ -206,3 +206,44 @@ test("a reply brings a cleared conversation back holding only what is new", asyn
     ["Still there?"]
   );
 });
+
+// Who a presence change has to reach. The fan-out behind it drops anyone with
+// no stream open, so the only thing that matters here is that the list is the
+// people who share a conversation - and nobody else.
+test("partnersOf names everyone sharing a conversation, once each", async () => {
+  const id = await open();
+  await store.addMessage({ threadId: id.id || ID, senderId: "user-a", body: "Hello" });
+  const second = threadId("player", "profile", "user-a", "user-c");
+  await store.openThread({
+    id: second,
+    kind: "player",
+    listingId: "profile",
+    listingName: "A profile",
+    userIds: ["user-a", "user-c"],
+  });
+
+  const partners = await store.partnersOf("user-a");
+  assert.deepEqual([...partners].sort(), ["user-b", "user-c"]);
+  assert.equal(partners.includes("user-a"), false, "and never yourself");
+  assert.deepEqual(await store.partnersOf("user-b"), ["user-a"]);
+  assert.deepEqual(await store.partnersOf("stranger"), []);
+});
+
+// Blocking is mutual, so blocksFor answers in both directions. The ignore list
+// is the caller's own decisions, and being ignored by someone is not a fact
+// they chose to publish - so the route filters to rows the caller owns.
+test("blocksFor reports both directions, and the owned rows are separable", async () => {
+  await store.setBlock("user-a", "user-b", true);
+  await store.setBlock("user-c", "user-a", true);
+
+  const rows = await store.blocksFor("user-a");
+  assert.equal(rows.length, 2, "both directions come back");
+  assert.deepEqual(
+    rows.filter((row) => row.userId === "user-a").map((row) => row.blockedId),
+    ["user-b"],
+    "and only the ones user-a made are theirs to undo"
+  );
+
+  await store.setBlock("user-a", "user-b", false);
+  await store.setBlock("user-c", "user-a", false);
+});
