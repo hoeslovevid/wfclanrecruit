@@ -383,47 +383,127 @@ function bindRecruiters() {
         }
       };
       slot.querySelector("[data-roster-invite]")?.addEventListener("click", invite);
-      // Enter in the field would otherwise submit the post editor around us.
-      input?.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter") return;
-        event.preventDefault();
-        invite();
-      });
 
-      // Suggestions arrive as the owner types. The request is debounced and
-      // the answer is dropped if it comes back after a newer one, so the list
-      // never shows results for a query that has already been typed past.
+      // Suggestions arrive as the owner types. A <datalist> would have been a
+      // line of markup, but the browser draws it in its own chrome - system
+      // font, square corners, and painted over whatever error is underneath -
+      // so this is a listbox we own and can style like the rest of the page.
       const suggestions = slot.querySelector("[data-roster-suggestions]");
       let lookupTimer;
       let lookupSeq = 0;
+      let options = [];
+      let active = -1;
+
+      function closeList() {
+        suggestions.hidden = true;
+        input.setAttribute("aria-expanded", "false");
+        input.removeAttribute("aria-activedescendant");
+        active = -1;
+      }
+
+      function highlight(next) {
+        active = next;
+        options.forEach((option, index) => {
+          option.classList.toggle("is-active", index === active);
+          option.setAttribute("aria-selected", index === active ? "true" : "false");
+        });
+        if (active >= 0) {
+          input.setAttribute("aria-activedescendant", options[active].id);
+          options[active].scrollIntoView({ block: "nearest" });
+        } else {
+          input.removeAttribute("aria-activedescendant");
+        }
+      }
+
+      function choose(name) {
+        input.value = name;
+        closeList();
+        input.focus();
+      }
+
+      function showList(names) {
+        // Built as nodes rather than markup: a Warframe name is someone else's
+        // text, and it never becomes HTML on the way in.
+        options = names.map((name, index) => {
+          const option = document.createElement("li");
+          option.className = "combo-option";
+          option.id = `roster-option-${index}`;
+          option.setAttribute("role", "option");
+          option.setAttribute("aria-selected", "false");
+          option.textContent = name;
+          // mousedown, not click: the input blurs first and would close the
+          // list out from under the pointer.
+          option.addEventListener("mousedown", (event) => {
+            event.preventDefault();
+            choose(name);
+          });
+          return option;
+        });
+        suggestions.replaceChildren(...options);
+        suggestions.hidden = !options.length;
+        input.setAttribute("aria-expanded", options.length ? "true" : "false");
+        highlight(-1);
+      }
+
       input?.addEventListener("input", () => {
+        // A stale "no such player" under a box that is being retyped is just
+        // noise, so it goes as soon as the owner touches the field.
+        const note = slot.querySelector("[data-roster-note]");
+        if (note) note.hidden = true;
         const q = input.value.trim();
         clearTimeout(lookupTimer);
         if (q.length < 2) {
-          suggestions.replaceChildren();
+          showList([]);
           return;
         }
         const seq = ++lookupSeq;
         lookupTimer = setTimeout(async () => {
           try {
             const { names } = await api.searchRecruiters(id, q);
+            // Dropped if a newer query has already gone out, so the list never
+            // shows results for something already typed past.
             if (seq !== lookupSeq) return;
-            // Built as nodes rather than markup: a Warframe name is someone
-            // else's text, and it never becomes HTML on the way in.
-            suggestions.replaceChildren(
-              ...names.map((name) => {
-                const option = document.createElement("option");
-                option.value = name;
-                return option;
-              })
-            );
+            showList(names);
           } catch {
             // A failed lookup just means no suggestions; the owner can still
             // type the name in full.
-            if (seq === lookupSeq) suggestions.replaceChildren();
+            if (seq === lookupSeq) showList([]);
           }
         }, 180);
       });
+
+      input?.addEventListener("keydown", (event) => {
+        const open = !suggestions.hidden && options.length;
+        if (event.key === "ArrowDown" && open) {
+          event.preventDefault();
+          highlight((active + 1) % options.length);
+          return;
+        }
+        if (event.key === "ArrowUp" && open) {
+          event.preventDefault();
+          highlight(active <= 0 ? options.length - 1 : active - 1);
+          return;
+        }
+        if (event.key === "Escape" && open) {
+          event.preventDefault();
+          closeList();
+          return;
+        }
+        if (event.key === "Tab") {
+          closeList();
+          return;
+        }
+        if (event.key !== "Enter") return;
+        // Enter in the field would otherwise submit the post editor around us.
+        event.preventDefault();
+        if (open && active >= 0) {
+          choose(options[active].textContent);
+          return;
+        }
+        invite();
+      });
+
+      input?.addEventListener("blur", closeList);
       slot.querySelectorAll("[data-roster-remove]").forEach((button) => {
         button.addEventListener("click", async () => {
           try {

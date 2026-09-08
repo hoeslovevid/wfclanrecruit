@@ -1572,6 +1572,38 @@ code {
 }
 .roster-add .field { flex: 1; margin: 0; }
 
+/* The suggestion list, drawn by us rather than by the browser, so it carries
+   the page's surface, border and radius instead of system chrome. */
+.combo { position: relative; }
+.combo-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 236px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+.combo-option {
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+}
+.combo-option:hover,
+.combo-option.is-active {
+  background: var(--ghost-hover);
+}
+.combo-option.is-active { box-shadow: inset 2px 0 0 var(--accent); }
+
 .whisper-text {
   display: block;
   margin-bottom: 12px;

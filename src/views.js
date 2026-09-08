@@ -1819,8 +1819,21 @@ export function rosterPanel(roster = [], max = 5) {
     <div class="roster">
       ${rows}
       <div class="row roster-add">
-        <label class="field"><span class="sr-only">Warframe name</span><input data-roster-username list="roster-suggestions" autocomplete="off" placeholder="Their Warframe name" maxlength="32" /></label>
-        <datalist id="roster-suggestions" data-roster-suggestions></datalist>
+        <label class="field"><span class="sr-only">Warframe name</span>
+          <div class="combo" data-roster-combo>
+            <input
+              data-roster-username
+              role="combobox"
+              aria-expanded="false"
+              aria-controls="roster-suggestions"
+              aria-autocomplete="list"
+              autocomplete="off"
+              placeholder="Their Warframe name"
+              maxlength="32"
+            />
+            <ul class="combo-list" id="roster-suggestions" role="listbox" aria-label="Matching players" data-roster-suggestions hidden></ul>
+          </div>
+        </label>
         <button class="btn btn-ghost" type="button" data-roster-invite ${roster.length >= max ? "disabled" : ""}>Invite</button>
       </div>
       <p class="muted" data-roster-note hidden></p>
