@@ -104,8 +104,12 @@ function chipList(items = []) {
 // roster and buttons out of line with the card beside it, so the overflow is
 // counted rather than shown - and the row is emitted even when a clan has no
 // tags, to keep the height the same either way.
+//
+// Two tags, not three: a card in the home page's three-up grid is about 300px
+// wide, and three names plus the count only fit there by cutting them down to
+// "Cas..." and "Voice Opti...", which tells a reader less than two whole ones do.
 function cardChips(playstyles) {
-  const { shown, rest } = cardPlaystyles(playstyles, 3);
+  const { shown, rest } = cardPlaystyles(playstyles, 2);
   const more = rest ? `<span class="chip chip-more">+${rest} more</span>` : "";
   return `<div class="chips is-capped">${chipList(shown)}${more}</div>`;
 }
@@ -578,7 +582,7 @@ export function clanCard(clan) {
           <p class="kicker">[${escapeHtml(clan.tag)}]${clan.allianceName ? ` · ${escapeHtml(clan.allianceName)}` : ""}</p>
           <h3>${escapeHtml(clan.name)}</h3>
           <p class="muted">${escapeHtml(clan.platform)} · ${escapeHtml(clan.tier)} · ${escapeHtml(clan.region)}</p>
-          ${presenceDot(clan)}
+          <span class="card-presence">${presenceDot(clan)}</span>
         </div>
         <div class="card-pills">
           <span class="pill ${statusClass(clan.status)}">${escapeHtml(clan.status)}</span>

@@ -2055,7 +2055,15 @@ code {
 /* The card's row never wraps: what does not fit is counted by .chip-more
    instead, so every card spends exactly one line on tags. */
 .chips.is-capped { flex-wrap: nowrap; overflow: hidden; height: 27px; align-items: center; }
-.chips.is-capped .chip { white-space: nowrap; }
+/* The tags give up room before the count does: a clipped "+13 more" reads as
+   a broken layout, while a shortened tag name still reads as a tag. */
+.chips.is-capped .chip {
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chips.is-capped .chip-more { flex: none; }
 .chip-more {
   background: transparent;
   border: 1px dashed var(--line-strong);
@@ -2258,7 +2266,6 @@ code {
 /* Community directory: shared surfaces and recruitment hierarchy. */
 .nav { background: var(--nav-bg); border-bottom: 1px solid var(--line); }
 .nav-links { align-items: center; gap: 20px; }
-.nav-links .nav-advertise { padding: 10px 14px; border: 1px solid var(--line-strong); border-radius: 6px; color: var(--text); }
 a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, .card:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
 .recruitment-hero { display: grid; grid-template-columns: 1.45fr 1fr; align-items: center; gap: 48px; text-align: left; padding: 68px 0 48px; }
 .recruitment-hero h1 { font-size: clamp(40px, 4.7vw, 64px); line-height: 1.08; letter-spacing: -.015em; margin: 20px 0; }
@@ -2298,6 +2305,13 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .card-head { grid-template-columns: auto minmax(0, 1fr); }
 .card-head h3 { font-size: 21px; overflow-wrap: anywhere; }
 .card-head .muted { font-size: 12px; }
+/* The presence line only exists when a leader is online, so the slot is held
+   open either way - otherwise a card with someone online sits a row lower than
+   the card beside it. */
+.card-presence { display: flex; align-items: center; height: 26px; }
+/* The slot owns the spacing now, so the line inside it must not add its own -
+   an online card would sit lower than an offline one all over again. */
+.card-presence .presence { margin-top: 0; }
 .card-pills { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; align-items: center; }
 /* Three lines, then stop. A long summary used to push one card's roster and
    buttons out of line with the card beside it. */
