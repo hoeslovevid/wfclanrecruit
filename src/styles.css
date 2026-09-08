@@ -2773,8 +2773,12 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   display: inline-flex;
   align-items: center;
   margin-left: 4px;
-  color: var(--accent);
-  font-size: 0.9em;
+  /* The badge blue, not the site accent. A verified tick is a borrowed
+     convention people recognise before they read it, and it should say the
+     same thing on this site as everywhere else - so it holds its colour
+     through a theme change and through whatever the accent becomes. */
+  color: #4a9ad9;
+  font-size: 0.95em;
   vertical-align: baseline;
   flex: none;
 }

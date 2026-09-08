@@ -2387,12 +2387,17 @@ export function displayName(user) {
 // The only thing verification still gates is publishing a specific in-game
 // name, which is a claim about a name rather than a permission to speak.
 //
-// Inline SVG rather than ✓ or an emoji: a glyph renders at the mercy of
-// whatever font the platform picks, and lands as a box on the ones that have
-// no such glyph at all.
+// The familiar blue rosette, drawn rather than fetched. Inline SVG beats a
+// glyph (✓ renders at the mercy of whatever font the platform picks, and
+// lands as a box on the ones that have none) and it beats a hosted PNG: no
+// third-party CDN on every page, no licence to carry, and it stays crisp at
+// the ~14px it is actually used at instead of shipping 512px of raster.
+//
+// The check is white rather than currentColor, so the badge keeps its
+// contrast in both themes while the disc follows one colour.
 export function verifiedTick(verified) {
   if (!verified) return "";
-  return `<span class="verified-tick" title="Warframe Forum verified" aria-label="Verified"><svg viewBox="0 0 16 16" width="1em" height="1em" aria-hidden="true" focusable="false"><path d="M8 .8 9.9 2.4l2.4-.3 1 2.3 2.2 1.1-.5 2.4 1.4 2-1.6 1.8.3 2.4-2.3 1-1.1 2.2-2.4-.5-2 1.4-1.8-1.6-2.4.3-1-2.3-2.2-1.1.5-2.4L.8 8l1.6-1.8L2.1 3.8l2.3-1L5.5.6l2.4.5Z" fill="currentColor" opacity=".16"/><path d="M4.6 8.3 7 10.7l4.4-4.9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>`;
+  return `<span class="verified-tick" title="Warframe Forum verified" aria-label="Verified"><svg viewBox="0 0 24 24" width="1em" height="1em" aria-hidden="true" focusable="false"><path d="M12.00 2.45Q16.92 0.13 18.75 5.25Q23.87 7.08 21.55 12.00Q23.87 16.92 18.75 18.75Q16.92 23.87 12.00 21.55Q7.08 23.87 5.25 18.75Q0.13 16.92 2.45 12.00Q0.13 7.08 5.25 5.25Q7.08 0.13 12.00 2.45Z" fill="currentColor"/><path d="M7.3 12.2l3.2 3.2L16.8 8.9" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>`;
 }
 
 // The signed-in person's own face, from the Discord account they signed in
