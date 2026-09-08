@@ -2406,7 +2406,7 @@ export function userAvatar(user, size = 24, className = "user-avatar") {
   )}'" />`;
 }
 
-export function navAccount(user, { discord = false, messaging = true } = {}) {
+export function navAccount(user, { messaging = true } = {}) {
   if (user) {
     const invites = (user.invites || []).length;
     const badge = invites
@@ -2425,10 +2425,12 @@ export function navAccount(user, { discord = false, messaging = true } = {}) {
       <button class="btn btn-ghost" type="button" data-logout>Sign out</button>
     `;
   }
-  return `
-    <a class="btn btn-ghost" href="/login" data-link>Sign in</a>
-    ${discord ? discordCreateButton("/account") : `<a class="btn btn-primary" href="/register" data-link>Create account</a>`}
-  `;
+  // One button, not two. Signing in and creating an account were separate
+  // controls describing a single Discord click - it creates the account and
+  // signs you in at once - so the pair asked people to choose between two
+  // doors into the same room. The login page still offers registration, in
+  // the words of someone who has just found out they need an account.
+  return `<a class="btn btn-primary" href="/login" data-link>Sign in</a>`;
 }
 
 // --- Player listings -------------------------------------------------------

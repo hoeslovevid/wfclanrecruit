@@ -6,6 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   conversationHtml,
+  navAccount,
   ignoreListHtml,
   ignoreRow,
   messageBubble,
@@ -141,4 +142,37 @@ test("an empty inbox still shows the ignore tab", () => {
   const html = messagesView({ user: { id: "u1" }, threads: [] });
   assert.match(html, /No conversations yet/);
   assert.match(html, /href="\/messages\?tab=ignore"/);
+});
+
+// Signing in and creating an account were two buttons describing one Discord
+// click. The pair is now a single door, and the login page behind it is what
+// still offers registration.
+test("a signed-out nav offers exactly one way in", () => {
+  const html = navAccount(null);
+  assert.match(html, /href="\/login"/);
+  assert.doesNotMatch(html, /Create account/);
+  assert.doesNotMatch(html, /href="\/register"/);
+  assert.equal(html.match(/<a /g).length, 1, "one control, not two");
+});
+
+test("a signed-in nav is unchanged by that", () => {
+  const html = navAccount({ id: "u1", username: "NewRecruit", forumVerified: false });
+  assert.match(html, /data-logout/);
+  assert.match(html, /href="\/account"/);
+  assert.doesNotMatch(html, /href="\/login"/);
+});
+
+// The field name is the whole bug: userAvatar reads discordAvatarUrl, and a
+// messenger shaped with any other key renders the fallback mark while looking
+// exactly like a stale icon.
+test("a thread row shows the other person's Discord picture, not the fallback", () => {
+  const face = "https://cdn.discordapp.com/avatars/1/abc.png?size=128";
+  const html = threadRow({ ...thread, with: { ...plain, discordAvatarUrl: face } });
+  assert.match(html, /cdn\.discordapp\.com\/avatars\/1\/abc\.png/);
+});
+
+test("a thread row falls back to the mark only when there is no picture", () => {
+  const html = threadRow({ ...thread, with: { ...plain, discordAvatarUrl: null } });
+  assert.doesNotMatch(html, /cdn\.discordapp\.com/);
+  assert.match(html, /<img/);
 });

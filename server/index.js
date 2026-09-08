@@ -2531,7 +2531,10 @@ function messengerOf(db, userId) {
     // The tick. Optional: nothing about messaging depends on it, and an
     // unverified account writes and is written to exactly the same.
     verified: Boolean(user.forumVerified),
-    avatarUrl: discordAvatarUrl(user),
+    // Named for what userAvatar() and publicAccount() already call it. It was
+    // `avatarUrl` here, which nothing on the client reads, so every inbox row
+    // silently fell through to the clan mark and looked like a stale icon.
+    discordAvatarUrl: discordAvatarUrl(user),
     gone: false,
   };
 }

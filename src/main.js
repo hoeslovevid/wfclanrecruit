@@ -154,7 +154,6 @@ function closeDrawer() {
 
 function renderNav() {
   const html = navAccount(state.user, {
-    discord: Boolean(state.auth.discord),
     messaging: state.auth.messaging !== false,
   });
   if (accountSlot) accountSlot.innerHTML = html;
