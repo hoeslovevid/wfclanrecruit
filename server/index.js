@@ -25,7 +25,7 @@ import { PING_MS, publish, subscribe } from "./live.js";
 import { dropLegacyVideos } from "../src/video.js";
 import { MEDIA_MAX, mediaList, normalizeMedia, setUploadPublicBase, uploadedUrls, videoIdsOf } from "../src/media.js";
 import { normalizeContactLabel, normalizeRoles, roleTextError } from "../src/roles.js";
-import { resizeListingImage } from "./image.js";
+import { resizeEmojiImage, resizeListingImage } from "./image.js";
 import { deleteR2Object, putR2Object, r2Enabled, r2PartialEnv, r2PublicUrl, readLocalFile } from "./r2.js";
 import {
   HEARTBEAT_MS,
@@ -134,6 +134,15 @@ import {
   robotsTxt,
   sitemapXml,
 } from "./meta.js";
+import {
+  applyPendingAdmin,
+  grantByUserId,
+  grantStaff,
+  revokeAdmin,
+  searchStaffCandidates,
+  staffList,
+} from "./admins.js";
+import { addEmojiError, normalizeEmojiName, publicEmoji } from "../src/emojis.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const COOKIE = "wfr_session";
@@ -218,6 +227,7 @@ const listingUpload = upload.fields([
 // account. Accepting an `image` field anyway would write a file to disk that
 // nothing ever points at, so the field is simply not offered.
 const playerUpload = upload.fields([{ name: "mediaImage", maxCount: MEDIA_MAX }]);
+const emojiUpload = upload.fields([{ name: "image", maxCount: 1 }]);
 
 const app = express();
 app.set("trust proxy", 1);
@@ -319,6 +329,12 @@ const reportLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   message: "Too many reports. Try again later.",
 });
+const staffLimiter = rateLimit({
+  name: "staff",
+  limit: 40,
+  windowMs: 60 * 60 * 1000,
+  message: "Too many staff changes. Try again later.",
+});
 const forumCheckLimiter = rateLimit({
   name: "forum-check",
   limit: 10,
@@ -329,6 +345,7 @@ const forumCheckLimiter = rateLimit({
 // window is generous - it is here to stop the endpoint being walked, not to
 // slow down someone adding a recruiter.
 const recruiterSearchLimiter = rateLimit({ name: "recruiter-search", limit: 120, windowMs: 10 * 60 * 1000 });
+const staffSearchLimiter = rateLimit({ name: "staff-search", limit: 120, windowMs: 10 * 60 * 1000 });
 const loginLimiter = rateLimit({
   name: "login",
   limit: 5,
@@ -503,6 +520,34 @@ async function processListingImages(req, res) {
       res.status(503).json({ error: "Could not store that image. Try again in a moment." });
       return false;
     }
+  }
+  return true;
+}
+
+async function processEmojiImage(req, res) {
+  const file = listingFile(req, "image");
+  if (!file) return true;
+  try {
+    const filename = await resizeEmojiImage(file.path);
+    file.filename = filename;
+    file.path = path.join(paths.uploadDir, filename);
+  } catch (error) {
+    console.error("Emoji resize failed:", error.message);
+    discardUploads(req);
+    res.status(400).json({ error: "That image could not be read. Use a PNG, JPG, WEBP, or GIF." });
+    return false;
+  }
+  if (!r2Enabled()) return true;
+  try {
+    const publicUrl = await putR2Object(file.filename, await readLocalFile(file.path));
+    if (!publicUrl) throw new Error("R2 put returned nothing");
+    file.publicUrl = publicUrl;
+    fs.rmSync(file.path, { force: true });
+  } catch (error) {
+    console.error("Emoji image could not be stored on R2:", error);
+    discardUploads(req);
+    res.status(503).json({ error: "Could not store that image. Try again in a moment." });
+    return false;
   }
   return true;
 }
@@ -1282,6 +1327,7 @@ app.get("/api/auth/discord/callback", async (req, res) => {
       user.discordUsername = discordUser.global_name || discordUser.username;
       user.discordAvatar = discordUser.avatar || null;
       user.discordEmail = discordUser.email || null;
+      applyPendingAdmin(db, user);
       db.sessions.push({
         token: sessionToken,
         userId: user.id,
@@ -2453,6 +2499,94 @@ app.post("/api/reports/:id/resolve", requireAdmin, (req, res) => {
     report.status = status;
     report.resolvedAt = new Date().toISOString();
     res.json({ report });
+    return db;
+  });
+});
+
+app.get("/api/admin/staff", requireAdmin, (req, res) => {
+  res.json(staffList(readDb(), req.user.id));
+});
+
+app.get("/api/admin/staff/search", requireAdmin, staffSearchLimiter, (req, res) => {
+  res.json({
+    people: searchStaffCandidates(readDb().users, req.query?.q, req.user.id),
+  });
+});
+
+app.post("/api/admin/staff", requireAdmin, staffLimiter, (req, res) => {
+  writeDb((db) => {
+    const userId = String(req.body?.userId || "").trim();
+    const result = userId
+      ? grantByUserId(db, userId, req.user)
+      : grantStaff(db, req.body?.query || req.body?.discordId, req.user);
+    if (result.error) {
+      res.status(400).json({ error: result.error });
+      return db;
+    }
+    res.json({ ok: true, pending: Boolean(result.pending), ...staffList(db, req.user.id) });
+    return db;
+  });
+});
+
+app.delete("/api/admin/staff/:id", requireAdmin, staffLimiter, (req, res) => {
+  writeDb((db) => {
+    const raw = String(req.params.id || "");
+    const result = /^\d{17,20}$/.test(raw)
+      ? revokeAdmin(db, { discordId: raw }, req.user)
+      : revokeAdmin(db, { userId: raw }, req.user);
+    if (result.error) {
+      res.status(400).json({ error: result.error });
+      return db;
+    }
+    res.json({ ok: true, ...staffList(db, req.user.id) });
+    return db;
+  });
+});
+
+app.get("/api/emojis", requireUser, (_req, res) => {
+  res.json({ emojis: (readDb().emojis || []).map(publicEmoji) });
+});
+
+app.post("/api/admin/emojis", requireAdmin, staffLimiter, emojiUpload, async (req, res) => {
+  if (!assertListingFiles(req, res)) return;
+  if (!(await processEmojiImage(req, res))) return;
+  const file = listingFile(req, "image");
+  if (!file) {
+    res.status(400).json({ error: "Choose a PNG, JPG, WEBP, or GIF." });
+    return;
+  }
+  const name = normalizeEmojiName(req.body?.name);
+  writeDb((db) => {
+    if (!Array.isArray(db.emojis)) db.emojis = [];
+    const problem = addEmojiError(db.emojis, name);
+    if (problem) {
+      removeStoredFile(savedUpload(file));
+      res.status(400).json({ error: problem });
+      return db;
+    }
+    db.emojis.push({
+      id: store.newId("emoji"),
+      name,
+      url: savedUpload(file),
+      createdBy: req.user.id,
+      createdAt: new Date().toISOString(),
+    });
+    res.json({ emojis: db.emojis.map(publicEmoji) });
+    return db;
+  });
+});
+
+app.delete("/api/admin/emojis/:id", requireAdmin, staffLimiter, (req, res) => {
+  writeDb((db) => {
+    if (!Array.isArray(db.emojis)) db.emojis = [];
+    const found = db.emojis.find((item) => item.id === req.params.id);
+    if (!found) {
+      res.status(404).json({ error: "That emoji was not found." });
+      return db;
+    }
+    removeStoredFile(found.url);
+    db.emojis = db.emojis.filter((item) => item.id !== req.params.id);
+    res.json({ emojis: db.emojis.map(publicEmoji) });
     return db;
   });
 });

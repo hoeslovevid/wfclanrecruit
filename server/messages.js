@@ -1,9 +1,13 @@
+import { plainTextFromHtml, sanitizePostHtml, toEditorHtml } from "../src/richtext.js";
+
 // The rules of a conversation, kept away from both storage and HTTP so they can
 // be tested on their own. Nothing in here touches the database.
 
 // Long enough for a real introduction, short enough that the inbox stays a list
-// of messages rather than a list of essays.
+// of messages rather than a list of essays. The cap is on readable text;
+// formatting tags are extra and have their own ceiling.
 export const BODY_MAX = 2000;
+export const BODY_HTML_MAX = 4000;
 
 // A thread is always *about* something - a listing or a profile - so a recruit
 // opening their inbox can tell which of five clans a stranger is writing about.
@@ -11,21 +15,22 @@ export const BODY_MAX = 2000;
 export const THREAD_KINDS = ["clan", "alliance", "player"];
 
 export function normalizeBody(value) {
-  // Collapse the runs of blank lines people get from pasting, but keep the
-  // paragraph breaks they typed on purpose.
-  return String(value ?? "")
-    .replace(/\r\n?/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim()
-    .slice(0, BODY_MAX);
+  const html = sanitizePostHtml(toEditorHtml(value)).replace(
+    /<span\b[^>]*\bdata-video\b[^>]*>[\s\S]*?<\/span>/gi,
+    ""
+  );
+  if (!plainTextFromHtml(html)) return "";
+  const next = html.length > BODY_HTML_MAX ? html.slice(0, BODY_HTML_MAX) : html;
+  // A message typed without formatting used to be stored trimmed. Keep that so
+  // an old "  hi  " and a new one land on the same row.
+  return /<[a-z][\s\S]*>/i.test(next) ? next : next.trim();
 }
 
 export function bodyError(value) {
-  const body = normalizeBody(value);
-  if (!body) return "Write a message first.";
-  if (String(value ?? "").trim().length > BODY_MAX) {
-    return `Messages are up to ${BODY_MAX} characters.`;
-  }
+  const html = normalizeBody(value);
+  const plain = plainTextFromHtml(html);
+  if (!plain) return "Write a message first.";
+  if (plain.length > BODY_MAX) return `Messages are up to ${BODY_MAX} characters.`;
   return null;
 }
 
@@ -75,7 +80,11 @@ export function unreadIn(messages, { userId, readAt }) {
 
 // What the inbox row shows before you open it.
 export function previewOf(body, max = 90) {
-  const line = String(body || "").replace(/\s+/g, " ").trim();
+  const line = plainTextFromHtml(
+    String(body || "").replace(/<img\b[^>]*\bdata-emoji\b[^>]*>/gi, " ")
+  )
+    .replace(/\s+/g, " ")
+    .trim();
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 

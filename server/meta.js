@@ -90,6 +90,7 @@ Disallow: /register
 Disallow: /post
 Disallow: /post-alliance
 Disallow: /lfc
+Disallow: /admin
 
 Sitemap: ${origin}/sitemap.xml
 `;

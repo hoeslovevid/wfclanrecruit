@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { IMAGE_MAX_EDGE, resizeListingImage } from "./image.js";
+import { EMOJI_MAX_EDGE, IMAGE_MAX_EDGE, resizeEmojiImage, resizeListingImage } from "./image.js";
 
 let sharp = null;
 try {
@@ -43,4 +43,22 @@ test("resizeListingImage refuses a truncated file", { skip }, async () => {
   await fs.writeFile(src, "not-an-image");
   await assert.rejects(() => resizeListingImage(src));
   await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("resizeEmojiImage shrinks to a small webp square", { skip }, async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wfr-emoji-"));
+  const src = path.join(dir, "lotus.png");
+  await sharp({
+    create: { width: 256, height: 256, channels: 3, background: { r: 80, g: 40, b: 120 } },
+  })
+    .png()
+    .toFile(src);
+
+  const name = await resizeEmojiImage(src);
+  assert.equal(name, "lotus.webp");
+  const info = await sharp(path.join(dir, name)).metadata();
+  assert.equal(info.format, "webp");
+  assert.ok(info.width <= EMOJI_MAX_EDGE);
+  assert.ok(info.height <= EMOJI_MAX_EDGE);
+  await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
 });

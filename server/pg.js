@@ -282,6 +282,19 @@ export async function connectPg() {
     CREATE UNIQUE INDEX IF NOT EXISTS players_owner ON players (owner_id);
     CREATE INDEX IF NOT EXISTS players_platform ON players (platform);
     CREATE INDEX IF NOT EXISTS reports_status ON reports (status);
+    CREATE TABLE IF NOT EXISTS admin_grants (
+      discord_id TEXT PRIMARY KEY,
+      granted_by TEXT,
+      granted_at TIMESTAMPTZ
+    );
+    CREATE TABLE IF NOT EXISTS emojis (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      url TEXT NOT NULL,
+      created_by TEXT,
+      created_at TIMESTAMPTZ
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS emojis_name_lower ON emojis (lower(name));
   `);
   await migrateFromAppState();
   await hardenDiscordIdentity();
@@ -346,13 +359,15 @@ async function migrateFromAppState() {
 export async function loadState() {
   // Whatever we thought we had written no longer describes this process's view.
   digests = null;
-  const [users, sessions, clans, alliances, players, reports] = await Promise.all([
+  const [users, sessions, clans, alliances, players, reports, grants, emojis] = await Promise.all([
     pool.query("SELECT * FROM users"),
     pool.query("SELECT token, user_id, expires FROM sessions"),
     pool.query("SELECT * FROM clans"),
     pool.query("SELECT * FROM alliances"),
     pool.query("SELECT * FROM players"),
     pool.query("SELECT * FROM reports ORDER BY created_at DESC"),
+    pool.query("SELECT discord_id, granted_by, granted_at FROM admin_grants"),
+    pool.query("SELECT id, name, url, created_by, created_at FROM emojis"),
   ]);
   if (
     !users.rows.length &&
@@ -360,7 +375,9 @@ export async function loadState() {
     !clans.rows.length &&
     !alliances.rows.length &&
     !players.rows.length &&
-    !reports.rows.length
+    !reports.rows.length &&
+    !grants.rows.length &&
+    !emojis.rows.length
   ) {
     return null;
   }
@@ -379,6 +396,18 @@ export async function loadState() {
     alliances: alliances.rows.map(rowToListing),
     players: players.rows.map(rowToPlayer),
     reports: reports.rows.map(rowToReport),
+    adminGrants: grants.rows.map((row) => ({
+      discordId: row.discord_id,
+      grantedBy: row.granted_by || null,
+      grantedAt: iso(row.granted_at),
+    })),
+    emojis: emojis.rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      url: row.url,
+      createdBy: row.created_by || null,
+      createdAt: iso(row.created_at),
+    })),
   };
 }
 
@@ -421,6 +450,8 @@ function emptySnapshot() {
     alliances: new Map(),
     players: new Map(),
     reports: new Map(),
+    admin_grants: new Map(),
+    emojis: new Map(),
   };
 }
 
@@ -485,6 +516,8 @@ async function persistTables(db) {
   const alliances = uniqueBy(db.alliances, "id");
   const players = uniqueBy(db.players, "id");
   const reports = uniqueBy(db.reports, "id");
+  const adminGrants = uniqueBy(db.adminGrants || [], "discordId");
+  const emojis = uniqueBy(uniqueByLower(db.emojis || [], "name"), "id");
   const client = await pool.connect();
   pending = emptySnapshot();
   try {
@@ -706,6 +739,29 @@ async function persistTables(db) {
       );
     }
     await reconcile(client, "reports", "id", reports.map((item) => item.id));
+
+    for (const grant of adminGrants) {
+      await upsert(client, "admin_grants", grant.discordId,
+        `INSERT INTO admin_grants (discord_id, granted_by, granted_at) VALUES ($1,$2,$3)
+         ON CONFLICT (discord_id) DO UPDATE SET granted_by = EXCLUDED.granted_by, granted_at = EXCLUDED.granted_at`,
+        [grant.discordId, grant.grantedBy || null, grant.grantedAt || null]
+      );
+    }
+    await reconcile(
+      client,
+      "admin_grants",
+      "discord_id",
+      adminGrants.map((item) => item.discordId)
+    );
+
+    for (const emoji of emojis) {
+      await upsert(client, "emojis", emoji.id,
+        `INSERT INTO emojis (id, name, url, created_by, created_at) VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, url = EXCLUDED.url, created_by = EXCLUDED.created_by, created_at = EXCLUDED.created_at`,
+        [emoji.id, emoji.name, emoji.url, emoji.createdBy || null, emoji.createdAt || null]
+      );
+    }
+    await reconcile(client, "emojis", "id", emojis.map((item) => item.id));
 
     await client.query("COMMIT");
     digests = pending;

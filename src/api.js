@@ -103,4 +103,16 @@ export const api = {
   reports: () => request("/api/reports"),
   resolveReport: (id, status) =>
     request(`/api/reports/${id}/resolve`, { method: "POST", body: JSON.stringify({ status }) }),
+  staff: () => request("/api/admin/staff"),
+  searchStaff: (q) => request(`/api/admin/staff/search?q=${encodeURIComponent(q)}`),
+  grantAdmin: (body) =>
+    request("/api/admin/staff", {
+      method: "POST",
+      body: JSON.stringify(typeof body === "string" ? { query: body } : body),
+    }),
+  revokeAdmin: (id) => request(`/api/admin/staff/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  emojis: () => request("/api/emojis"),
+  addEmoji: (formData) => request("/api/admin/emojis", { method: "POST", body: formData }),
+  deleteEmoji: (id) =>
+    request(`/api/admin/emojis/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };

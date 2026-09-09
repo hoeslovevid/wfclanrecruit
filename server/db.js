@@ -42,6 +42,8 @@ function emptyDb() {
     alliances: [],
     players: [],
     reports: [],
+    adminGrants: [],
+    emojis: [],
   };
 }
 
@@ -122,12 +124,8 @@ async function bootstrapAdmin(db) {
     }
   }
 
-  for (const user of users) {
-    if (user.id !== admin.id && user.admin) {
-      user.admin = false;
-      changed = true;
-    }
-  }
+  // Keep this account admin. Do not demote anyone else: Discord-granted staff
+  // used to vanish on every restart.
 
   db.users = users;
   return { db, changed };
@@ -136,7 +134,7 @@ async function bootstrapAdmin(db) {
 // #4: a torn write on restart used to leave db.json unparseable and lose
 // everything. Write to a temp file and rename, which is atomic on POSIX.
 function writeDbFile(db) {
-  const next = { reports: [], ...db };
+  const next = { reports: [], adminGrants: [], emojis: [], ...db };
   if (!usingPostgres) {
     const tmp = `${dbPath}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(next, null, 2));
@@ -208,6 +206,8 @@ export async function initStorage() {
     if (!fs.existsSync(dbPath)) writeDbFile(emptyDb());
     cache = JSON.parse(fs.readFileSync(dbPath, "utf8"));
     if (!Array.isArray(cache.reports)) cache.reports = [];
+    if (!Array.isArray(cache.adminGrants)) cache.adminGrants = [];
+    if (!Array.isArray(cache.emojis)) cache.emojis = [];
     storageReady = true;
   }
 
@@ -237,6 +237,8 @@ export function readDb() {
   // A database written before player profiles existed has no such key, and
   // every reader treats it as a list.
   if (!Array.isArray(cache.players)) cache.players = [];
+  if (!Array.isArray(cache.adminGrants)) cache.adminGrants = [];
+  if (!Array.isArray(cache.emojis)) cache.emojis = [];
   return cache;
 }
 
@@ -249,6 +251,8 @@ export function writeDb(mutator) {
       const next = mutator(db) ?? db;
       if (!Array.isArray(next.reports)) next.reports = [];
       if (!Array.isArray(next.players)) next.players = [];
+      if (!Array.isArray(next.adminGrants)) next.adminGrants = [];
+      if (!Array.isArray(next.emojis)) next.emojis = [];
       writeDbFile(next);
       await persist(next);
       return next;

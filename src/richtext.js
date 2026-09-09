@@ -10,7 +10,7 @@ const SECTION_PLAIN_MAX = 600;
 // single line of plain text they replaced.
 const ROLE_HTML_MAX = 900;
 const ROLE_PLAIN_MAX = 400;
-const VOID = new Set(["br"]);
+const VOID = new Set(["br", "img"]);
 const SKIP = new Set(["script", "style", "iframe", "object", "embed", "link", "meta", "svg"]);
 const ALLOWED = {
   p: new Set(),
@@ -26,6 +26,7 @@ const ALLOWED = {
   li: new Set(),
   a: new Set(["href"]),
   span: new Set(["data-video"]),
+  img: new Set(["data-emoji"]),
 };
 
 function decodeEntities(text) {
@@ -79,6 +80,13 @@ function parseAttrs(raw, allowed) {
       continue;
     }
     if (name === "data-video") out.push(["data-video", ""]);
+    if (name === "data-emoji") {
+      const id = String(value || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, "")
+        .slice(0, 40);
+      if (id) out.push(["data-emoji", id]);
+    }
   }
   return out;
 }
@@ -146,6 +154,10 @@ export function sanitizePostHtml(input) {
     let attrs = parseAttrs(attrRaw, ALLOWED[tag]);
 
     if (tag === "a" && !attrs.some(([name]) => name === "href")) continue;
+    if (tag === "img") {
+      if (!attrs.some(([name]) => name === "data-emoji")) continue;
+      attrs = attrs.filter(([name]) => name === "data-emoji");
+    }
     if (tag === "span") {
       if (!attrs.some(([name]) => name === "data-video") || videoSeen) continue;
       videoSeen = true;
@@ -168,7 +180,7 @@ export function sanitizePostHtml(input) {
 export function toEditorHtml(value) {
   const raw = String(value || "");
   if (!raw.trim()) return "";
-  if (/<(p|br|strong|b|em|i|u|ul|ol|li|a|span|div)\b/i.test(raw)) {
+  if (/<(p|br|strong|b|em|i|u|ul|ol|li|a|span|div|img)\b/i.test(raw)) {
     return sanitizePostHtml(raw.replace(/\[video\]/gi, '<span data-video></span>'));
   }
   return sanitizePostHtml(
@@ -181,6 +193,7 @@ export function toEditorHtml(value) {
 export function plainTextFromHtml(html) {
   return String(html || "")
     .replace(/<span\b[^>]*\bdata-video\b[^>]*>[\s\S]*?<\/span>/gi, " ")
+    .replace(/<img\b[^>]*\bdata-emoji\b[^>]*>/gi, "xx")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(p|div|li|h[1-6])>/gi, "\n")
     .replace(/<[^>]+>/g, "")

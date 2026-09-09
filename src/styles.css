@@ -1147,22 +1147,31 @@ select {
   color: var(--placeholder);
   pointer-events: none;
 }
-.richtext-editor ul,
-.post-body ul {
-  margin: 0.4em 0 0.7em;
-  padding-left: 1.2em;
-}
 .richtext-editor a,
-.post-body a {
+.post-body a,
+.bubble-body a {
   color: var(--accent);
   text-decoration: underline;
 }
+.richtext-editor ul,
+.post-body ul,
+.bubble-body ul,
+.bubble-body ol {
+  margin: 0.4em 0 0.7em;
+  padding-left: 1.2em;
+}
 .richtext-editor p,
-.post-body p {
+.post-body p,
+.bubble-body p {
   margin: 0 0 0.7em;
 }
 .richtext-editor p:last-child,
-.post-body p:last-child { margin-bottom: 0; }
+.post-body p:last-child,
+.bubble-body p:last-child,
+.bubble-body ul:last-child,
+.bubble-body ol:last-child {
+  margin-bottom: 0;
+}
 .rt-video-mark {
   display: block;
   margin: 8px 0;
@@ -1177,6 +1186,92 @@ select {
   user-select: none;
 }
 .rt-video-mark:empty::before { content: "Media appears here"; }
+.emoji-wrap { position: relative; }
+.emoji-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: min(304px, calc(100vw - 48px));
+  max-height: 280px;
+  overflow: auto;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgb(0 0 0 / 18%);
+}
+.emoji-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.emoji-tab {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+}
+.emoji-tab.is-active,
+.emoji-tab:hover,
+.emoji-tab:focus-visible {
+  color: var(--text);
+  background: var(--ghost-hover);
+  border-color: var(--line-strong);
+}
+.emoji-group + .emoji-group { margin-top: 10px; }
+.emoji-group .kicker { margin: 0 0 6px; }
+.emoji-chars {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+}
+.emoji-empty { margin: 8px 2px; font-size: 13px; }
+.emoji-pick {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.emoji-pick:hover,
+.emoji-pick:focus-visible {
+  background: var(--ghost-hover);
+}
+.emoji-pick-custom img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+.msg-emoji {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  margin: 0 1px;
+  vertical-align: -5px;
+  object-fit: contain;
+}
+.msg-emoji-lg {
+  width: 32px;
+  height: 32px;
+  vertical-align: middle;
+}
+.richtext-editor img[data-emoji]:not([src]) {
+  visibility: hidden;
+  width: 22px;
+  height: 22px;
+}
 .post-body {
   margin: 0 0 18px;
   overflow-wrap: anywhere;
@@ -1388,6 +1483,11 @@ select {
 .list-actions .btn[disabled] {
   opacity: 0.55;
   cursor: not-allowed;
+}
+.staff-form { max-width: 36rem; }
+.staff-id {
+  font-family: var(--mono);
+  font-size: 13px;
 }
 
 .error { color: var(--danger); margin: 0; }
@@ -1612,6 +1712,22 @@ code {
 .keep-ticks span { flex: 1; text-align: center; }
 .keep-ticks span:first-child { text-align: left; }
 .keep-ticks span:last-child { text-align: right; }
+
+.alert-block {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.alert-block .kicker { margin-bottom: 8px; text-align: left; }
+.alert-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.alert-toggle input { accent-color: var(--accent); }
 
 .account-links {
   display: grid;
@@ -2844,14 +2960,85 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 .bubble-row.is-mine .bubble { background: var(--chip); border-color: var(--line-strong); }
 .bubble-who { margin: 0 0 3px; font-size: 11px; }
-/* A pasted message keeps its line breaks, and a pasted URL cannot widen the
-   column past the panel. */
-.bubble-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bubble-body {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.45;
+}
 
-.composer-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
-.composer-count { grid-column: 1 / -1; margin: 0; font-size: 12px; text-align: right; }
+.message-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "count count"
+    "editor send"
+    "note note";
+  gap: 8px 10px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  background: var(--surface-2);
+}
+.message-composer:focus-within {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+.message-composer .composer-count {
+  grid-area: count;
+  margin: 0;
+  font-size: 12px;
+  text-align: right;
+}
+.message-composer .richtext {
+  grid-area: editor;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+.message-composer .richtext:focus-within {
+  border-color: transparent;
+  box-shadow: none;
+}
+.message-composer .richtext-toolbar {
+  padding: 0 2px 8px;
+  border-bottom: 0;
+  background: transparent;
+  gap: 2px;
+  overflow: visible;
+}
+.message-composer .richtext-btn {
+  min-width: 30px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+.message-composer .richtext-editor,
+.message-composer .richtext-editor.is-compact {
+  min-height: 52px;
+  max-height: 160px;
+  padding: 10px 12px;
+  background: var(--input);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-size: 15px;
+  line-height: 1.45;
+}
+.message-composer .composer-send {
+  grid-area: send;
+  align-self: end;
+  min-height: 52px;
+  padding-inline: 18px;
+  border-radius: 12px;
+}
+.message-composer .error {
+  grid-area: note;
+  margin: 0;
+}
+
 .composer-bar textarea { resize: vertical; min-height: 46px; }
-.composer-bar .error { grid-column: 1 / -1; }
 
 /* The ignore list. One row per person, the un-ignore button pinned right so
    the column of buttons reads as a column whatever the names are. */
@@ -2913,6 +3100,15 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
     max-height: 280px;
   }
   .bubble { max-width: 88%; }
+  .message-composer {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "count"
+      "editor"
+      "send"
+      "note";
+  }
+  .message-composer .composer-send { width: 100%; }
   /* The menu is anchored to the right edge of a header that is now the width
      of the screen, so let it fill rather than hang off it. */
   .thread-menu-panel { right: 0; left: auto; min-width: 200px; }

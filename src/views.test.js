@@ -6,10 +6,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   accountMenu,
+  adminView,
   conversationHtml,
   navAccount,
   ignoreListHtml,
   ignoreRow,
+  messageBodyHtml,
   messageBubble,
   messagePresence,
   messagesView,
@@ -111,10 +113,58 @@ test("an ignored conversation offers the way back and no composer", () => {
   assert.doesNotMatch(html, /data-send-form/);
 });
 
-test("the composer counts characters against the limit it enforces", () => {
+test("the composer is a rich-text box with the same character budget", () => {
   const html = conversationHtml(thread, [], "u1");
   assert.match(html, /0\/2000 chars\./);
-  assert.match(html, /maxlength="2000"/);
+  assert.match(html, /data-plain-limit="2000"/);
+  assert.match(html, /data-rich-editor/);
+  assert.match(html, /data-rt="bold"/);
+  assert.match(html, /data-emoji-toggle/);
+  assert.match(html, /data-insert-emoji/);
+  assert.doesNotMatch(html, /data-insert-video/);
+});
+
+test("the composer lists custom emojis staff have added", () => {
+  const html = conversationHtml(thread, [], "u1", [
+    { id: "emoji-1", name: "lotus", url: "/uploads/lotus.webp" },
+  ]);
+  assert.match(html, /data-insert-custom="emoji-1"/);
+  assert.match(html, /:lotus:/);
+});
+
+test("a message bubble renders formatting and drops scripts", () => {
+  const html = messageBubble(
+    {
+      senderId: "u1",
+      body: "<strong>hello</strong><script>alert(1)</script>",
+      createdAt: new Date().toISOString(),
+      from: plain,
+    },
+    "u2"
+  );
+  assert.match(html, /<strong>hello<\/strong>/);
+  assert.doesNotMatch(html, /<script/);
+});
+
+test("a custom emoji in a message uses the catalog url, not a stored src", () => {
+  const html = messageBubble(
+    {
+      senderId: "u1",
+      body: `<img data-emoji="emoji-1" src="https://evil.example/x.png" onerror="alert(1)">`,
+      createdAt: new Date().toISOString(),
+      from: plain,
+    },
+    "u2",
+    [{ id: "emoji-1", name: "lotus", url: "/uploads/lotus.webp" }]
+  );
+  assert.match(html, /src="\/uploads\/lotus\.webp"/);
+  assert.match(html, /class="msg-emoji"/);
+  assert.doesNotMatch(html, /evil\.example/);
+  assert.doesNotMatch(html, /onerror/);
+});
+
+test("an unknown custom emoji is dropped from a message", () => {
+  assert.doesNotMatch(messageBodyHtml(`<img data-emoji="emoji-missing">`, []), /<img/);
 });
 
 test("the ignore list undoes a block through the same hook the menu uses", () => {
@@ -222,9 +272,65 @@ test("the menu carries settings and sign out, so the nav no longer has to", () =
   const html = accountMenu(me);
   assert.match(html, /href="\/account"/);
   assert.match(html, /data-logout/);
+  assert.doesNotMatch(html, /href="\/admin"/);
   const nav = navAccount(me);
   assert.match(nav, /account-menu/);
   assert.match(nav, /href="\/messages"/);
+});
+
+test("the account menu offers message alerts", () => {
+  const html = accountMenu({ ...me, presence: { status: "online", keepMinutes: 0 } });
+  assert.match(html, /data-alert-sound/);
+  assert.match(html, /data-alert-desktop/);
+  assert.match(html, /Sound ping/);
+});
+
+test("message alerts stay out of the menu when messaging is off", () => {
+  const html = accountMenu({ ...me, presence: { status: "online", keepMinutes: 0 } }, "", {
+    messaging: false,
+  });
+  assert.doesNotMatch(html, /data-alert-sound/);
+});
+
+test("the account menu offers Staff only to admins", () => {
+  const html = accountMenu({ ...me, admin: true });
+  assert.match(html, /href="\/admin"/);
+  assert.match(html, />Staff</);
+});
+
+test("the staff page lists live admins and waiting Discord IDs", () => {
+  const html = adminView({
+    user: { id: "user-a", admin: true },
+    staff: {
+      admins: [
+        { id: "user-a", username: "alpha", discordId: "123456789012345678", you: true, env: false },
+        { id: "user-b", username: "beta", discordId: "111111111111111111", you: false, env: false },
+        { id: "user-admin", username: "site-op", you: false, env: true },
+      ],
+      pending: [{ discordId: "999999999999999999", grantedAt: new Date().toISOString() }],
+    },
+    reports: [],
+  });
+  assert.match(html, /data-staff-form/);
+  assert.match(html, /data-staff-query/);
+  assert.match(html, /Grant from the dashboard/);
+  assert.doesNotMatch(html, /data-revoke-admin="user-a"/);
+  assert.match(html, /data-revoke-admin="user-b"/);
+  assert.doesNotMatch(html, /data-revoke-admin="user-admin"/);
+  assert.match(html, /Password operator/);
+  assert.match(html, /data-revoke-pending="999999999999999999"/);
+  assert.match(html, /data-emoji-form/);
+});
+
+test("the staff page lists custom emojis that can be removed", () => {
+  const html = adminView({
+    staff: { admins: [], pending: [] },
+    reports: [],
+    emojis: [{ id: "emoji-1", name: "lotus", url: "/uploads/a.webp" }],
+  });
+  assert.match(html, /data-delete-emoji="emoji-1"/);
+  assert.match(html, /:lotus:/);
+  assert.match(html, /1 of 40/);
 });
 
 test("the hold is disabled and dimmed while you are invisible", () => {

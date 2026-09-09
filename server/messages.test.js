@@ -13,16 +13,20 @@ import {
 } from "./messages.js";
 import { listenerCount, publish, reset, subscribe, STREAMS_PER_USER } from "./live.js";
 
-test("a body is trimmed and its pasted blank runs collapsed", () => {
+test("a body keeps the words and drops markup that is not allowed", () => {
   assert.equal(normalizeBody("  hi  "), "hi");
-  assert.equal(normalizeBody("a\n\n\n\n\nb"), "a\n\nb", "paragraph breaks survive, runs do not");
-  assert.equal(normalizeBody("a\r\nb"), "a\nb");
+  assert.equal(normalizeBody("a\r\nb"), "a<br>b");
+  assert.equal(normalizeBody("<strong>hello</strong>"), "<strong>hello</strong>");
+  const mixed = normalizeBody("<strong>hello</strong><script>alert(1)</script>");
+  assert.match(mixed, /<strong>hello<\/strong>/);
+  assert.doesNotMatch(mixed, /<script/);
 });
 
 test("an empty message is refused, whitespace included", () => {
   assert.equal(bodyError(""), "Write a message first.");
   assert.equal(bodyError("   \n\n "), "Write a message first.");
   assert.equal(bodyError("hello"), null);
+  assert.equal(bodyError("<p><br></p>"), "Write a message first.");
 });
 
 test("an over-long message is refused rather than silently cut", () => {
@@ -66,11 +70,21 @@ test("your own messages are never unread to you", () => {
   assert.equal(unreadIn(MESSAGES, { userId: "b", readAt: null }), 1, "only a's message counts for b");
 });
 
-test("the inbox preview is one line and ellipsised", () => {
+test("the inbox preview is one line of readable text, not markup", () => {
   assert.equal(previewOf("hello   there\nyou"), "hello there you");
+  assert.equal(previewOf("<strong>hello</strong> there"), "hello there");
+  assert.equal(previewOf(`hi <img data-emoji="emoji-1"> there`), "hi there");
   const long = previewOf("x".repeat(200), 10);
   assert.equal(long.length, 10);
   assert.ok(long.endsWith("…"));
+});
+
+test("a custom emoji is stored as data-emoji only", () => {
+  const out = normalizeBody(`<img data-emoji="emoji-1" src="https://evil.example/x.png" onerror="alert(1)">`);
+  assert.match(out, /data-emoji="emoji-1"/);
+  assert.doesNotMatch(out, /src=/);
+  assert.doesNotMatch(out, /onerror/);
+  assert.doesNotMatch(out, /evil\.example/);
 });
 
 test("a block cuts both directions", () => {

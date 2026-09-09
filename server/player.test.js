@@ -90,6 +90,10 @@ test("robots keeps the profile composer out of the index", () => {
   assert.ok(robotsTxt("https://example.com").includes("Disallow: /lfc"));
 });
 
+test("robots keeps the staff page out of the index", () => {
+  assert.ok(robotsTxt("https://example.com").includes("Disallow: /admin"));
+});
+
 // --- Discord username, not an invite ---------------------------------------
 
 test("a Discord username is accepted in both the new and legacy shapes", () => {

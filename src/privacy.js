@@ -8,7 +8,7 @@ export function privacyView() {
       <p class="eyebrow">Legal</p>
       <h1>Privacy Policy</h1>
       <p class="lead">This page explains what WF Clan Recruit collects, why, who sees it, how long it stays, and how you can opt out. It describes this website as it works today, not a generic template.</p>
-      <p class="muted">Last updated 7 September 2026. This site is independent and is not affiliated with Digital Extremes, Warframe, Discord, or Google.</p>
+      <p class="muted">Last updated 8 September 2026. This site is independent and is not affiliated with Digital Extremes, Warframe, Discord, or Google.</p>
     </section>
 
     <section class="policy-page">
@@ -21,7 +21,7 @@ export function privacyView() {
           <li>If you sign in, we store account, Discord, and (if you verify) Warframe Forum details so you can post.</li>
           <li>Verifying makes your Warframe name findable by clan leaders adding a recruiter to their own listing.</li>
           <li>Listings you publish are public, including images, any YouTube video you link, Discord invites, and whatever you write in the post. Each listing has a shareable URL.</li>
-          <li>You can report a dead or dishonest listing. Reports are not public; only the site operator can read them.</li>
+          <li>You can report a dead or dishonest listing. Reports are not public; only admins can read them.</li>
           <li>You can download your data, remove listings, sign out, or delete your account from the ${jump("opt-out", "opt-out section")} or your <a href="/account" data-link>account page</a>.</li>
         </ul>
       </article>
@@ -82,6 +82,7 @@ export function privacyView() {
         <p>Optional on-device data while browsing:</p>
         <ul class="policy-bullets">
           <li><strong>Theme preference.</strong> If you use the light/dark switch, the choice is stored only in your browser as <code>wfr-theme</code>. We never send that value to our server.</li>
+          <li><strong>Message alerts.</strong> If you sign in, Sound ping and Desktop alert live in your account menu. Those choices stay in your browser as <code>wfr-alerts</code>. Desktop alerts use the browser’s notification permission; we do not get a push subscription, and nothing is sent when this site is closed.</li>
           <li><strong>Google Fonts.</strong> The page loads Rajdhani from Google’s font servers. Google may process your IP address under Google’s policies. Blocking that request still lets the site run on your system fonts.</li>
         </ul>
       </article>
@@ -102,7 +103,7 @@ export function privacyView() {
               <tr><td>Username on this site</td><td>Yes</td><td>Not as a directory. Clan posts can include a leader name you type.</td></tr>
               <tr><td>Password hash</td><td>Yes, hashed. Discord accounts get a random unused password.</td><td>No</td></tr>
               <tr><td>Account created time</td><td>Yes</td><td>No</td></tr>
-              <tr><td>Admin flag</td><td>Yes, for the operator account only</td><td>No</td></tr>
+              <tr><td>Admin flag</td><td>Yes, for staff accounts. An existing admin can grant this from the staff page by choosing an account on this site, or by pasting a Discord user id. If that person has not signed in yet, we store the id until they do.</td><td>No</td></tr>
               <tr><td>Discord user id</td><td>Yes</td><td>No</td></tr>
               <tr><td>Discord display name</td><td>Yes</td><td>No. Visible to you on your account page.</td></tr>
               <tr><td>Discord email</td><td>Yes, if Discord returns one</td><td>No. We do not print it on listings or in the public API account object.</td></tr>
@@ -133,9 +134,15 @@ export function privacyView() {
         <h3>Reports</h3>
         <p>Anyone can send a listing report (dead invite, inactive, fake, stolen name, or other). We store the reason, optional details, listing id and name, time, status, and the reporter’s account id if they were signed in. Reports are not shown on the public board.</p>
 
+        <h3>On-site messages</h3>
+        <p>If you use Messages, we store what you write, including formatting, any links you insert, and any emoji you pick (standard characters from the picker, or custom images staff have added). We also store who is in the conversation and the listing it is about. Messages are not shown on the public board. The other person in the thread can read them.</p>
+
+        <h3>Custom emojis</h3>
+        <p>Staff can upload small custom emoji images (PNG, JPG, WEBP, or GIF; we resize them and store WebP files on this host or Cloudflare R2). Signed-in users see those images in the message picker. The files stay until staff remove them. They are not listing images, but they are stored and served the same way.</p>
+
         <h3>Technical data we do not store in the app database</h3>
         <ul class="policy-bullets">
-          <li>We do not store IP addresses, GPS, payment cards, or device advertising IDs in the application database. Production uses Postgres tables (users, sessions, clans, alliances, reports) when <code>DATABASE_URL</code> is set. Local development can use a <code>db.json</code> file instead.</li>
+          <li>We do not store IP addresses, GPS, payment cards, or device advertising IDs in the application database. Production uses Postgres tables (users, sessions, clans, alliances, players, reports, admin_grants, emojis) when <code>DATABASE_URL</code> is set. Local development can use a <code>db.json</code> file instead.</li>
           <li>We do not keep Discord OAuth access or refresh tokens after sign-in finishes.</li>
           <li>We do not store the HTML of your Warframe Forum profile after the verification check. We only keep whether the code matched, plus the profile URL and name.</li>
           <li>The host (Railway) and any reverse proxy may still log IPs and user agents for security and uptime. Those logs are not a feature of this app and are not used to target ads.</li>
@@ -149,7 +156,7 @@ export function privacyView() {
           <li><strong>Directly from you.</strong> Forms, file uploads, Discord OAuth consent, forum profile URL, and buttons such as bump, pause, report, edit, sign out, export, or delete.</li>
           <li><strong>From Discord.</strong> If you choose Continue with Discord, Discord sends us an OAuth code. We exchange it for a short-lived token and read <code>/users/@me</code> with scopes <code>identify</code> and <code>email</code>. We then drop the Discord token. When you publish or bump a listing, and on a periodic re-check, we ask Discord whether the invite code is still valid; Discord sees that invite code.</li>
           <li><strong>From Warframe Forums, through a reader.</strong> Direct fetches from our server are blocked by Cloudflare. When you confirm verification, we ask a browser-based reader to load your public About Me tab and check for your one-time code. That request includes the public profile URL you gave us.</li>
-          <li><strong>Automatically.</strong> Session cookies after sign-in; theme in local storage if you toggle it; standard HTTPS request metadata at the host.</li>
+          <li><strong>Automatically.</strong> Session cookies after sign-in; theme and message-alert choices in local storage if you set them; a live message stream (Server-Sent Events) while you are signed in and the site is open; standard HTTPS request metadata at the host.</li>
         </ul>
       </article>
 
@@ -170,8 +177,11 @@ export function privacyView() {
               <tr><td>Keep names and tags unique, hide stale or paused Discord buttons</td><td>Listing name, tag, bump time, paused flag, invite check</td></tr>
               <tr><td>Show a preview when a listing URL is pasted in Discord or similar</td><td>Public title, headline, summary, and listing image</td></tr>
               <tr><td>Handle “report this listing”</td><td>Report reason, optional details, reporter id if signed in</td></tr>
+              <tr><td>Let signed-in people message about a listing</td><td>Message text and formatting, emoji, thread membership</td></tr>
+              <tr><td>Ping you about a new message while this site is open</td><td>Sender name and a short preview, only in a browser notification if you turned Desktop alert on</td></tr>
+              <tr><td>Staff custom emojis in the message picker</td><td>Short name, image file, uploader id</td></tr>
               <tr><td>Enforce cooldowns (new listing 15 minutes, bump 12 hours, forum check a few seconds)</td><td>Timestamps on listings and the last forum check</td></tr>
-              <tr><td>Moderation by the operator</td><td>Admin account can edit or remove any listing</td></tr>
+              <tr><td>Moderation by staff</td><td>Admins can hide or remove any listing, read reports, grant or revoke staff, and add or remove custom emojis</td></tr>
               <tr><td>Security and abuse handling</td><td>Sessions, Discord ids, host logs</td></tr>
               <tr><td>Honor download and deletion requests</td><td>Your account record and listings</td></tr>
             </tbody>
@@ -187,7 +197,7 @@ export function privacyView() {
         <ul class="policy-bullets">
           <li><strong>Legitimate interests.</strong> Running a public clan board, preventing spam, keeping sessions, hosting the site, and securing it. You can object as described under opt-out. Browsing logs at the host fall here.</li>
           <li><strong>Contract / steps to post.</strong> If you create an account and publish, we process account and listing data to provide that service.</li>
-          <li><strong>Consent.</strong> Discord OAuth (you can cancel on Discord’s screen). Optional theme storage in your browser. Optional Google Fonts (you can block third-party fonts). You may withdraw consent by signing out, deleting the account, clearing site data, or blocking fonts.</li>
+          <li><strong>Consent.</strong> Discord OAuth (you can cancel on Discord’s screen). Optional theme storage in your browser. Optional message-alert choices and, if you turn Desktop alert on, the browser notification permission. Optional Google Fonts (you can block third-party fonts). You may withdraw consent by signing out, deleting the account, clearing site data, turning those toggles off, or blocking fonts.</li>
           <li><strong>Legal obligation.</strong> We may keep or disclose a narrow record if required by law, a valid order, or to defend the service.</li>
         </ul>
       </article>
@@ -223,6 +233,13 @@ export function privacyView() {
                 <td>Remember light or dark</td>
                 <td>Toggle the theme, or clear this site’s data in your browser. The site still works</td>
               </tr>
+              <tr>
+                <td><code>wfr-alerts</code></td>
+                <td>Browser local storage, not a cookie</td>
+                <td>Until you clear it</td>
+                <td>Remember Sound ping and Desktop alert</td>
+                <td>Turn the toggles off in the account menu, or clear this site’s data. Desktop alerts also follow the site’s notification permission in your browser</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -241,7 +258,7 @@ export function privacyView() {
         <p>A clan leader can invite you to be a recruiter on their listing. Nothing is published until you accept: while an invite is pending, only you and that listing's owner can see it. Once you accept, your in-game name and online status appear on their public post so recruits can whisper you, and you can leave from your account page at any time.</p>
         <p>An invite says what it is for. A plain recruiter only answers whispers. An owner can instead give you edit access, which lets you change that post — its text, images, tags and links — as well as bump and pause it; the owner can grant or withdraw that at any time, and it takes effect immediately. Nobody but the owner can delete a listing, decide who else is on it, or change what anyone else there can do. An owner who gives you edit access can see the same about you as before: nothing new is collected, and nothing new is published.</p>
         <p>While you have the site open, your listing can show an online dot so recruits can tell whether it is worth whispering you. New accounts start as Online; pick Invisible in the status menu to turn it off, and nothing about your presence is published. The status is self-declared, including “Online in game” — we cannot see what you are doing in Warframe.</p>
-        <p>Your Discord email, Discord id, password hash, and session tokens are not shown on listing cards.</p>
+        <p>Your Discord email, Discord id, password hash, session tokens, and on-site messages are not shown on listing cards.</p>
       </article>
 
       <article class="panel policy-section" id="share">
@@ -254,8 +271,8 @@ export function privacyView() {
               <tr><th>Recipient</th><th>Why</th><th>What they may see</th></tr>
             </thead>
             <tbody>
-              <tr><td>Railway (hosting and optional Postgres)</td><td>Run the app and store listings. When Cloudflare R2 is not configured, listing images stay on this host</td><td>The same data we store, plus ordinary server logs</td></tr>
-              <tr><td>Cloudflare R2</td><td>Store and serve listing images</td><td>The image files you upload, and ordinary request logs when a visitor loads those images</td></tr>
+              <tr><td>Railway (hosting and optional Postgres)</td><td>Run the app and store listings. When Cloudflare R2 is not configured, listing images and custom emoji images stay on this host</td><td>The same data we store, plus ordinary server logs</td></tr>
+              <tr><td>Cloudflare R2</td><td>Store and serve listing images and custom emoji images</td><td>The image files you or staff upload, and ordinary request logs when someone loads those images</td></tr>
               <tr><td>Discord</td><td>Sign-in and invite checks</td><td>That you authorized this app; Discord already has your Discord account. Invite lookups send the invite code</td></tr>
               <tr><td>Jina AI reader (<code>r.jina.ai</code>)</td><td>Read a public About Me page when Cloudflare blocks our server</td><td>The public forum profile URL you submitted, at the moment you click to check</td></tr>
               <tr><td>Google Fonts</td><td>Load Rajdhani</td><td>Your IP and browser when the font CSS and files load</td></tr>
@@ -280,14 +297,18 @@ export function privacyView() {
         <h2>How long we keep data</h2>
         <ul class="policy-bullets">
           <li><strong>Public listings</strong> until you or a moderator remove them, or you delete your account (which also removes your listings and uploads). A moderator hide takes a listing off the public board but keeps the owner’s record until it is removed.</li>
-          <li><strong>Listing reports</strong> until the operator resolves them or the project is shut down. Deleting your account clears your reporter id from reports you filed; the report text can remain for moderation history.</li>
-          <li><strong>Account records</strong> until you delete the account, or the operator deletes it for abuse or shutdown.</li>
+          <li><strong>Listing reports</strong> until an admin resolves them or the project is shut down. Deleting your account clears your reporter id from reports you filed; the report text can remain for moderation history.</li>
+          <li><strong>Account records</strong> until you delete the account, or an admin deletes it for abuse or shutdown.</li>
+          <li><strong>On-site messages</strong> until you leave the conversation or delete your account. Leaving a chat removes it from your inbox; the other person keeps their copy unless they leave too. Formatting and emoji you insert are stored with the message.</li>
           <li><strong>Sessions</strong> 30 days from issue, or until you sign out. Signing out removes that session token, and expired session records are deleted automatically. Other devices stay signed in until those sessions expire or you delete the account.</li>
           <li><strong>OAuth cookie</strong> 10 minutes.</li>
           <li><strong>Forum verification code</strong> on our side until you verify. The copy on Warframe Forums stays until you edit About Me.</li>
           <li><strong>Recruiter roster</strong> until you leave the listing, the owner removes you, the listing is deleted, or you delete your account, which withdraws you from every listing you recruited for.</li>
           <li><strong>Online status</strong> your chosen status until you change it or delete your account. The live “online right now” signal is memory-only: it expires about two and a half minutes after your last heartbeat, and a server restart clears it.</li>
+          <li><strong>Admin grants</strong> until another admin revokes them. A Discord id waiting for first sign-in is dropped when that person signs in (it becomes an admin flag on their account) or when the grant is cancelled.</li>
+          <li><strong>Custom emoji images</strong> until staff remove them from the Staff page. Removing one deletes that image from this host and from R2. Old messages that used it no longer show the picture.</li>
           <li><strong>Theme</strong> in your browser until you clear it.</li>
+          <li><strong>Message-alert choices</strong> in your browser until you clear them or turn the toggles off.</li>
           <li><strong>Host logs and backups</strong> according to Railway’s systems, and Cloudflare’s logs for listing images on R2. A deleted account is removed from the live database we control, and its listing images are deleted from this host and from R2; a host backup from before deletion might exist until that backup rotates. We do not keep a separate marketing archive.</li>
         </ul>
       </article>
@@ -324,6 +345,7 @@ export function privacyView() {
         <ul class="policy-bullets">
           <li><strong>Do nothing.</strong> There is no account to delete.</li>
           <li><strong>Opt out of the theme store.</strong> Clear this site’s cookies and local storage, or use your browser’s site-data controls. The light/dark switch will forget your choice.</li>
+          <li><strong>Opt out of message alerts.</strong> Turn Sound ping and Desktop alert off in the account menu, or revoke this site’s notification permission in your browser. Those alerts only fire while the site is open; we do not send them after you close the tab.</li>
           <li><strong>Opt out of Google Fonts.</strong> Block <code>fonts.googleapis.com</code> and <code>fonts.gstatic.com</code> with a browser extension or network filter. Pages still load.</li>
           <li><strong>Opt out of host logs.</strong> You cannot fully opt out of the fact that visiting a website creates a request. Use a VPN if you want to hide your IP from the host. We still will not put that IP in our app database.</li>
         </ul>
@@ -356,7 +378,7 @@ export function privacyView() {
       <article class="panel policy-section" id="california">
         <p class="kicker">16</p>
         <h2>California, other US state, and GDPR notes</h2>
-        <p><strong>Categories collected</strong> (California-style): identifiers (username, Discord id, email, session token), customer records (account timestamps), internet activity (pages you request, at the host), user content (listings and uploads), and inference limited to “this Discord account is old enough / email verified / forum code matched.” We do not collect precise geolocation, biometric, or payment data.</p>
+        <p><strong>Categories collected</strong> (California-style): identifiers (username, Discord id, email, session token), customer records (account timestamps), internet activity (pages you request, at the host), user content (listings, uploads, and on-site messages), and inference limited to “this Discord account is old enough / email verified / forum code matched.” We do not collect precise geolocation, biometric, or payment data.</p>
         <p><strong>Sale and share.</strong> We do not sell personal information and we do not share it for cross-context behavioral advertising. There is no “Do Not Sell” cookie because we are not in that business. If that changes, this policy will change first.</p>
         <p><strong>Sensitive data.</strong> Discord email may be treated as personal information. We do not use it to infer health, union, or religious data. Do not put sensitive data in a public listing.</p>
         <p><strong>Retention</strong> is described above. <strong>Sources</strong> are you, Discord, and the public forum profile you point us at.</p>

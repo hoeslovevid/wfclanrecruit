@@ -5,6 +5,7 @@ import { api } from "./api.js";
 import {
   activeFilterCount,
   accountView,
+  adminView,
   allianceCard,
   alliancePage,
   alliancePostView,
@@ -68,6 +69,18 @@ import {
 import { parseYouTubeId } from "./video.js";
 import { MEDIA_MAX, parseImageUrl, setUploadPublicBase } from "./media.js";
 import {
+  alertPlan,
+  claimAlert,
+  loadAlertPrefs,
+  notificationAllowed,
+  notificationAvailable,
+  playPing,
+  requestDesktopPermission,
+  saveAlertPrefs,
+  showMessageNotification,
+  unlockAudio,
+} from "./alerts.js";
+import {
   applyAllianceFilters,
   applyClanFilters,
   applyPlayerFilters,
@@ -103,6 +116,7 @@ const state = {
   players: [],
   threads: [],
   unread: 0,
+  emojis: [],
   auth: { discord: false, passwordRegister: false, minAgeDays: 7 },
 };
 
@@ -173,12 +187,23 @@ function closeMenus(except = null) {
 // Clicking away from a dropdown should dismiss it. <details> has no such
 // behaviour of its own - it stays open until its summary is clicked again,
 // which is why one left open followed you around the site.
+function closeEmojiPops() {
+  document.querySelectorAll("[data-emoji-pop]").forEach((pop) => {
+    pop.hidden = true;
+    pop.closest(".emoji-wrap")?.querySelector("[data-emoji-toggle]")?.setAttribute("aria-expanded", "false");
+  });
+}
+
 document.addEventListener("click", (event) => {
   closeMenus(event.target.closest(MENUS));
+  if (!event.target.closest(".emoji-wrap")) closeEmojiPops();
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") closeMenus();
+  if (event.key === "Escape") {
+    closeMenus();
+    closeEmojiPops();
+  }
 });
 
 function renderNav() {
@@ -190,6 +215,7 @@ function renderNav() {
   // The nav is rebuilt wholesale, which blanks the badge slot, so it is filled
   // again from the count already in memory rather than re-fetched.
   paintUnread();
+  paintAlertControls();
 }
 
 async function refresh() {
@@ -205,6 +231,15 @@ async function refresh() {
   state.clans = clansRes.clans;
   state.alliances = alliancesRes.alliances;
   state.players = playersRes.players;
+  if (state.user) {
+    try {
+      state.emojis = (await api.emojis()).emojis || [];
+    } catch {
+      state.emojis = state.emojis || [];
+    }
+  } else {
+    state.emojis = [];
+  }
   renderNav();
   startHeartbeat();
   startLive();
@@ -237,6 +272,51 @@ function startHeartbeat() {
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) sendHeartbeat();
 });
+
+document.addEventListener("pointerdown", () => unlockAudio(), { once: true });
+
+function paintAlertControls() {
+  const prefs = loadAlertPrefs();
+  const desktopOn = prefs.desktop && notificationAllowed();
+  document.querySelectorAll("[data-alert-sound]").forEach((el) => {
+    el.checked = prefs.sound;
+  });
+  document.querySelectorAll("[data-alert-desktop]").forEach((el) => {
+    el.checked = desktopOn;
+    el.disabled = !notificationAvailable();
+  });
+  const denied = notificationAvailable() && globalThis.Notification?.permission === "denied";
+  const missing = !notificationAvailable();
+  const note = missing
+    ? "This browser cannot show desktop alerts."
+    : denied
+      ? "Your browser blocked desktop alerts for this site."
+      : "";
+  document.querySelectorAll("[data-alert-note]").forEach((el) => showNote(el, note, "muted"));
+}
+
+async function pingIncoming(message, { viewing }) {
+  try {
+    const visible = document.visibilityState === "visible";
+    const prefs = loadAlertPrefs();
+    const plan = alertPlan({
+      viewing,
+      visible,
+      prefs,
+      canDesktop: notificationAllowed(),
+    });
+    if (plan.claim) {
+      const won = await claimAlert(message.id, { visible: visible || viewing });
+      if (!won) return;
+    }
+    if (plan.sound) playPing();
+    if (plan.desktop) {
+      showMessageNotification(message, { onOpen: (href) => go(href) });
+    }
+  } catch {
+    /* delivery already happened; a ping is optional */
+  }
+}
 
 // Repaint the menu in place. Re-rendering the nav would close the open
 // <details> the moment the user picked a status - and picking a status is
@@ -311,6 +391,30 @@ document.addEventListener("click", (event) => {
 
 // `input` rather than `change` would fire on every pixel of the drag.
 document.addEventListener("change", (event) => {
+  const sound = event.target.closest("[data-alert-sound]");
+  if (sound) {
+    saveAlertPrefs({ ...loadAlertPrefs(), sound: sound.checked });
+    if (sound.checked) {
+      unlockAudio();
+      playPing();
+    }
+    paintAlertControls();
+    return;
+  }
+  const desktop = event.target.closest("[data-alert-desktop]");
+  if (desktop) {
+    const prefs = loadAlertPrefs();
+    if (!desktop.checked) {
+      saveAlertPrefs({ ...prefs, desktop: false });
+      paintAlertControls();
+      return;
+    }
+    requestDesktopPermission().then((ok) => {
+      saveAlertPrefs({ ...prefs, desktop: ok });
+      paintAlertControls();
+    });
+    return;
+  }
   const keep = event.target.closest("[data-presence-keep]");
   if (!keep) return;
   const panel = keep.closest(".presence-panel");
@@ -389,10 +493,12 @@ function stopLive() {
 // Arriving anywhere else, it should only move the badge.
 function onIncoming(message) {
   const panel = app.querySelector("[data-conversation]");
-  if (panel && message.threadId === panel.dataset.threadId) {
+  const viewing = Boolean(panel && message.threadId === panel.dataset.threadId && panel.querySelector("[data-bubbles]"));
+  pingIncoming(message, { viewing });
+  if (viewing) {
     const bubbles = panel.querySelector("[data-bubbles]");
     if (bubbles) {
-      bubbles.insertAdjacentHTML("beforeend", messageBubble(message, state.user?.id));
+      bubbles.insertAdjacentHTML("beforeend", messageBubble(message, state.user?.id, state.emojis));
       bubbles.scrollTop = bubbles.scrollHeight;
       api
         .readThread(message.threadId)
@@ -505,7 +611,7 @@ async function openConversation(id) {
   try {
     const { thread, messages } = await readConversation(id);
     panel.dataset.threadId = thread.id;
-    panel.innerHTML = conversationHtml(thread, messages, state.user?.id);
+    panel.innerHTML = conversationHtml(thread, messages, state.user?.id, state.emojis);
     const bubbles = panel.querySelector("[data-bubbles]");
     if (bubbles) bubbles.scrollTop = bubbles.scrollHeight;
     bindConversation(panel, thread);
@@ -519,45 +625,66 @@ async function openConversation(id) {
 function bindConversation(panel, thread) {
   const form = panel.querySelector("[data-send-form]");
   const note = panel.querySelector("[data-send-note]");
+  const shell = form?.querySelector("[data-rich-editor-shell]");
   const box = form?.querySelector("textarea");
+  const editor = form?.querySelector("[data-rich-editor]");
   const count = panel.querySelector("[data-count]");
-  // Kept in step with the textarea's own maxlength rather than trusted to
-  // agree with it: the limit is MESSAGE_MAX in views.js, and reading it off
-  // the element means the counter cannot drift from what is enforced.
+  const max = Number(shell?.dataset.plainLimit || 2000);
+  // The budget is readable characters, the same cap the server enforces. HTML
+  // tags are free in the count, so a bold word is not more expensive than a
+  // plain one.
   const paintCount = () => {
-    if (count && box) count.textContent = `${box.value.length}/${box.maxLength} chars.`;
+    if (!count) return;
+    const used = editor ? plainTextFromHtml(editor.innerHTML).length : box?.value.length || 0;
+    count.textContent = `${used}/${max} chars.`;
   };
+  if (shell) bindRichTextField(shell, paintCount);
   const submit = async (event) => {
     event?.preventDefault();
-    const body = box.value.trim();
-    if (!body) return;
+    const body = (box?.value || "").trim();
+    if (!plainTextFromHtml(body)) return;
+    closeEmojiPops();
     // Cleared optimistically so a slow send cannot be submitted twice, but put
     // back if it fails: losing what someone typed is worse than an error.
-    box.value = "";
+    if (editor) {
+      editor.innerHTML = "";
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    } else if (box) {
+      box.value = "";
+    }
     try {
       const { message } = await api.send(thread.id, body);
       const bubbles = panel.querySelector("[data-bubbles]");
       if (bubbles) {
         if (!bubbles.querySelector(".bubble")) bubbles.innerHTML = "";
-        bubbles.insertAdjacentHTML("beforeend", messageBubble(message, state.user?.id));
+        bubbles.insertAdjacentHTML("beforeend", messageBubble(message, state.user?.id, state.emojis));
         bubbles.scrollTop = bubbles.scrollHeight;
       }
       showNote(note, "", "muted");
       paintCount();
       await loadInbox(thread.id);
     } catch (error) {
-      box.value = body;
+      if (editor) {
+        editor.innerHTML = toEditorHtml(body);
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+      } else if (box) {
+        box.value = body;
+      }
       paintCount();
       showNote(note, error.message);
     }
   };
   form?.addEventListener("submit", submit);
-  box?.addEventListener("input", paintCount);
   paintCount();
-  // Enter sends, Shift+Enter is a newline. Without this a two-line message
-  // becomes two messages.
-  box?.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey) submit(event);
+  // Enter sends, Shift+Enter is a newline. Enter inside a list still makes a
+  // new bullet - that is formatting, not a send.
+  editor?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+    const node = window.getSelection()?.anchorNode;
+    const el = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+    if (el?.closest("li, ul, ol")) return;
+    event.preventDefault();
+    submit(event);
   });
   // Re-opened rather than overwritten with a sentence. The old version painted
   // "Blocked." straight into the panel, so the block looked like it had come
@@ -579,7 +706,7 @@ function bindConversation(panel, thread) {
       if (thread.draft && blocking) {
         // Nothing was ever written, and the open route now refuses this pair.
         // There is no conversation to redraw - only an inbox to go back to.
-        panel.innerHTML = conversationHtml(null, [], state.user?.id);
+        panel.innerHTML = conversationHtml(null, [], state.user?.id, state.emojis);
         delete panel.dataset.threadId;
         await loadInbox();
         return;
@@ -603,7 +730,7 @@ function bindConversation(panel, thread) {
     }
     try {
       await api.deleteThread(event.currentTarget.dataset.deleteThread);
-      panel.innerHTML = conversationHtml(null, [], state.user?.id);
+      panel.innerHTML = conversationHtml(null, [], state.user?.id, state.emojis);
       delete panel.dataset.threadId;
       await refreshUnread();
       await loadInbox();
@@ -1141,6 +1268,147 @@ function bindForumForm() {
     } catch (error) {
       showNote(note, error.message);
       button.disabled = false;
+    }
+  });
+}
+
+function bindStaffForm() {
+  const form = app.querySelector("[data-staff-form]");
+  if (!form) return;
+  const note = app.querySelector("[data-staff-note]");
+  const input = form.querySelector("[data-staff-query]");
+  const picked = form.querySelector("[data-staff-user-id]");
+  const suggestions = form.querySelector("[data-staff-suggestions]");
+  let lookupTimer;
+  let lookupSeq = 0;
+  let options = [];
+  let active = -1;
+
+  function closeList() {
+    if (!suggestions) return;
+    suggestions.hidden = true;
+    input?.setAttribute("aria-expanded", "false");
+    input?.removeAttribute("aria-activedescendant");
+    active = -1;
+  }
+
+  function highlight(next) {
+    active = next;
+    options.forEach((option, index) => {
+      option.classList.toggle("is-active", index === active);
+      option.setAttribute("aria-selected", index === active ? "true" : "false");
+    });
+    if (active >= 0) {
+      input.setAttribute("aria-activedescendant", options[active].id);
+      options[active].scrollIntoView({ block: "nearest" });
+    } else {
+      input.removeAttribute("aria-activedescendant");
+    }
+  }
+
+  function choose(person) {
+    input.value = person.label;
+    if (picked) picked.value = person.id;
+    closeList();
+    input.focus();
+  }
+
+  function showList(people) {
+    options = people.map((person, index) => {
+      const option = document.createElement("li");
+      option.className = "combo-option";
+      option.id = `staff-option-${index}`;
+      option.setAttribute("role", "option");
+      option.setAttribute("aria-selected", "false");
+      option.textContent =
+        person.matched && person.matched !== person.label
+          ? `${person.label} (${person.matched})`
+          : person.label;
+      option.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        choose(person);
+      });
+      return option;
+    });
+    suggestions.replaceChildren(...options);
+    suggestions.hidden = !options.length;
+    input.setAttribute("aria-expanded", options.length ? "true" : "false");
+    highlight(-1);
+  }
+
+  input?.addEventListener("input", () => {
+    if (picked) picked.value = "";
+    if (note) note.hidden = true;
+    const q = input.value.trim();
+    clearTimeout(lookupTimer);
+    if (q.length < 2) {
+      showList([]);
+      return;
+    }
+    const seq = ++lookupSeq;
+    lookupTimer = setTimeout(async () => {
+      try {
+        const { people } = await api.searchStaff(q);
+        if (seq !== lookupSeq) return;
+        showList(people || []);
+      } catch {
+        if (seq === lookupSeq) showList([]);
+      }
+    }, 180);
+  });
+
+  input?.addEventListener("keydown", (event) => {
+    const open = suggestions && !suggestions.hidden && options.length;
+    if (event.key === "ArrowDown" && open) {
+      event.preventDefault();
+      highlight((active + 1) % options.length);
+      return;
+    }
+    if (event.key === "ArrowUp" && open) {
+      event.preventDefault();
+      highlight(active <= 0 ? options.length - 1 : active - 1);
+      return;
+    }
+    if (event.key === "Escape" && open) {
+      event.preventDefault();
+      closeList();
+    }
+  });
+
+  input?.addEventListener("blur", closeList);
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = form.querySelector("button[type='submit']");
+    if (button) button.disabled = true;
+    const data = new FormData(form);
+    const userId = String(data.get("userId") || "").trim();
+    const query = String(data.get("query") || "").trim();
+    try {
+      await api.grantAdmin(userId ? { userId } : { query });
+      await render();
+    } catch (error) {
+      showNote(note, error.message);
+      if (button) button.disabled = false;
+    }
+  });
+}
+
+function bindEmojiForm() {
+  const form = app.querySelector("[data-emoji-form]");
+  if (!form) return;
+  const note = app.querySelector("[data-emoji-note]");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = form.querySelector("button[type='submit']");
+    if (button) button.disabled = true;
+    try {
+      const { emojis } = await api.addEmoji(new FormData(form));
+      state.emojis = emojis || [];
+      await render();
+    } catch (error) {
+      showNote(note, error.message);
+      if (button) button.disabled = false;
     }
   });
 }
@@ -1740,6 +2008,21 @@ function decorateVideoMarks(editor) {
   });
 }
 
+function decorateCustomEmojis(editor) {
+  editor.querySelectorAll("img[data-emoji]").forEach((img) => {
+    const item = (state.emojis || []).find((entry) => entry.id === img.dataset.emoji);
+    if (!item) {
+      img.remove();
+      return;
+    }
+    img.className = "msg-emoji";
+    img.src = item.url;
+    img.alt = `:${item.name}:`;
+    img.contentEditable = "false";
+    img.draggable = false;
+  });
+}
+
 function ensureVideoMarker(editor) {
   if (!editor || editor.querySelector("[data-video]")) return;
   insertVideoAtEditor(editor);
@@ -1774,6 +2057,7 @@ function bindRichTextField(field, onChange) {
 
   function sync() {
     if (hasVideo) decorateVideoMarks(editor);
+    decorateCustomEmojis(editor);
     editor.querySelectorAll("a").forEach((link) => {
       const safe = isSafeHref(link.getAttribute("href"));
       if (!safe) {
@@ -1791,6 +2075,7 @@ function bindRichTextField(field, onChange) {
 
   editor.innerHTML = toEditorHtml(textarea.value);
   if (hasVideo) decorateVideoMarks(editor);
+  decorateCustomEmojis(editor);
   textarea.value = sanitizePostHtml(editor.innerHTML);
   paintPlaceholder();
 
@@ -1823,6 +2108,50 @@ function bindRichTextField(field, onChange) {
       document.execCommand("createLink", false, safe);
     }
     sync();
+  });
+
+  const emojiPop = field.querySelector("[data-emoji-pop]");
+  const emojiToggle = field.querySelector("[data-emoji-toggle]");
+  emojiToggle?.addEventListener("click", () => {
+    const willOpen = emojiPop?.hidden;
+    closeEmojiPops();
+    if (willOpen && emojiPop) {
+      emojiPop.hidden = false;
+      emojiToggle.setAttribute("aria-expanded", "true");
+    }
+  });
+  emojiPop?.addEventListener("click", (event) => {
+    const tab = event.target.closest("[data-emoji-tab]");
+    if (tab) {
+      const which = tab.dataset.emojiTab;
+      emojiPop.querySelectorAll("[data-emoji-tab]").forEach((btn) => {
+        const on = btn === tab;
+        btn.classList.toggle("is-active", on);
+        btn.setAttribute("aria-selected", on ? "true" : "false");
+      });
+      emojiPop.querySelectorAll("[data-emoji-pane]").forEach((pane) => {
+        pane.hidden = pane.dataset.emojiPane !== which;
+      });
+      return;
+    }
+    const unicode = event.target.closest("[data-insert-emoji]");
+    if (unicode) {
+      const char = unicode.dataset.insertEmoji || "";
+      if (limit && roomLeft() < char.length) return;
+      editor.focus();
+      document.execCommand("insertText", false, char);
+      sync();
+      return;
+    }
+    const custom = event.target.closest("[data-insert-custom]");
+    if (custom) {
+      const item = (state.emojis || []).find((entry) => entry.id === custom.dataset.insertCustom);
+      if (!item) return;
+      if (limit && roomLeft() < 2) return;
+      editor.focus();
+      document.execCommand("insertHTML", false, `<img data-emoji="${item.id}">`);
+      sync();
+    }
   });
 
   // The budget has to bite while typing, or the leader writes a paragraph the
@@ -2038,7 +2367,9 @@ async function render() {
           ? "Create an account — WF Clan Recruit"
           : path === "/login"
             ? "Sign in — WF Clan Recruit"
-            : "WF Clan Recruit — Warframe Clans & Alliances";
+            : path === "/admin"
+              ? "Staff — WF Clan Recruit"
+              : "WF Clan Recruit — Warframe Clans & Alliances";
 
   if (path === "/browse") {
     const { filters: initial, page: startPage } = filtersFromSearch(window.location.search);
@@ -2476,6 +2807,34 @@ async function render() {
     return;
   }
 
+  if (path === "/admin") {
+    if (!state.user) {
+      go("/login?next=/admin");
+      return;
+    }
+    if (!state.user.admin) {
+      app.innerHTML = `<section class="auth-card"><h1>Staff only</h1><p class="muted">This page is for people who already run the board.</p><p><a href="/account" data-link>Back to your account</a></p></section>`;
+      return;
+    }
+    let staff = { admins: [], pending: [] };
+    let reports = [];
+    try {
+      staff = await api.staff();
+    } catch {
+      app.innerHTML = `<section class="auth-card"><h1>Could not load staff</h1><p class="muted">Try again in a moment.</p></section>`;
+      return;
+    }
+    try {
+      reports = (await api.reports()).reports || [];
+    } catch {
+      reports = [];
+    }
+    app.innerHTML = adminView({ user: state.user, staff, reports, emojis: state.emojis });
+    bindStaffForm();
+    bindEmojiForm();
+    return;
+  }
+
   if (clanMatch) {
     const clan = await fullListing("clan", clanMatch[1]);
     if (!clan) {
@@ -2703,6 +3062,43 @@ document.addEventListener("click", async (event) => {
       await api.resolveReport(resolveReport.dataset.resolveReport, resolveReport.dataset.status);
       await refresh();
       render();
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
+  const revokeAdmin = event.target.closest("[data-revoke-admin]");
+  if (revokeAdmin) {
+    event.preventDefault();
+    if (!confirm("Remove admin access for this account?")) return;
+    try {
+      await api.revokeAdmin(revokeAdmin.dataset.revokeAdmin);
+      await render();
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
+  const revokePending = event.target.closest("[data-revoke-pending]");
+  if (revokePending) {
+    event.preventDefault();
+    if (!confirm("Cancel this waiting grant?")) return;
+    try {
+      await api.revokeAdmin(revokePending.dataset.revokePending);
+      await render();
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
+  const deleteEmoji = event.target.closest("[data-delete-emoji]");
+  if (deleteEmoji) {
+    event.preventDefault();
+    if (!confirm("Remove this emoji from the picker for everyone?")) return;
+    try {
+      const { emojis } = await api.deleteEmoji(deleteEmoji.dataset.deleteEmoji);
+      state.emojis = emojis || [];
+      await render();
     } catch (error) {
       alert(error.message);
     }

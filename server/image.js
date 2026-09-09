@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 export const IMAGE_MAX_EDGE = 960;
+export const EMOJI_MAX_EDGE = 128;
 
 let sharpLoader = null;
 
@@ -17,7 +18,7 @@ async function loadSharp() {
   return sharpLoader;
 }
 
-export async function resizeListingImage(filePath) {
+async function resizeToWebp(filePath, edge) {
   const sharp = await loadSharp();
   if (!sharp) return path.basename(filePath);
 
@@ -28,7 +29,7 @@ export async function resizeListingImage(filePath) {
   try {
     await sharp(filePath, { animated: false, failOn: "error" })
       .rotate()
-      .resize(IMAGE_MAX_EDGE, IMAGE_MAX_EDGE, { fit: "inside", withoutEnlargement: true })
+      .resize(edge, edge, { fit: "inside", withoutEnlargement: true })
       .webp({ quality: 80 })
       .toFile(tmp);
     await fs.rename(tmp, dest);
@@ -40,4 +41,12 @@ export async function resizeListingImage(filePath) {
     await fs.unlink(tmp).catch(() => {});
     throw error;
   }
+}
+
+export function resizeListingImage(filePath) {
+  return resizeToWebp(filePath, IMAGE_MAX_EDGE);
+}
+
+export function resizeEmojiImage(filePath) {
+  return resizeToWebp(filePath, EMOJI_MAX_EDGE);
 }

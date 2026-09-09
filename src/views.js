@@ -43,6 +43,7 @@ import {
 } from "./richtext.js";
 import { youTubeEmbedUrl, youTubeThumbUrl } from "./video.js";
 import { MEDIA_MAX, isUploadedImage, mediaList } from "./media.js";
+import { CUSTOM_EMOJI_MAX, UNICODE_GROUPS, findEmoji } from "./emojis.js";
 import {
   CONTACT_LABEL_MAX,
   CONTACT_LABEL_SUGGESTIONS,
@@ -546,7 +547,7 @@ function keepTick(minutes) {
 // which is a lot of nav for a site whose header is mostly navigation already.
 // They all answer "this is me, and here is what I can do about that", so they
 // live behind the avatar - the place people already reach for.
-export function accountMenu(user, badge = "") {
+export function accountMenu(user, badge = "", { messaging = true } = {}) {
   const presence = user.presence || {};
   const current = PRESENCE_LABELS[presence.status] ? presence.status : "invisible";
   const keepValues = user.keepMinutes || [0, 30, 60, 120, 240];
@@ -614,7 +615,18 @@ export function accountMenu(user, badge = "") {
           <div class="keep-ticks" aria-hidden="true">${ticks}</div>
         </div>
         <p class="muted presence-note" data-presence-note ${note ? "" : "hidden"}>${escapeHtml(note)}</p>
+        ${
+          messaging
+            ? `<div class="alert-block">
+          <p class="kicker">New messages</p>
+          <label class="alert-toggle"><input type="checkbox" data-alert-sound /> Sound ping</label>
+          <label class="alert-toggle"><input type="checkbox" data-alert-desktop /> Desktop alert</label>
+          <p class="muted presence-note" data-alert-note hidden></p>
+        </div>`
+            : ""
+        }
         <div class="account-links">
+          ${user.admin ? `<a href="/admin" data-link>Staff</a>` : ""}
           <a href="/account" data-link>Settings</a>
           <button type="button" data-logout>Sign out</button>
         </div>
@@ -1318,7 +1330,7 @@ function charCount(max) {
 //
 // `name` writes to a named textarea the form reads directly; a row inside a
 // repeatable list passes no name and is read out of the DOM into JSON instead.
-function richTextEditor(value, { label, placeholder = "", name = "", video = false, compact = true, limit = 0 } = {}) {
+function richTextEditor(value, { label, placeholder = "", name = "", video = false, compact = true, limit = 0, emoji = false, emojis = [] } = {}) {
   return `
     <div class="richtext" data-rich-editor-shell ${limit ? `data-plain-limit="${limit}"` : ""}>
       <div class="richtext-toolbar" role="toolbar" aria-label="${escapeHtml(label)} formatting">
@@ -1329,6 +1341,7 @@ function richTextEditor(value, { label, placeholder = "", name = "", video = fal
         <button class="richtext-btn" type="button" data-rt="olist" title="Numbered list">1.</button>
         <button class="richtext-btn" type="button" data-rt="link" title="Add link">Link</button>
         ${video ? `<button class="richtext-btn" type="button" data-insert-video title="Insert video at cursor">Video</button>` : ""}
+        ${emoji ? emojiToolbar(emojis) : ""}
       </div>
       <div
         class="richtext-editor${compact ? " is-compact" : ""}"
@@ -1340,6 +1353,48 @@ function richTextEditor(value, { label, placeholder = "", name = "", video = fal
         data-placeholder="${escapeHtml(placeholder)}"
       ></div>
       <textarea ${name ? `name="${escapeHtml(name)}"` : ""} hidden>${escapeHtml(toEditorHtml(value || ""))}</textarea>
+    </div>
+  `;
+}
+
+function emojiToolbar(custom = []) {
+  const unicode = UNICODE_GROUPS.map(
+    (group) => `
+      <div class="emoji-group">
+        <p class="kicker">${escapeHtml(group.label)}</p>
+        <div class="emoji-chars">${group.chars
+          .map(
+            (char) =>
+              `<button class="emoji-pick" type="button" data-insert-emoji="${escapeHtml(char)}" title="${escapeHtml(
+                char
+              )}">${char}</button>`
+          )
+          .join("")}</div>
+      </div>`
+  ).join("");
+  const customGrid = custom.length
+    ? `<div class="emoji-chars">${custom
+        .map(
+          (item) =>
+            `<button class="emoji-pick emoji-pick-custom" type="button" data-insert-custom="${escapeHtml(
+              item.id
+            )}" title=":${escapeHtml(item.name)}:"><img src="${escapeHtml(item.url)}" alt=":${escapeHtml(
+              item.name
+            )}:" /></button>`
+        )
+        .join("")}</div>`
+    : `<p class="muted emoji-empty">Staff can add custom emojis from the Staff page.</p>`;
+  return `
+    <div class="emoji-wrap">
+      <button class="richtext-btn" type="button" data-emoji-toggle title="Emoji" aria-expanded="false" aria-haspopup="true">😊</button>
+      <div class="emoji-pop" data-emoji-pop hidden>
+        <div class="emoji-tabs" role="tablist">
+          <button class="emoji-tab is-active" type="button" data-emoji-tab="unicode" role="tab" aria-selected="true">Emoji</button>
+          <button class="emoji-tab" type="button" data-emoji-tab="custom" role="tab" aria-selected="false">Custom</button>
+        </div>
+        <div class="emoji-pane" data-emoji-pane="unicode" role="tabpanel">${unicode}</div>
+        <div class="emoji-pane" data-emoji-pane="custom" role="tabpanel" hidden>${customGrid}</div>
+      </div>
     </div>
   `;
 }
@@ -1808,7 +1863,7 @@ export function accountView({ user, clans, alliances, players = [], reports = []
       }
       <p class="lead">${
         admin
-          ? "Edit, bump, pause, or remove any listing. Open reports are at the bottom."
+          ? "Edit, bump, pause, or remove any listing. Add other admins from <a href=\"/admin\" data-link>Staff</a>."
           : "Edit your listing, bump it, pause recruiting, or remove it."
       }</p>
     </section>
@@ -2223,6 +2278,140 @@ function reportsPanel(reports) {
     </section>`;
 }
 
+function staffBadges(person) {
+  const bits = [];
+  if (person.you) bits.push(`<span class="chip">You</span>`);
+  if (person.env) bits.push(`<span class="chip">Password operator</span>`);
+  return bits.join(" ");
+}
+
+function staffRow(person) {
+  const who = person.discordUsername || person.username || "Admin";
+  const discord = person.discordId
+    ? `<p class="muted staff-id">${escapeHtml(person.discordId)}${
+        person.discordUsername ? ` · ${escapeHtml(person.discordUsername)}` : ""
+      }</p>`
+    : `<p class="muted">No Discord linked</p>`;
+  const locked = person.you || person.env;
+  return `
+    <div class="list-row">
+      <div>
+        <strong>${escapeHtml(who)}</strong> ${staffBadges(person)}
+        ${discord}
+      </div>
+      <div class="list-actions">
+        ${
+          locked
+            ? ""
+            : `<button class="btn btn-ghost" type="button" data-revoke-admin="${escapeHtml(person.id)}">Remove</button>`
+        }
+      </div>
+    </div>`;
+}
+
+export function adminView({ staff = { admins: [], pending: [] }, reports = [], emojis = [] }) {
+  const admins = staff.admins || [];
+  const pending = staff.pending || [];
+  return `
+    <section class="page-hero">
+      <p class="eyebrow">Staff</p>
+      <h1>Run the board</h1>
+      <p class="lead">Add another admin from this page: look up an account that already signed in, or paste a Discord user ID if they have not. Hide and edit listings stay on the listing pages and in Settings. Reports are below.</p>
+    </section>
+    <section class="section">
+      <div class="panel">
+        <p class="kicker">Add admin</p>
+        <h2>Grant from the dashboard</h2>
+        <form class="stack staff-form" data-staff-form>
+          <label class="field">
+            <span>Their name on this site</span>
+            <div class="combo">
+              <input
+                name="query"
+                data-staff-query
+                role="combobox"
+                aria-expanded="false"
+                aria-controls="staff-suggestions"
+                aria-autocomplete="list"
+                autocomplete="off"
+                required
+                maxlength="40"
+              />
+              <ul class="combo-list" id="staff-suggestions" role="listbox" aria-label="Matching accounts" data-staff-suggestions hidden></ul>
+            </div>
+            <input type="hidden" name="userId" data-staff-user-id value="" />
+          </label>
+          <p class="muted">Type their Warframe name, Discord name, or username. Suggestions appear as you type. If they have not signed in here yet, paste their Discord user ID instead (Developer Mode → right-click → Copy User ID).</p>
+          <p class="error" data-staff-note hidden></p>
+          <button class="btn btn-primary" type="submit">Add admin</button>
+        </form>
+      </div>
+    </section>
+    <section class="section">
+      <div class="section-head"><h2>Admins</h2><p class="muted">${admins.length} live</p></div>
+      <div class="list">${admins.map(staffRow).join("")}</div>
+    </section>
+    <section class="section">
+      <div class="section-head"><h2>Waiting to sign in</h2><p class="muted">${pending.length} pending</p></div>
+      ${
+        pending.length
+          ? `<div class="list">${pending
+              .map(
+                (item) => `
+        <div class="list-row">
+          <div>
+            <strong class="staff-id">${escapeHtml(item.discordId)}</strong>
+            <p class="muted">Granted${item.grantedAt ? ` ${timeAgo(item.grantedAt)}` : ""}. They become staff on their next Discord sign-in.</p>
+          </div>
+          <div class="list-actions">
+            <button class="btn btn-ghost" type="button" data-revoke-pending="${escapeHtml(item.discordId)}">Cancel</button>
+          </div>
+        </div>`
+              )
+              .join("")}</div>`
+          : `<div class="panel"><p class="muted">No Discord IDs waiting. Paste one above if they do not have an account yet.</p></div>`
+      }
+    </section>
+    <section class="section">
+      <div class="section-head"><h2>Custom emojis</h2><p class="muted">${emojis.length} of ${CUSTOM_EMOJI_MAX}</p></div>
+      <div class="panel">
+        <p class="muted">These show in the message picker for everyone. A small square PNG or WEBP works best.</p>
+        <form class="stack staff-form" data-emoji-form>
+          <label class="field">
+            <span>Short name</span>
+            <input name="name" required maxlength="24" pattern="[A-Za-z0-9_]{2,24}" placeholder="lotus" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>Image</span>
+            <input name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" required />
+          </label>
+          <p class="error" data-emoji-note hidden></p>
+          <button class="btn btn-primary" type="submit">Add emoji</button>
+        </form>
+      </div>
+      ${
+        emojis.length
+          ? `<div class="list emoji-admin-list">${emojis
+              .map(
+                (item) => `
+        <div class="list-row">
+          <img class="msg-emoji msg-emoji-lg" src="${escapeHtml(item.url)}" alt=":${escapeHtml(item.name)}:" />
+          <div>
+            <strong>:${escapeHtml(item.name)}:</strong>
+          </div>
+          <div class="list-actions">
+            <button class="btn btn-ghost" type="button" data-delete-emoji="${escapeHtml(item.id)}">Remove</button>
+          </div>
+        </div>`
+              )
+              .join("")}</div>`
+          : `<div class="panel"><p class="muted">None yet. Add one above and it lands in every message picker.</p></div>`
+      }
+    </section>
+    ${reportsPanel(reports)}
+  `;
+}
+
 export function guideView() {
   return `
     <section class="page-hero">
@@ -2488,7 +2677,7 @@ export function navAccount(user, { messaging = true } = {}) {
           ? `<a class="btn btn-ghost nav-messages" href="/messages" data-link>Messages<span data-unread-slot></span></a>`
           : ""
       }
-      ${accountMenu(user, badge)}
+      ${accountMenu(user, badge, { messaging })}
     `;
   }
   // One button, not two. Signing in and creating an account were separate
@@ -2968,7 +3157,21 @@ export function threadListHtml(threads, activeId = "") {
   return threads.map((thread) => threadRow(thread, activeId)).join("");
 }
 
-export function messageBubble(message, meId) {
+export function messageBodyHtml(body, emojis = []) {
+  const html = sanitizePostHtml(toEditorHtml(body)).replace(
+    /<span\b[^>]*\bdata-video\b[^>]*>[\s\S]*?<\/span>/gi,
+    ""
+  );
+  return html.replace(/<img\b[^>]*\bdata-emoji="([^"]+)"[^>]*>/gi, (_all, id) => {
+    const item = findEmoji(emojis, id);
+    if (!item) return "";
+    return `<img class="msg-emoji" data-emoji="${escapeHtml(item.id)}" alt=":${escapeHtml(
+      item.name
+    )}:" src="${escapeHtml(item.url)}">`;
+  });
+}
+
+export function messageBubble(message, meId, emojis = []) {
   const mine = message.senderId && message.senderId === meId;
   return `
     <div class="bubble-row${mine ? " is-mine" : ""}">
@@ -2976,13 +3179,13 @@ export function messageBubble(message, meId) {
         <p class="bubble-who muted">${escapeHtml(
           message.from?.name || "(deleted account)"
         )}${verifiedTick(message.from?.verified)} · ${escapeHtml(messageTime(message.createdAt))}</p>
-        <p class="bubble-body">${escapeHtml(message.body)}</p>
+        <div class="bubble-body">${messageBodyHtml(message.body, emojis)}</div>
       </div>
     </div>
   `;
 }
 
-export function conversationHtml(thread, messages, meId) {
+export function conversationHtml(thread, messages, meId, emojis = []) {
   if (!thread) {
     return `<div class="conversation-empty"><p class="muted">Pick a conversation.</p></div>`;
   }
@@ -3032,7 +3235,7 @@ export function conversationHtml(thread, messages, meId) {
     <div class="bubbles" data-bubbles>
       ${
         messages.length
-          ? messages.map((item) => messageBubble(item, meId)).join("")
+          ? messages.map((item) => messageBubble(item, meId, emojis)).join("")
           : `<p class="muted">No messages yet. Say hello.</p>`
       }
     </div>
@@ -3042,11 +3245,18 @@ export function conversationHtml(thread, messages, meId) {
       thread.blocked
         ? `<p class="muted conversation-blocked">Ignored. Neither of you can write to the other. Stop ignoring them to start again.</p>`
         : `${reportForm("message", thread.id)}
-    <form class="composer-bar" data-send-form>
+    <form class="composer-bar message-composer" data-send-form>
       <p class="composer-count muted" data-count aria-hidden="true">0/${MESSAGE_MAX} chars.</p>
-      <label class="sr-only" for="message-body">Message</label>
-      <textarea id="message-body" name="body" rows="2" maxlength="${MESSAGE_MAX}" placeholder="Write a message… (Enter to send)"></textarea>
-      <button class="btn btn-primary" type="submit">Send</button>
+      ${richTextEditor("", {
+        label: "Message",
+        placeholder: "Write a message…",
+        name: "body",
+        compact: true,
+        limit: MESSAGE_MAX,
+        emoji: true,
+        emojis,
+      })}
+      <button class="btn btn-primary composer-send" type="submit">Send</button>
       <p class="error" data-send-note hidden></p>
     </form>`
     }
