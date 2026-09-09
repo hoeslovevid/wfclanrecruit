@@ -153,6 +153,34 @@ function closeDrawer() {
   document.body.classList.remove("drawer-open");
 }
 
+// The dropdown-style disclosures: they float over the page rather than sit in
+// it, so an open one is a thing covering what you are trying to read, not a
+// piece of state worth carrying around.
+//
+// Deliberately NOT every <details> on the site. Filter groups, the report form
+// and the password fields are in-flow accordions - part of the page you are
+// reading - and dismissing those when you click elsewhere would throw away the
+// thing you opened them for. A filter group is even rendered open on purpose
+// when it holds an active filter.
+const MENUS = ".account-menu, .thread-menu";
+
+function closeMenus(except = null) {
+  document.querySelectorAll(`${MENUS}`).forEach((menu) => {
+    if (menu !== except && menu.open) menu.open = false;
+  });
+}
+
+// Clicking away from a dropdown should dismiss it. <details> has no such
+// behaviour of its own - it stays open until its summary is clicked again,
+// which is why one left open followed you around the site.
+document.addEventListener("click", (event) => {
+  closeMenus(event.target.closest(MENUS));
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeMenus();
+});
+
 function renderNav() {
   const html = navAccount(state.user, {
     messaging: state.auth.messaging !== false,
@@ -1991,6 +2019,10 @@ function packForm(form, ...listFields) {
 async function render() {
   const { path, params } = parseRoute();
   closeDrawer();
+  // Leaving a page closes its menus. Page content is rebuilt below, so this is
+  // really about the nav: the account menu lives outside #app and would
+  // otherwise still be hanging open on the page you just navigated to.
+  closeMenus();
   setActiveNav(path);
   window.scrollTo({ top: 0, behavior: "instant" });
   const messagesMatch = path === "/messages";
