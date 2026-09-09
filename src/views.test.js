@@ -5,6 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  accountMenu,
   conversationHtml,
   navAccount,
   ignoreListHtml,
@@ -175,4 +176,84 @@ test("a thread row falls back to the mark only when there is no picture", () => 
   const html = threadRow({ ...thread, with: { ...plain, discordAvatarUrl: null } });
   assert.doesNotMatch(html, /cdn\.discordapp\.com/);
   assert.match(html, /<img/);
+});
+
+// --- Account menu ----------------------------------------------------------
+
+const me = {
+  id: "u1",
+  username: "Gunson",
+  forumName: "--Gunson--",
+  forumVerified: true,
+  presence: { status: "invisible", keepMinutes: 0 },
+  keepMinutes: [0, 30, 60, 120, 240],
+};
+
+test("the account menu offers all three statuses and marks the current one", () => {
+  const html = accountMenu(me);
+  assert.match(html, /data-presence-pick="online"/);
+  assert.match(html, /data-presence-pick="ingame"/);
+  assert.match(html, /data-presence-pick="invisible"/);
+  assert.match(html, /data-presence-pick="invisible" aria-pressed="true"/);
+  assert.match(html, /data-presence-pick="online" aria-pressed="false"/);
+});
+
+// Your own third choice is "Invisible" - you are signed in and not
+// broadcasting. What everyone else sees beside your name stays "Offline".
+test("your own status reads Invisible while others still see you Offline", () => {
+  assert.match(accountMenu(me), /Invisible/);
+  assert.match(messagePresence({ online: false }), /Offline/);
+});
+
+test("the hold slider is notched over the offered values, not raw minutes", () => {
+  const html = accountMenu({ ...me, presence: { status: "online", keepMinutes: 120 } });
+  assert.match(html, /data-keep-values="0,30,60,120,240"/);
+  assert.match(html, /max="4"/);
+  // 120 minutes is the fourth offered value, so the slider sits on notch 3.
+  assert.match(html, /value="3"/);
+});
+
+test("an unrecognised hold falls back to the first notch rather than -1", () => {
+  const html = accountMenu({ ...me, presence: { status: "online", keepMinutes: 999 } });
+  assert.match(html, /value="0"/);
+});
+
+test("the menu carries settings and sign out, so the nav no longer has to", () => {
+  const html = accountMenu(me);
+  assert.match(html, /href="\/account"/);
+  assert.match(html, /data-logout/);
+  const nav = navAccount(me);
+  assert.match(nav, /account-menu/);
+  assert.match(nav, /href="\/messages"/);
+});
+
+test("the hold is disabled and dimmed while you are invisible", () => {
+  const html = accountMenu({ ...me, presence: { status: "invisible", keepMinutes: 120 } });
+  assert.match(html, /class="keep-block is-off"/);
+  assert.match(html, /disabled/);
+});
+
+test("the hold is live again as soon as you are visible", () => {
+  const html = accountMenu({ ...me, presence: { status: "online", keepMinutes: 120 } });
+  assert.doesNotMatch(html, /is-off/);
+  assert.doesNotMatch(html, /disabled/);
+});
+
+// An invisible status is not being broadcast, so nothing is being held and
+// saying "held until" would describe something that is not happening.
+test("no held-until note while invisible, even with a hold stored", () => {
+  const soon = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const hidden = accountMenu({ ...me, presence: { status: "invisible", keepMinutes: 120, until: soon } });
+  assert.match(hidden, /presence-note[^>]*hidden/);
+  const shown = accountMenu({ ...me, presence: { status: "online", keepMinutes: 120, until: soon } });
+  assert.match(shown, /Held until/);
+});
+
+// Swapping a short label for a long one used to resize the summary and shove
+// the rest of the nav sideways.
+test("the status line reserves the widest label so the nav cannot shift", () => {
+  for (const status of ["online", "ingame", "invisible"]) {
+    const html = accountMenu({ ...me, presence: { status, keepMinutes: 0 } });
+    assert.match(html, /account-status-sizer[^>]*>Online in game</, `sizer missing for ${status}`);
+  }
 });

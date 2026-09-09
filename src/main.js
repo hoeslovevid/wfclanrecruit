@@ -27,6 +27,8 @@ import {
   messagesView,
   threadListHtml,
   unreadBadge,
+  PRESENCE_CLASS,
+  PRESENCE_LABELS,
   playerCard,
   playerSections,
   playerPage,
@@ -39,7 +41,6 @@ import {
   previewClan,
   previewPlayer,
   heldUntilNote,
-  presenceSummary,
   readLinkRows,
   readRoleRows,
   rosterPanel,
@@ -210,35 +211,82 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // Repaint the menu in place. Re-rendering the nav would close the open
-// <details> the moment the user picked a status.
+// <details> the moment the user picked a status - and picking a status is
+// exactly when you want to see it take.
 function paintPresence(presence) {
-  document.querySelectorAll(".presence-menu").forEach((menu) => {
-    const summary = menu.querySelector("summary");
-    if (summary) summary.innerHTML = presenceSummary(presence.status);
-    const select = menu.querySelector("[data-presence-status]");
-    if (select) select.value = presence.status;
+  const status = presence.status;
+  document.querySelectorAll(".account-menu").forEach((menu) => {
+    const label = menu.querySelector("[data-presence-label]");
+    // Only the text node, never the whole label: the invisible sizer beside it
+    // is what keeps the summary a constant width, and textContent would eat it.
+    const text = menu.querySelector("[data-presence-text]");
+    if (text) text.textContent = PRESENCE_LABELS[status] || "";
+    if (label) label.className = `account-status ${PRESENCE_CLASS[status] || ""}`;
+    // Nothing is being broadcast while you are invisible, so there is nothing
+    // to hold. The slider stays where you left it rather than resetting - go
+    // back to Online and the hold you picked is still the one you get.
+    const off = status === "invisible";
+    menu.querySelector("[data-keep-block]")?.classList.toggle("is-off", off);
+    const slider = menu.querySelector("[data-presence-keep]");
+    if (slider) slider.disabled = off;
+    menu.querySelectorAll("[data-presence-pick]").forEach((pick) => {
+      const on = pick.dataset.presencePick === status;
+      pick.classList.toggle("is-active", on);
+      pick.setAttribute("aria-pressed", String(on));
+    });
     // The hold is part of the state, not just a one-off action: repaint it too,
     // or the menu goes back to claiming "while tab is open" the moment it is
     // redrawn.
     const keep = menu.querySelector("[data-presence-keep]");
-    if (keep) keep.value = String(presence.keepMinutes ?? 0);
+    if (keep) {
+      const at = keepValuesOf(keep).indexOf(Number(presence.keepMinutes ?? 0));
+      if (at >= 0) keep.value = String(at);
+    }
   });
 }
 
-document.addEventListener("change", async (event) => {
-  const panel = event.target.closest(".presence-panel");
-  if (!panel) return;
-  const status = panel.querySelector("[data-presence-status]")?.value;
-  const keep = Number(panel.querySelector("[data-presence-keep]")?.value || 0);
+// The slider's notches are indices; the minutes live on the element that drew
+// them, so the client never invents a hold the server did not offer.
+function keepValuesOf(input) {
+  return String(input.dataset.keepValues || "")
+    .split(",")
+    .map(Number)
+    .filter((value) => Number.isFinite(value));
+}
+
+// Both controls submit the whole pair, because the server takes status and
+// hold together: changing one must resend the other or it is silently reset.
+async function submitPresence(panel, { status, keepIndex } = {}) {
+  const keep = panel.querySelector("[data-presence-keep]");
+  const values = keep ? keepValuesOf(keep) : [0];
+  const at = keepIndex ?? Number(keep?.value || 0);
   const note = panel.querySelector("[data-presence-note]");
+  const wanted =
+    status || panel.querySelector("[data-presence-pick].is-active")?.dataset.presencePick;
   try {
-    const { presence } = await api.setPresence(status, keep);
+    const { presence } = await api.setPresence(wanted, values[at] ?? 0);
     if (state.user) state.user.presence = presence;
     paintPresence(presence);
-    showNote(note, presence.until ? heldUntilNote(presence.until) : "", "muted");
+    const held = presence.status !== "invisible" && presence.until && presence.keepMinutes;
+    showNote(note, held ? heldUntilNote(presence.until) : "", "muted");
   } catch (error) {
     showNote(note, error.message);
   }
+}
+
+document.addEventListener("click", (event) => {
+  const pick = event.target.closest("[data-presence-pick]");
+  if (!pick) return;
+  const panel = pick.closest(".presence-panel");
+  if (panel) submitPresence(panel, { status: pick.dataset.presencePick });
+});
+
+// `input` rather than `change` would fire on every pixel of the drag.
+document.addEventListener("change", (event) => {
+  const keep = event.target.closest("[data-presence-keep]");
+  if (!keep) return;
+  const panel = keep.closest(".presence-panel");
+  if (panel) submitPresence(panel, { keepIndex: Number(keep.value) });
 });
 
 // --- Messaging -------------------------------------------------------------

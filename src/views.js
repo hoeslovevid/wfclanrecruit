@@ -491,11 +491,18 @@ function whisperCardButton(clan) {
 // "Offline" rather than "Invisible": it is the default now, and a default
 // should read as a plain state rather than as something you switched on. The
 // stored value stays `invisible`, so nothing has to migrate.
-const PRESENCE_LABELS = {
+// Your own three choices. "Invisible" rather than "Offline" on purpose: you
+// are signed in and choosing not to broadcast, which is not the same as being
+// away. Other people still see you as OFFLINE beside your name - that is what
+// your absence looks like from outside, and messagePresence() says so.
+export const PRESENCE_LABELS = {
   online: "Online",
   ingame: "Online in game",
-  invisible: "Offline",
+  invisible: "Invisible",
 };
+
+// The colour each status carries wherever it is written down.
+export const PRESENCE_CLASS = { online: "is-online", ingame: "is-ingame", invisible: "is-invisible" };
 
 // Self-declared, like warframe.market's: Warframe has no public presence API,
 // so the label says what the leader chose, never what the game reports.
@@ -512,49 +519,105 @@ export function presenceDot(item, { silent = false } = {}) {
   }</span>`;
 }
 
-export function presenceSummary(status) {
-  const current = PRESENCE_LABELS[status] ? status : "online";
-  return `${presenceDot({ online: current !== "invisible", presenceStatus: current }, { silent: true })}<span>${escapeHtml(
-    PRESENCE_LABELS[current]
-  )}</span>`;
-}
-
 function keepLabel(minutes) {
   if (minutes === 0) return "While tab is open";
   return minutes < 60 ? `${minutes}m` : `${minutes / 60}h`;
+}
+
+// The widest status label, for reserving the space all three share.
+function longestPresenceLabel() {
+  return Object.values(PRESENCE_LABELS).reduce((a, b) => (b.length > a.length ? b : a), "");
+}
+
+// The same thing, short enough to sit under a slider notch. "While tab is
+// open" is the honest label and far too long for the tick, so the tick says
+// "Tab" and the full sentence rides along as its title.
+function keepTick(minutes) {
+  return minutes === 0 ? "Tab" : keepLabel(minutes);
 }
 
 // A held status survives a reload - the deadline is on the user record - but
 // the menu used to redraw with nothing selected, so it always claimed "while
 // tab is open" and the hold looked broken. Render what is actually stored, and
 // say when it runs out.
-export function presenceControl(user) {
+//
+// One menu rather than four controls. Status, the account page and signing out
+// were three separate things in the bar plus a name that was itself a link,
+// which is a lot of nav for a site whose header is mostly navigation already.
+// They all answer "this is me, and here is what I can do about that", so they
+// live behind the avatar - the place people already reach for.
+export function accountMenu(user, badge = "") {
   const presence = user.presence || {};
   const current = PRESENCE_LABELS[presence.status] ? presence.status : "invisible";
+  const keepValues = user.keepMinutes || [0, 30, 60, 120, 240];
   const heldFor = Number(presence.keepMinutes || 0);
-  const options = Object.entries(PRESENCE_LABELS)
+  // The slider moves in notches, not minutes: the allowed holds are a short
+  // list, so its value is an index into that list and the server never sees a
+  // number nobody offered.
+  const heldAt = Math.max(0, keepValues.indexOf(heldFor));
+  const picks = Object.entries(PRESENCE_LABELS)
     .map(
       ([value, label]) =>
-        `<option value="${value}" ${value === current ? "selected" : ""}>${escapeHtml(label)}</option>`
+        `<button class="status-pick ${PRESENCE_CLASS[value]}${
+          value === current ? " is-active" : ""
+        }" type="button" data-presence-pick="${value}" aria-pressed="${value === current}">${escapeHtml(
+          label
+        )}</button>`
     )
     .join("");
-  const keeps = (user.keepMinutes || [0, 30, 60, 120, 240])
+  const ticks = keepValues
     .map(
       (minutes) =>
-        `<option value="${minutes}" ${minutes === heldFor ? "selected" : ""}>${escapeHtml(
-          keepLabel(minutes)
-        )}</option>`
+        `<span title="${escapeHtml(keepLabel(minutes))}">${escapeHtml(keepTick(minutes))}</span>`
     )
     .join("");
-  const note = presence.until && heldFor ? heldUntilNote(presence.until) : "";
+  const note =
+    current !== "invisible" && presence.until && heldFor ? heldUntilNote(presence.until) : "";
   return `
-    <details class="presence-menu">
-      <summary title="Your status">${presenceSummary(current)}</summary>
-      <div class="presence-panel">
+    <details class="account-menu">
+      <summary title="Your account and status">
+        ${userAvatar(user, 32, "account-face")}
+        <span class="account-who">
+          <span class="account-name">${escapeHtml(displayName(user))}${verifiedTick(
+            user.forumVerified
+          )}</span>
+          <span class="account-status ${PRESENCE_CLASS[current]}" data-presence-label
+            >${
+              // The three labels are different lengths, so swapping them used
+              // to resize the summary and shove the whole nav sideways. The
+              // longest one is rendered underneath, invisible, in the same grid
+              // cell: the cell is always as wide as the widest status, whatever
+              // is showing on top of it.
+              ""
+            }<span class="account-status-sizer" aria-hidden="true">${escapeHtml(
+              longestPresenceLabel()
+            )}</span><span data-presence-text>${escapeHtml(PRESENCE_LABELS[current])}</span></span>
+        </span>
+        ${badge}<i class="account-caret" aria-hidden="true"></i>
+      </summary>
+      <div class="account-panel presence-panel">
         <p class="kicker">Select your status</p>
-        <label class="field"><span class="sr-only">Status</span><select data-presence-status>${options}</select></label>
-        <label class="field"><span>And keep status for</span><select data-presence-keep>${keeps}</select></label>
+        <div class="status-picks" role="group" aria-label="Select your status">${picks}</div>
+        <div class="keep-block${current === "invisible" ? " is-off" : ""}" data-keep-block>
+          <p class="keep-label" id="keep-label">And keep status for</p>
+          <input
+            type="range"
+            min="0"
+            max="${keepValues.length - 1}"
+            step="1"
+            value="${heldAt}"
+            data-presence-keep
+            data-keep-values="${escapeHtml(keepValues.join(","))}"
+            aria-labelledby="keep-label"
+            ${current === "invisible" ? "disabled" : ""}
+          />
+          <div class="keep-ticks" aria-hidden="true">${ticks}</div>
+        </div>
         <p class="muted presence-note" data-presence-note ${note ? "" : "hidden"}>${escapeHtml(note)}</p>
+        <div class="account-links">
+          <a href="/account" data-link>Settings</a>
+          <button type="button" data-logout>Sign out</button>
+        </div>
       </div>
     </details>
   `;
@@ -2417,17 +2480,15 @@ export function navAccount(user, { messaging = true } = {}) {
     const badge = invites
       ? `<span class="nav-badge" aria-label="${invites} recruiter invite${invites === 1 ? "" : "s"}">${invites}</span>`
       : "";
+    // Messages stays out here: it carries an unread count, and a badge behind
+    // a closed menu is a badge nobody sees.
     return `
-      ${presenceControl(user)}
       ${
         messaging
           ? `<a class="btn btn-ghost nav-messages" href="/messages" data-link>Messages<span data-unread-slot></span></a>`
           : ""
       }
-      <a class="btn btn-ghost nav-account" href="/account" data-link>${userAvatar(user)}<span>${escapeHtml(
-        displayName(user)
-      )}</span>${verifiedTick(user.forumVerified)}${badge}</a>
-      <button class="btn btn-ghost" type="button" data-logout>Sign out</button>
+      ${accountMenu(user, badge)}
     `;
   }
   // One button, not two. Signing in and creating an account were separate

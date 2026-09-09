@@ -411,7 +411,10 @@ button { cursor: pointer; }
 .drawer .account-slot > * { width: 100%; }
 /* Full width like its siblings, but the dot and its label stay together on the
    left rather than being pushed to opposite ends of the row. */
-.drawer .presence-menu > summary { width: 100%; }
+.drawer .account-menu, .drawer .account-menu > summary { width: 100%; }
+/* In the drawer there is no bar to hang a dropdown off, so the panel sits in
+   the flow rather than floating over a column it would overflow. */
+.drawer .account-panel { position: static; width: auto; margin-top: 10px; box-shadow: none; }
 /* The floating panel is anchored with `right: 0` to a summary that sits at the
    left edge of the drawer, which put a 240px panel 91px off the side of the
    screen. In the drawer there is nothing to float over, so it opens in flow. */
@@ -1498,36 +1501,141 @@ code {
   box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 22%, transparent);
 }
 
-.presence-menu { position: relative; }
-.presence-menu > summary {
+/* The account menu: who you are, what you are broadcasting, and the two
+   things you can do about it. Anchored on the avatar because that is where
+   people already reach for "me". */
+.account-menu { position: relative; }
+.account-menu > summary {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: 10px;
+  padding: 5px 10px 5px 6px;
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: 999px;
   background: var(--ghost);
   color: var(--text);
-  font-size: 13px;
   cursor: pointer;
   list-style: none;
 }
-.presence-menu > summary::-webkit-details-marker { display: none; }
-.presence-menu > summary:hover { background: var(--ghost-hover); }
-.presence-panel {
+.account-menu > summary::-webkit-details-marker { display: none; }
+.account-menu > summary:hover { background: var(--ghost-hover); }
+.account-menu[open] > summary { border-color: var(--accent); }
+.account-face { border-radius: 50%; object-fit: cover; }
+/* Name over status, the way the reference stacks them. min-width:0 so a long
+   forum name ellipsises instead of stretching the bar. */
+.account-who { display: grid; gap: 1px; min-width: 0; text-align: left; }
+.account-name {
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+/* Both children share one grid cell, so the cell is as wide as the widest
+   status label and the summary never changes size when the status does. */
+.account-status {
+  display: grid;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.account-status > * { grid-area: 1 / 1; }
+.account-status-sizer { visibility: hidden; }
+.account-status.is-online { color: var(--ok); }
+.account-status.is-ingame { color: #8b5cf6; }
+.account-caret {
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  opacity: 0.55;
+  transition: transform 0.15s ease;
+}
+.account-menu[open] .account-caret { transform: rotate(180deg); }
+
+.account-panel {
   position: absolute;
   right: 0;
-  z-index: 20;
-  width: 240px;
+  z-index: 30;
+  width: 260px;
   margin-top: 8px;
   padding: 14px;
   border: 1px solid var(--line-strong);
   border-radius: 12px;
-  background: var(--panel, var(--ghost));
+  background: var(--panel, var(--surface));
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
 }
-.presence-panel .field { margin-bottom: 10px; }
-.presence-note { margin: 0; font-size: 12px; }
+.account-panel .kicker { margin: 0 0 8px; text-align: center; }
+
+/* Three rows, each in its own colour, so the choice is legible before it is
+   read - and the current one is marked by weight and a rule, not colour
+   alone. */
+.status-picks { display: grid; gap: 2px; }
+.status-pick {
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.status-pick:hover { background: var(--ghost-hover); }
+.status-pick.is-online { color: var(--ok); }
+.status-pick.is-ingame { color: #8b5cf6; }
+.status-pick.is-active { background: var(--chip); box-shadow: inset 2px 0 0 currentColor; }
+
+.keep-block { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+/* Greyed rather than removed: the control still says what it would do, and
+   the panel does not change height when you go invisible and come back. */
+.keep-block.is-off { opacity: 0.4; }
+.keep-block.is-off .keep-label,
+.keep-block.is-off .keep-ticks { color: var(--muted); }
+.keep-block input[type="range"]:disabled { cursor: not-allowed; }
+.keep-label { margin: 0 0 8px; font-size: 12px; font-weight: 650; color: var(--muted); }
+.keep-block input[type="range"] { width: 100%; margin: 0; accent-color: var(--accent); }
+.keep-ticks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+/* The end labels would otherwise hang past the track they belong to. */
+.keep-ticks span { flex: 1; text-align: center; }
+.keep-ticks span:first-child { text-align: left; }
+.keep-ticks span:last-child { text-align: right; }
+
+.account-links {
+  display: grid;
+  gap: 2px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.account-links a,
+.account-links button {
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.account-links a:hover,
+.account-links button:hover { background: var(--ghost-hover); }
+.presence-note { margin: 8px 0 0; font-size: 12px; }
 
 .whisper {
   margin-top: 20px;
@@ -2837,7 +2945,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .user-avatar { width: 24px; height: 24px; }
 .account-avatar { width: 64px; height: 64px; border-radius: 16px; }
 
-.nav-account { display: inline-flex; align-items: center; gap: 8px; }
 
 .account-identity { display: flex; align-items: center; gap: 16px; }
 .account-identity h1 { margin: 0; }
