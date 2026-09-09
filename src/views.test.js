@@ -6,6 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   accountMenu,
+  accountView,
   adminView,
   conversationHtml,
   navAccount,
@@ -296,6 +297,30 @@ test("the account menu offers Staff only to admins", () => {
   const html = accountMenu({ ...me, admin: true });
   assert.match(html, /href="\/admin"/);
   assert.match(html, />Staff</);
+});
+
+test("the settings page gives staff a dashboard card", () => {
+  const html = accountView({
+    user: { ...me, admin: true, canPublish: true },
+    clans: [],
+    alliances: [],
+    players: [],
+    reports: [],
+  });
+  assert.match(html, /staff-jump/);
+  assert.match(html, /href="\/admin"/);
+  assert.match(html, /Open staff dashboard/);
+});
+
+test("the settings page hides the dashboard card from everyone else", () => {
+  const html = accountView({
+    user: { ...me, admin: false, canPublish: true },
+    clans: [],
+    alliances: [],
+    players: [],
+  });
+  assert.doesNotMatch(html, /staff-jump/);
+  assert.doesNotMatch(html, /Open staff dashboard/);
 });
 
 test("the staff page lists live admins and waiting Discord IDs", () => {

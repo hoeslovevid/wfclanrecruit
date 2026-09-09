@@ -506,20 +506,28 @@ async function processListingImages(req, res) {
       res.status(400).json({ error: "That image could not be read. Use a PNG, JPG, WEBP, or GIF." });
       return false;
     }
-    if (!r2Enabled()) continue;
-    try {
-      const publicUrl = await putR2Object(file.filename, await readLocalFile(file.path));
-      if (!publicUrl) throw new Error("R2 put returned nothing");
-      file.publicUrl = publicUrl;
-      fs.rmSync(file.path, { force: true });
-    } catch (error) {
-      // Swallowing this is what made a misconfigured bucket look like a
-      // browser problem: every upload failed and nothing reached the logs.
-      console.error("Listing image could not be stored on R2:", error);
-      discardUploads(req);
-      res.status(503).json({ error: "Could not store that image. Try again in a moment." });
-      return false;
-    }
+    if (!(await storeUploadRemotely(req, res, file, "listing"))) return false;
+  }
+  return true;
+}
+
+// Same hop listing photos take: resize on this host, copy to R2, delete the
+// local file. Custom emojis are smaller (128px) but they must not linger in
+// /uploads/ when the board already has a media bucket.
+async function storeUploadRemotely(req, res, file, kind = "listing") {
+  if (!r2Enabled()) return true;
+  try {
+    const publicUrl = await putR2Object(file.filename, await readLocalFile(file.path), kind);
+    if (!publicUrl) throw new Error("R2 put returned nothing");
+    file.publicUrl = publicUrl;
+    fs.rmSync(file.path, { force: true });
+  } catch (error) {
+    // Swallowing this is what made a misconfigured bucket look like a
+    // browser problem: every upload failed and nothing reached the logs.
+    console.error(`${kind} image could not be stored on R2:`, error);
+    discardUploads(req);
+    res.status(503).json({ error: "Could not store that image. Try again in a moment." });
+    return false;
   }
   return true;
 }
@@ -537,19 +545,7 @@ async function processEmojiImage(req, res) {
     res.status(400).json({ error: "That image could not be read. Use a PNG, JPG, WEBP, or GIF." });
     return false;
   }
-  if (!r2Enabled()) return true;
-  try {
-    const publicUrl = await putR2Object(file.filename, await readLocalFile(file.path));
-    if (!publicUrl) throw new Error("R2 put returned nothing");
-    file.publicUrl = publicUrl;
-    fs.rmSync(file.path, { force: true });
-  } catch (error) {
-    console.error("Emoji image could not be stored on R2:", error);
-    discardUploads(req);
-    res.status(503).json({ error: "Could not store that image. Try again in a moment." });
-    return false;
-  }
-  return true;
+  return storeUploadRemotely(req, res, file, "emoji");
 }
 
 function assertListingFiles(req, res) {

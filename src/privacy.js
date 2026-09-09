@@ -138,7 +138,7 @@ export function privacyView() {
         <p>If you use Messages, we store what you write, including formatting, any links you insert, and any emoji you pick (standard characters from the picker, or custom images staff have added). We also store who is in the conversation and the listing it is about. Messages are not shown on the public board. The other person in the thread can read them.</p>
 
         <h3>Custom emojis</h3>
-        <p>Staff can upload small custom emoji images (PNG, JPG, WEBP, or GIF; we resize them and store WebP files on this host or Cloudflare R2). Signed-in users see those images in the message picker. The files stay until staff remove them. They are not listing images, but they are stored and served the same way.</p>
+        <p>Staff can upload small custom emoji images (PNG, JPG, WEBP, or GIF). We resize them the same way as listing photos and, when Cloudflare R2 is configured, copy them to that bucket and delete the local file. Signed-in users see those images in the message picker. The files stay until staff remove them.</p>
 
         <h3>Technical data we do not store in the app database</h3>
         <ul class="policy-bullets">

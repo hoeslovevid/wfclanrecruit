@@ -2635,9 +2635,11 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   .recruitment-hero { grid-template-columns: 1fr; padding-block: 40px 30px; }
   .hero-emblem { display: none; }
   .recruitment-hero h1 { font-size: clamp(38px, 7vw, 54px); }
-  .discovery-paths, .advertise-panel { grid-template-columns: 1fr; }
+  .discovery-paths, .advertise-panel, .staff-jump { grid-template-columns: 1fr; }
   .discovery-paths { gap: 16px; }
   .advertise-panel { padding: 26px; gap: 22px; }
+  .staff-jump { padding: 22px; gap: 16px; }
+  .staff-jump-actions { justify-content: flex-start; }
   .discovery-bar select { width: 105px; font-size: 13px; padding-inline: 6px; }
   .discovery-bar .search { gap: 2px; }
   .discovery-bar input { padding-inline: 8px; font-size: 14px; }
@@ -3144,3 +3146,18 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 
 .account-identity { display: flex; align-items: center; gap: 16px; }
 .account-identity h1 { margin: 0; }
+.staff-jump {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 24px;
+  padding: 24px 28px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  box-shadow: var(--inset);
+}
+.staff-jump h2 { margin: 0 0 6px; font-size: 28px; }
+.staff-jump .muted { margin: 0; max-width: 52ch; }
+.staff-jump-actions { display: flex; justify-content: flex-end; }

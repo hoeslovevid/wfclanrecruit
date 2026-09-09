@@ -1845,6 +1845,24 @@ export function authView(mode, next = "/", { error = "", discord = true, passwor
   `;
 }
 
+function staffJumpPanel(user) {
+  if (!user?.admin) return "";
+  return `
+    <section class="section">
+      <div class="staff-jump">
+        <div>
+          <p class="eyebrow">Staff</p>
+          <h2>Run the board from here</h2>
+          <p class="muted">Add other admins, custom emojis for messages, and listing reports. Hide and edit stay on the listing pages.</p>
+        </div>
+        <div class="staff-jump-actions">
+          <a class="btn btn-primary" href="/admin" data-link>Open staff dashboard</a>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 export function accountView({ user, clans, alliances, players = [], reports = [] }) {
   const admin = Boolean(user.admin);
   return `
@@ -1863,10 +1881,11 @@ export function accountView({ user, clans, alliances, players = [], reports = []
       }
       <p class="lead">${
         admin
-          ? "Edit, bump, pause, or remove any listing. Add other admins from <a href=\"/admin\" data-link>Staff</a>."
+          ? "Edit, bump, pause, or remove any listing. Staff tools sit in the card below."
           : "Edit your listing, bump it, pause recruiting, or remove it."
       }</p>
     </section>
+    ${staffJumpPanel(user)}
     <section class="section">
       <div class="panel">
         <p class="kicker">Posting access</p>
@@ -2375,7 +2394,7 @@ export function adminView({ staff = { admins: [], pending: [] }, reports = [], e
     <section class="section">
       <div class="section-head"><h2>Custom emojis</h2><p class="muted">${emojis.length} of ${CUSTOM_EMOJI_MAX}</p></div>
       <div class="panel">
-        <p class="muted">These show in the message picker for everyone. A small square PNG or WEBP works best.</p>
+        <p class="muted">These show in the message picker for everyone. A small square PNG or WEBP works best. The file is stored the same way as a clan image: resized here, then on Cloudflare when that bucket is set up, so it does not sit on this host.</p>
         <form class="stack staff-form" data-emoji-form>
           <label class="field">
             <span>Short name</span>

@@ -42,6 +42,8 @@ test("object keys are listings/<timestamp>-<hex>.ext and nothing else", () => {
   assert.equal(objectKey("listings/../secret.webp"), null);
   assert.equal(objectKey("note.txt"), null);
   assert.equal(objectKey("gallery.webp"), null);
+  assert.equal(objectKey("1736150400000-aabbccddeeff.webp", "emoji"), "emojis/1736150400000-aabbccddeeff.webp");
+  assert.equal(objectKey("1736150400000-aabbccddeeff.webp", "other"), null);
 });
 
 test("checksum headers R2 rejects are stripped before the request is signed", () => {
@@ -64,6 +66,10 @@ test("a public URL only maps back to a key under our host and prefix", () => {
   const url = joinPublicUrl(BASE, "listings/1736150400000-aabbccddeeff.webp");
   assert.equal(url, `${BASE}/listings/1736150400000-aabbccddeeff.webp`);
   assert.equal(keyFromPublicUrl(url, BASE), "listings/1736150400000-aabbccddeeff.webp");
+  assert.equal(
+    keyFromPublicUrl(`${BASE}/emojis/1736150400000-aabbccddeeff.webp`, BASE),
+    "emojis/1736150400000-aabbccddeeff.webp"
+  );
   assert.equal(keyFromPublicUrl(`${BASE}/listings/../passwd`, BASE), null);
   assert.equal(keyFromPublicUrl("https://evil.test/listings/1736150400000-aabbccddeeff.webp", BASE), null);
   assert.equal(keyFromPublicUrl("/uploads/1736150400000-aabbccddeeff.webp", BASE), null);

@@ -2,7 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 const KEY_OK = /^[0-9]+-[a-f0-9]+\.(webp|png|jpe?g|gif)$/i;
-const PREFIX = "listings/";
+const PREFIX = {
+  listing: "listings/",
+  emoji: "emojis/",
+};
 
 // AWS SDK v3.729+ sends CRC32 checksums on PutObject by default. R2's S3 API
 // still 501s those headers on full-object uploads, so restore the older
@@ -79,19 +82,21 @@ export function joinPublicUrl(base, key) {
   return `${String(base || "").replace(/\/$/, "")}/${String(key || "").replace(/^\//, "")}`;
 }
 
-export function objectKey(filename) {
+export function objectKey(filename, kind = "listing") {
   const base = path.basename(String(filename || ""));
-  if (!KEY_OK.test(base)) return null;
-  return `${PREFIX}${base}`;
+  const folder = PREFIX[kind];
+  if (!folder || !KEY_OK.test(base)) return null;
+  return `${folder}${base}`;
 }
 
 export function keyFromPublicUrl(url, base = r2PublicUrl()) {
   if (!base || typeof url !== "string") return null;
-  const prefix = `${base.replace(/\/$/, "")}/`;
-  if (!url.startsWith(prefix)) return null;
-  const key = url.slice(prefix.length);
-  if (!key.startsWith(PREFIX) || key.includes("..") || key.includes("\\")) return null;
-  const name = key.slice(PREFIX.length);
+  const origin = `${base.replace(/\/$/, "")}/`;
+  if (!url.startsWith(origin)) return null;
+  const key = url.slice(origin.length);
+  const folder = Object.values(PREFIX).find((prefix) => key.startsWith(prefix));
+  if (!folder || key.includes("..") || key.includes("\\")) return null;
+  const name = key.slice(folder.length);
   if (!KEY_OK.test(name) || name.includes("/")) return null;
   return key;
 }
@@ -156,12 +161,12 @@ async function loadClient() {
   return clientLoader;
 }
 
-export async function putR2Object(filename, body) {
+export async function putR2Object(filename, body, kind = "listing") {
   const cfg = r2Config();
-  const key = objectKey(filename);
+  const key = objectKey(filename, kind);
   if (!cfg) return null;
   if (!key) {
-    console.warn("R2 put skipped; filename was not a listing object:", filename);
+    console.warn("R2 put skipped; filename was not a stored object:", filename);
     return null;
   }
   const client = await loadClient();
