@@ -1747,7 +1747,7 @@ export function postView({ user, alliances = [], draft = {}, auth = {} }) {
                 : `<p class="field-help">Publish the clan first, then come back here to invite recruiters.</p>`
             }
           </fieldset>
-          ${transferField(draft, user)}
+          ${transferField(draft, user, "clan")}
           <div class="playstyle-groups">${playstyleGroups(draft.playstyles || [])}</div>
           ${rolesField(draft)}
         </div>
@@ -1848,6 +1848,7 @@ export function alliancePostView({ user, draft = {}, auth = {}, clans = [] }) {
                 : `<p class="muted">Post clan listings first, then attach them here.</p>`
             }</div>
           </fieldset>
+          ${transferField(draft, user, "alliance")}
         </div>
         <div class="form-block">
           <h2>The post</h2>
@@ -2048,28 +2049,46 @@ export function accountView({ user, clans, alliances, players = [], reports = []
 function transferInvitesPanel(user) {
   const offers = user.transferInvites || [];
   if (!offers.length) return "";
+  const clans = offers.filter((item) => item.kind !== "alliance").length;
+  const alliances = offers.filter((item) => item.kind === "alliance").length;
+  const heading =
+    clans && alliances
+      ? "Listings have been offered to you"
+      : alliances
+        ? offers.length === 1
+          ? "An alliance post has been offered to you"
+          : "Alliance posts have been offered to you"
+        : offers.length === 1
+          ? "A clan post has been offered to you"
+          : "Clan posts have been offered to you";
   return `
     <section class="section">
       <div class="panel">
         <p class="kicker">Ownership offers</p>
-        <h2>${offers.length === 1 ? "A clan post has been offered to you" : "Clan posts have been offered to you"}</h2>
-        <p class="muted">Accepting makes the listing yours: you edit it, bump it, decide who else is on it, and you are the only one who can delete it. Whoever offered it keeps edit access, and recruits whisper the Warframe name on your verified profile.</p>
+        <h2>${heading}</h2>
+        <p class="muted">Accepting makes the listing yours: you edit it, bump it, and you are the only one who can delete it. Whoever offered it keeps edit access. On a clan post, recruits whisper the Warframe name on your verified profile.</p>
         <div class="list">
           ${offers
-            .map(
-              (offer) => `
+            .map((offer) => {
+              const kind = offer.kind === "alliance" ? "alliance" : "clan";
+              const spec = LISTING_KINDS[kind];
+              return `
             <div class="list-row">
               <div>
                 <strong>${escapeHtml(offer.name)}</strong>
-                <p class="muted">[${escapeHtml(offer.tag)}]</p>
+                <p class="muted">[${escapeHtml(offer.tag)}] · ${kind === "alliance" ? "Alliance" : "Clan"}</p>
               </div>
               <div class="list-actions">
-                <a class="btn btn-ghost" href="/clans/${escapeHtml(offer.id)}" data-link>Read the post</a>
-                <button class="btn btn-ghost" type="button" data-transfer-accept="${escapeHtml(offer.id)}">Accept</button>
-                <button class="btn btn-ghost btn-danger" type="button" data-transfer-decline="${escapeHtml(offer.id)}">Decline</button>
+                <a class="btn btn-ghost" href="${spec.open}/${escapeHtml(offer.id)}" data-link>Read the post</a>
+                <button class="btn btn-ghost" type="button" data-transfer-accept="${escapeHtml(
+                  offer.id
+                )}" data-transfer-kind="${kind}">Accept</button>
+                <button class="btn btn-ghost btn-danger" type="button" data-transfer-decline="${escapeHtml(
+                  offer.id
+                )}" data-transfer-kind="${kind}">Decline</button>
               </div>
-            </div>`
-            )
+            </div>`;
+            })
             .join("")}
         </div>
         <p class="muted" data-transfer-invite-note hidden></p>
@@ -2119,28 +2138,32 @@ function recruitingOnPanel(user) {
       <div class="section-head"><h2>You recruit for</h2></div>
       <div class="list">
         ${listings
-          .map(
-            (item) => `
+          .map((item) => {
+            const kind = item.kind === "alliance" ? "alliance" : "clan";
+            const spec = LISTING_KINDS[kind];
+            return `
           <div class="list-row">
             <div>
               <strong>${escapeHtml(item.name)}</strong>
-              <p class="muted">[${escapeHtml(item.tag)}] · ${
+              <p class="muted">[${escapeHtml(item.tag)}] · ${kind === "alliance" ? "Alliance" : "Clan"} · ${
                 item.role === "editor"
                   ? "your name is on this post, and you can edit it"
                   : "your name is on this post"
               }</p>
             </div>
             <div class="list-actions">
-              <a class="btn btn-ghost" href="/clans/${escapeHtml(item.id)}" data-link>Open</a>
+              <a class="btn btn-ghost" href="${spec.open}/${escapeHtml(item.id)}" data-link>Open</a>
               ${
                 item.role === "editor"
-                  ? `<a class="btn btn-ghost" href="/post?id=${escapeHtml(item.id)}" data-link>Edit</a>`
+                  ? `<a class="btn btn-ghost" href="${spec.edit}?id=${escapeHtml(item.id)}" data-link>Edit</a>`
                   : ""
               }
-              <button class="btn btn-ghost btn-danger" type="button" data-recruiter-leave="${escapeHtml(item.id)}">Leave</button>
+              <button class="btn btn-ghost btn-danger" type="button" data-recruiter-leave="${escapeHtml(
+                item.id
+              )}" data-recruiter-kind="${kind}">Leave</button>
             </div>
-          </div>`
-          )
+          </div>`;
+          })
           .join("")}
       </div>
     </section>
@@ -2254,11 +2277,11 @@ export function rosterPanel(roster = [], max = 5, { owner = true } = {}) {
 // Handing the post over. Owner-only and deliberately plain about what it costs:
 // this is the one control on the page that gives away the ability to delete the
 // listing, so it says so before it is used rather than after.
-function transferField(draft, user) {
+function transferField(draft, user, kind = "clan") {
   const owner = Boolean(draft.id) && (!draft.ownerId || !user?.id || draft.ownerId === user.id || user.admin);
   if (!draft.id || !owner) return "";
   return `
-    <fieldset class="fieldset" data-transfer-for="${escapeHtml(draft.id)}">
+    <fieldset class="fieldset" data-transfer-for="${escapeHtml(draft.id)}" data-transfer-kind="${escapeHtml(kind)}">
       <legend>Owner</legend>
       <p class="field-help">Hand this listing to someone else — the leader it belongs to, or whoever takes over next. They have to accept, and nothing moves until they do. Once they do, the post is theirs: you keep edit access, but not the ability to delete it.</p>
       <div data-transfer-slot><p class="muted">Loading…</p></div>
@@ -2673,6 +2696,16 @@ export function guideView() {
           <li>Bump at least every 21 days or the listing goes stale and Discord is hidden.</li>
           <li>You can pause recruiting or remove your own posts from the account page. Moderators can hide a listing from the board without deleting it.</li>
           <li>The <a href="/privacy" data-link>privacy policy</a> lists what we store and how to download or delete it.</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="kicker">For other apps</p>
+        <h3>Read the board as JSON</h3>
+        <p class="muted">Clans, alliances, and players are available as a read-only feed. Send a User-Agent that names your app. There is no key, and you cannot post, bump, or message through it.</p>
+        <ul class="guide-rules">
+          <li><code>GET /api/v1</code> — what the feed is and which query parameters it takes.</li>
+          <li><code>GET /api/v1/clans</code>, <code>/api/v1/alliances</code>, <code>/api/v1/players</code> — a page of cards. One post is <code>/api/v1/clans/:id</code> (and the same for alliances and players).</li>
+          <li>Default page size is 25, 50 at most. Recruiting listings only, unless you pass <code>recruiting=0</code>.</li>
         </ul>
       </article>
       <div class="row guide-actions">

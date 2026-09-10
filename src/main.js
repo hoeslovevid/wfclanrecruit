@@ -1066,6 +1066,7 @@ function bindTransfer() {
   const box = app.querySelector("[data-transfer-for]");
   if (!box) return;
   const id = box.dataset.transferFor;
+  const kind = box.dataset.transferKind === "alliance" ? "alliance" : "clan";
   const slot = box.querySelector("[data-transfer-slot]");
   const paint = (transfer) => {
     slot.innerHTML = transferPanel(transfer);
@@ -1084,7 +1085,7 @@ function bindTransfer() {
         return;
       }
       try {
-        const { transfer } = await api.offerTransfer(id, username);
+        const { transfer } = await api.offerTransfer(id, username, kind);
         paint(transfer);
         showNote(
           slot.querySelector("[data-transfer-note]"),
@@ -1097,7 +1098,7 @@ function bindTransfer() {
     });
     slot.querySelector("[data-transfer-cancel]")?.addEventListener("click", async () => {
       try {
-        await api.cancelTransfer(id);
+        await api.cancelTransfer(id, kind);
         paint(null);
       } catch (error) {
         showNote(note(), error.message);
@@ -1105,7 +1106,7 @@ function bindTransfer() {
     });
   };
   api
-    .roster(id)
+    .listingTransfer(id, kind)
     .then(({ transfer }) => paint(transfer || null))
     .catch((error) => {
       slot.innerHTML = `<p class="muted">${error.message}</p>`;
@@ -1343,17 +1344,17 @@ function bindRecruiters() {
     button.addEventListener("click", () => respond(button.dataset.inviteDecline, false))
   );
   const transferNote = app.querySelector("[data-transfer-invite-note]");
-  const answerTransfer = async (id, accept) => {
+  const answerTransfer = async (id, accept, kind) => {
     if (
       accept &&
       !confirm(
-        "Take ownership of this listing? It becomes yours to edit, bump and delete, and recruits will whisper your verified Warframe name."
+        "Take ownership of this listing? It becomes yours to edit, bump and delete, and on a clan post recruits will whisper your verified Warframe name."
       )
     ) {
       return;
     }
     try {
-      await api.respondToTransfer(id, accept);
+      await api.respondToTransfer(id, accept, kind);
       await refresh();
       await render();
     } catch (error) {
@@ -1361,16 +1362,22 @@ function bindRecruiters() {
     }
   };
   app.querySelectorAll("[data-transfer-accept]").forEach((button) =>
-    button.addEventListener("click", () => answerTransfer(button.dataset.transferAccept, true))
+    button.addEventListener("click", () =>
+      answerTransfer(button.dataset.transferAccept, true, button.dataset.transferKind)
+    )
   );
   app.querySelectorAll("[data-transfer-decline]").forEach((button) =>
-    button.addEventListener("click", () => answerTransfer(button.dataset.transferDecline, false))
+    button.addEventListener("click", () =>
+      answerTransfer(button.dataset.transferDecline, false, button.dataset.transferKind)
+    )
   );
 
   app.querySelectorAll("[data-recruiter-leave]").forEach((button) =>
     button.addEventListener("click", async () => {
       try {
-        await api.removeRecruiter(button.dataset.recruiterLeave, state.user.id);
+        const kind = button.dataset.recruiterKind === "alliance" ? "alliance" : "clan";
+        if (kind === "alliance") await api.removeAllianceRecruiter(button.dataset.recruiterLeave, state.user.id);
+        else await api.removeRecruiter(button.dataset.recruiterLeave, state.user.id);
         await refresh();
         await render();
       } catch (error) {
@@ -2677,8 +2684,11 @@ async function render() {
       app.innerHTML = `<section class="auth-card"><h1>Listing not found</h1><p class="muted">That alliance post is gone or the link is wrong.</p></section>`;
       return;
     }
-    if (draft?.id && state.user && draft.ownerId !== state.user.id && !state.user.admin) {
-      app.innerHTML = `<section class="auth-card"><h1>Not allowed</h1><p class="muted">You can only edit your own posts.</p></section>`;
+    const editorHere = (state.user?.recruitingOn || []).some(
+      (item) => item.id === draft?.id && item.role === "editor"
+    );
+    if (draft?.id && state.user && draft.ownerId !== state.user.id && !state.user.admin && !editorHere) {
+      app.innerHTML = `<section class="auth-card"><h1>Not allowed</h1><p class="muted">You do not have edit access to that post.</p></section>`;
       return;
     }
     app.innerHTML = alliancePostView({
@@ -2687,6 +2697,7 @@ async function render() {
       auth: state.auth,
       clans: state.clans,
     });
+    bindTransfer();
     const form = app.querySelector("#alliance-form");
     if (!form) {
       bindForumForm();

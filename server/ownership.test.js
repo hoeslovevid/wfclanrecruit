@@ -138,6 +138,22 @@ test("offers waiting on a person are found across every listing", () => {
       offerTransfer(listing({ id: "clan-c", name: "Gamma", tag: "CCC" }), "user-3"),
     ],
   };
-  assert.deepEqual(transfersFor(db, "user-2"), [{ id: "clan-a", name: "Alpha", tag: "AAA" }]);
+  assert.deepEqual(transfersFor(db, "user-2"), [{ id: "clan-a", name: "Alpha", tag: "AAA", kind: "clan" }]);
   assert.deepEqual(transfersFor(db, "user-4"), []);
+});
+
+test("an alliance offer is found the same way as a clan offer", () => {
+  const db = {
+    clans: [offerTransfer(listing(), "user-2")],
+    alliances: [
+      offerTransfer(
+        { id: "all-a", name: "Steel", tag: "STL", ownerId: "user-1", recruiters: [] },
+        "user-2"
+      ),
+    ],
+  };
+  assert.deepEqual(transfersFor(db, "user-2"), [
+    { id: "clan-a", name: "Alpha", tag: "AAA", kind: "clan" },
+    { id: "all-a", name: "Steel", tag: "STL", kind: "alliance" },
+  ]);
 });

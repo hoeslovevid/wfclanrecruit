@@ -98,9 +98,11 @@ export function applyTransfer(listing, newOwnerId, now = new Date().toISOString(
 // Offers waiting on this user, across every listing. The mirror of
 // pendingInvitesFor in recruiters.js, and read by the account page.
 export function transfersFor(db, userId) {
-  return (db.clans || [])
-    .filter((clan) => normalizeTransfer(clan)?.toUserId === userId)
-    .map((clan) => ({ id: clan.id, name: clan.name, tag: clan.tag }));
+  const from = (list, kind) =>
+    (list || [])
+      .filter((item) => normalizeTransfer(item)?.toUserId === userId)
+      .map((item) => ({ id: item.id, name: item.name, tag: item.tag, kind }));
+  return [...from(db.clans, "clan"), ...from(db.alliances, "alliance")];
 }
 
 // Whether this user has anything to answer on this listing. Used to keep the

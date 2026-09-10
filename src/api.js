@@ -57,11 +57,22 @@ export const api = {
     request(`/api/clans/${id}/recruiters/${encodeURIComponent(userId)}`, { method: "DELETE" }),
   respondToInvite: (id, accept) =>
     request(`/api/clans/${id}/recruiters/respond`, { method: "POST", body: JSON.stringify({ accept }) }),
-  offerTransfer: (id, username) =>
-    request(`/api/clans/${id}/transfer`, { method: "POST", body: JSON.stringify({ username }) }),
-  cancelTransfer: (id) => request(`/api/clans/${id}/transfer`, { method: "DELETE" }),
-  respondToTransfer: (id, accept) =>
-    request(`/api/clans/${id}/transfer/respond`, { method: "POST", body: JSON.stringify({ accept }) }),
+  offerTransfer: (id, username, kind = "clan") =>
+    request(`/api/${kind === "alliance" ? "alliances" : "clans"}/${id}/transfer`, {
+      method: "POST",
+      body: JSON.stringify({ username }),
+    }),
+  cancelTransfer: (id, kind = "clan") =>
+    request(`/api/${kind === "alliance" ? "alliances" : "clans"}/${id}/transfer`, { method: "DELETE" }),
+  listingTransfer: (id, kind = "clan") =>
+    request(`/api/${kind === "alliance" ? "alliances" : "clans"}/${id}/transfer`),
+  respondToTransfer: (id, accept, kind = "clan") =>
+    request(`/api/${kind === "alliance" ? "alliances" : "clans"}/${id}/transfer/respond`, {
+      method: "POST",
+      body: JSON.stringify({ accept }),
+    }),
+  removeAllianceRecruiter: (id, userId) =>
+    request(`/api/alliances/${id}/recruiters/${encodeURIComponent(userId)}`, { method: "DELETE" }),
   alliances: () => request("/api/alliances"),
   alliance: (id) => request(`/api/alliances/${id}`),
   createAlliance: (formData) => request("/api/alliances", { method: "POST", body: formData }),

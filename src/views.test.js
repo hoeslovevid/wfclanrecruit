@@ -8,6 +8,7 @@ import {
   accountMenu,
   accountView,
   adminView,
+  alliancePostView,
   alliancesView,
   browseView,
   clanCard,
@@ -455,6 +456,12 @@ test("the guide tells a recruit how to pick a clan", () => {
   assert.match(html, /inactivity kick/i);
 });
 
+test("the guide points other apps at the public feed", () => {
+  const html = guideView();
+  assert.match(html, /\/api\/v1/);
+  assert.match(html, /User-Agent/);
+});
+
 test("inbox search filters by name, listing, and preview", () => {
   const unread = { ...thread, unread: 2, with: { name: "NasNotDaily" } };
   assert.equal(filterThreads([thread, unread], { unreadOnly: true }).length, 1);
@@ -547,5 +554,59 @@ test("saved clans offer a compare checkbox", () => {
   });
   assert.match(html, /data-compare-id="steel"/);
   assert.match(html, />Viewed</);
+});
+
+test("an existing alliance listing offers ownership hand-over", () => {
+  const html = alliancePostView({
+    user: { ...me, canPublish: true },
+    draft: { id: "steel-all", name: "Steel", tag: "STL", ownerId: "u1" },
+    clans: [],
+  });
+  assert.match(html, /data-transfer-for="steel-all"/);
+  assert.match(html, /data-transfer-kind="alliance"/);
+});
+
+test("a new alliance listing has nothing to hand over yet", () => {
+  const html = alliancePostView({
+    user: { ...me, canPublish: true },
+    draft: {},
+    clans: [],
+  });
+  assert.doesNotMatch(html, /data-transfer-for/);
+});
+
+test("an alliance ownership offer is answered from settings", () => {
+  const html = accountView({
+    user: {
+      ...me,
+      admin: false,
+      canPublish: true,
+      transferInvites: [{ id: "steel-all", name: "Steel", tag: "STL", kind: "alliance" }],
+    },
+    clans: [],
+    alliances: [],
+    players: [],
+  });
+  assert.match(html, /An alliance post has been offered to you/);
+  assert.match(html, /href="\/alliances\/steel-all"/);
+  assert.match(html, /data-transfer-accept="steel-all"/);
+  assert.match(html, /data-transfer-kind="alliance"/);
+});
+
+test("an alliance editor seat edits the alliance composer", () => {
+  const html = accountView({
+    user: {
+      ...me,
+      admin: false,
+      canPublish: true,
+      recruitingOn: [{ id: "steel-all", name: "Steel", tag: "STL", role: "editor", kind: "alliance" }],
+    },
+    clans: [],
+    alliances: [],
+    players: [],
+  });
+  assert.match(html, /href="\/alliances\/steel-all"/);
+  assert.match(html, /href="\/post-alliance\?id=steel-all"/);
+  assert.match(html, /data-recruiter-kind="alliance"/);
 });
 

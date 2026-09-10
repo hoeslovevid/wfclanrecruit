@@ -262,3 +262,21 @@ test("what someone recruits for says which of them they can edit", () => {
     [["c1", "editor"], ["c2", "recruiter"]]
   );
 });
+
+test("an alliance editor seat shows up alongside clan ones", () => {
+  const db = {
+    clans: [
+      { id: "c1", name: "One", tag: "ONE", ownerId: OWNER.id, recruiters: [{ userId: MATE.id, status: "accepted", role: "editor" }] },
+    ],
+    alliances: [
+      { id: "a1", name: "Steel", tag: "STL", ownerId: OWNER.id, recruiters: [{ userId: MATE.id, status: "accepted", role: "editor" }] },
+    ],
+  };
+  assert.deepEqual(
+    recruitingOn(db, MATE.id).map((item) => [item.kind, item.id, item.role]),
+    [
+      ["clan", "c1", "editor"],
+      ["alliance", "a1", "editor"],
+    ]
+  );
+});

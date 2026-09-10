@@ -113,6 +113,17 @@ import {
   transfersFor,
 } from "./ownership.js";
 import {
+  PUBLIC_RATE_LIMIT,
+  PUBLIC_RATE_WINDOW_MS,
+  catalog as publicCatalog,
+  publicAlliance,
+  publicClan,
+  publicFilters,
+  publicPage,
+  publicPlayer,
+  requirePublicAgent,
+} from "./public-api.js";
+import {
   DISCORD_MIN_AGE_DAYS,
   FORUM_CHECK_COOLDOWN_MS,
   discordAgeDays,
@@ -298,6 +309,12 @@ const registerLimiter = rateLimit({ name: "register", limit: 5, windowMs: 60 * 6
 const discordStartLimiter = rateLimit({ name: "discord-start", limit: 20, windowMs: 15 * 60 * 1000 });
 const exportLimiter = rateLimit({ name: "export", limit: 10, windowMs: 60 * 60 * 1000 });
 const listingLimiter = rateLimit({ name: "listing", limit: 20, windowMs: 60 * 60 * 1000 });
+const publicApiLimiter = rateLimit({
+  name: "public-api",
+  limit: PUBLIC_RATE_LIMIT,
+  windowMs: PUBLIC_RATE_WINDOW_MS,
+  message: "Too many requests to the public feed. Slow down, then try again.",
+});
 // Generous for a conversation, tight enough that an automated account cannot
 // turn the inbox into a firehose.
 // Set once at boot. False means the message store did not come up, and every
@@ -1037,7 +1054,7 @@ function transferView(clan, db) {
 }
 
 function decorateAlliance(alliance, db, user = null) {
-  const { hiddenBy, hiddenAt, ...publicAlliance } = alliance;
+  const { hiddenBy, hiddenAt, recruiters, transfer, ...publicAlliance } = alliance;
   return withBumpState({
     ...publicAlliance,
     ownerVerified: ownerVerified(alliance, db.users),
@@ -1077,6 +1094,92 @@ app.get("/api/health", (_req, res) => {
     messaging: messagingUp,
     media: r2Enabled() ? "r2" : "local",
   });
+});
+
+function publicCache(res, seconds) {
+  res.setHeader("Cache-Control", `public, max-age=${seconds}`);
+}
+
+// Versioned, read-only board for other apps. Not the same as `/api/clans`:
+// those routes are what this website loads, they count views, and they are
+// allowed to grow. A partner pins to `/api/v1` instead.
+app.get("/api/v1", (req, res) => {
+  publicCache(res, 300);
+  res.json(publicCatalog(publicOrigin(req)));
+});
+
+app.get("/api/v1/clans", requirePublicAgent, publicApiLimiter, (req, res) => {
+  const db = readDb();
+  const origin = publicOrigin(req);
+  const query = publicFilters(req);
+  const listings = (db.clans || []).filter((clan) => !isHidden(clan)).map((clan) => decorateClan(clan, db));
+  const page = publicPage("clan", listings, origin, query);
+  publicCache(res, 60);
+  res.json({ clans: page.items, page: page.page, pages: page.pages, total: page.total, size: page.size });
+});
+
+app.get("/api/v1/clans/:id", requirePublicAgent, publicApiLimiter, (req, res) => {
+  const db = readDb();
+  const clan = (db.clans || []).find((item) => item.id === req.params.id);
+  const listing = clan && !isHidden(clan) ? publicClan(decorateClan(clan, db), publicOrigin(req), { detail: true }) : null;
+  if (!listing) {
+    res.status(404).json({ error: "Clan not found." });
+    return;
+  }
+  publicCache(res, 30);
+  res.json({ clan: listing });
+});
+
+app.get("/api/v1/alliances", requirePublicAgent, publicApiLimiter, (req, res) => {
+  const db = readDb();
+  const origin = publicOrigin(req);
+  const query = publicFilters(req);
+  const listings = (db.alliances || [])
+    .filter((item) => !isHidden(item))
+    .map((item) => decorateAlliance(item, db));
+  const page = publicPage("alliance", listings, origin, query);
+  publicCache(res, 60);
+  res.json({ alliances: page.items, page: page.page, pages: page.pages, total: page.total, size: page.size });
+});
+
+app.get("/api/v1/alliances/:id", requirePublicAgent, publicApiLimiter, (req, res) => {
+  const db = readDb();
+  const alliance = (db.alliances || []).find((item) => item.id === req.params.id);
+  const listing =
+    alliance && !isHidden(alliance)
+      ? publicAlliance(decorateAlliance(alliance, db), publicOrigin(req), { detail: true })
+      : null;
+  if (!listing) {
+    res.status(404).json({ error: "Alliance not found." });
+    return;
+  }
+  publicCache(res, 30);
+  res.json({ alliance: listing });
+});
+
+app.get("/api/v1/players", requirePublicAgent, publicApiLimiter, (req, res) => {
+  const db = readDb();
+  const origin = publicOrigin(req);
+  const query = publicFilters(req);
+  const listings = (db.players || [])
+    .filter((item) => !isHidden(item))
+    .map((item) => decoratePlayer(item, db));
+  const page = publicPage("player", listings, origin, query);
+  publicCache(res, 60);
+  res.json({ players: page.items, page: page.page, pages: page.pages, total: page.total, size: page.size });
+});
+
+app.get("/api/v1/players/:id", requirePublicAgent, publicApiLimiter, (req, res) => {
+  const db = readDb();
+  const player = (db.players || []).find((item) => item.id === req.params.id);
+  const listing =
+    player && !isHidden(player) ? publicPlayer(decoratePlayer(player, db), publicOrigin(req), { detail: true }) : null;
+  if (!listing) {
+    res.status(404).json({ error: "Player not found." });
+    return;
+  }
+  publicCache(res, 30);
+  res.json({ player: listing });
 });
 
 app.get("/api/auth/me", (req, res) => {
@@ -1557,7 +1660,19 @@ app.delete("/api/auth/account", requireUser, (req, res) => {
       .map((clan) =>
         normalizeTransfer(clan)?.toUserId === userId ? { ...clan, transfer: null } : clan
       );
-    db.alliances = (db.alliances || []).filter((item) => item.ownerId !== userId);
+    db.alliances = (db.alliances || [])
+      .filter((item) => item.ownerId !== userId)
+      .map((alliance) =>
+        recruiterEntry(alliance, userId)
+          ? {
+              ...alliance,
+              recruiters: normalizeRecruiters(alliance.recruiters).filter((item) => item.userId !== userId),
+            }
+          : alliance
+      )
+      .map((alliance) =>
+        normalizeTransfer(alliance)?.toUserId === userId ? { ...alliance, transfer: null } : alliance
+      );
     db.reports = (db.reports || []).map((item) =>
       item.reporterId === userId ? { ...item, reporterId: null } : item
     );
@@ -1604,8 +1719,8 @@ function trimListing(item) {
 // per kind, so a change to how a post is removed is one edit rather than three.
 //
 // What genuinely differs stays hand-written below: creating and updating a
-// post validates fields that are specific to it, and only clans have
-// recruiters and transfers.
+// post validates fields that are specific to it, and recruiters plus
+// ownership hand-over live on the clan and alliance routes rather than here.
 
 const LISTING_KINDS = {
   clan: {
@@ -1639,11 +1754,11 @@ const LISTING_KINDS = {
     written: (item, db) => decorateAlliance(item, db),
     bump: {
       gate: requirePoster,
-      allowed: canRemove,
-      denied: "You can only bump your own posts.",
+      allowed: canEditListing,
+      denied: "You do not have edit access to that post.",
       rechecksInvite: true,
     },
-    pause: { allowed: canRemove, denied: "You can only pause your own posts." },
+    pause: { allowed: canEditListing, denied: "You do not have edit access to that post." },
     remove: {
       denied: "You can only remove your own posts.",
       // A clan outlives the alliance it belonged to; it just stops naming one.
@@ -2089,6 +2204,20 @@ app.delete("/api/clans/:id/recruiters/:userId", requireUser, (req, res) => {
 // builds the account on their leader's behalf. It moves the same way a
 // recruiter invite does: an offer, pending until the other side accepts, since
 // ownership carries delete rights and nobody should wake up holding those.
+app.get("/api/clans/:id/transfer", requireUser, (req, res) => {
+  const db = readDb();
+  const clan = db.clans.find((item) => item.id === req.params.id);
+  if (!clan) {
+    res.status(404).json({ error: "Clan not found." });
+    return;
+  }
+  if (!canRemove(req.user, clan)) {
+    res.status(403).json({ error: "Only the owner can hand this listing over." });
+    return;
+  }
+  res.json({ transfer: transferView(clan, db) });
+});
+
 app.post("/api/clans/:id/transfer", requireUser, (req, res) => {
   const username = String(req.body?.username || "").trim();
   writeDb((db) => {
@@ -2339,9 +2468,9 @@ app.put("/api/alliances/:id", requirePoster, listingUpload, async (req, res) => 
       res.status(404).json({ error: "Alliance not found." });
       return db;
     }
-    if (!canRemove(req.user, alliance)) {
+    if (!canEditListing(req.user, alliance)) {
       discardUploads(req);
-      res.status(403).json({ error: "You can only edit your own posts." });
+      res.status(403).json({ error: "You do not have edit access to that post." });
       return db;
     }
     const taken = listingTaken(db, { ...invited, id: alliance.id });
@@ -2416,6 +2545,98 @@ app.delete("/api/admin/staff/:id", requireAdmin, staffLimiter, (req, res) => {
       return db;
     }
     res.json({ ok: true, ...staffList(db, req.user.id) });
+    return db;
+  });
+});
+
+app.get("/api/alliances/:id/transfer", requireUser, (req, res) => {
+  const db = readDb();
+  const alliance = db.alliances.find((item) => item.id === req.params.id);
+  if (!alliance) {
+    res.status(404).json({ error: "Alliance not found." });
+    return;
+  }
+  if (!canRemove(req.user, alliance)) {
+    res.status(403).json({ error: "Only the owner can hand this listing over." });
+    return;
+  }
+  res.json({ transfer: transferView(alliance, db) });
+});
+
+app.post("/api/alliances/:id/transfer", requireUser, (req, res) => {
+  const username = String(req.body?.username || "").trim();
+  writeDb((db) => {
+    const alliance = db.alliances.find((item) => item.id === req.params.id);
+    if (!alliance) {
+      res.status(404).json({ error: "Alliance not found." });
+      return db;
+    }
+    if (!canRemove(req.user, alliance)) {
+      res.status(403).json({ error: "Only the owner can hand this listing over." });
+      return db;
+    }
+    const invitee = findInvitee(db.users, username);
+    const blocked = transferBlocker(alliance, invitee);
+    if (blocked) {
+      res.status(400).json({ error: blocked });
+      return db;
+    }
+    offerTransfer(alliance, invitee.id);
+    res.json({ transfer: transferView(alliance, db) });
+    return db;
+  });
+});
+
+app.delete("/api/alliances/:id/transfer", requireUser, (req, res) => {
+  writeDb((db) => {
+    const alliance = db.alliances.find((item) => item.id === req.params.id);
+    if (!alliance) {
+      res.status(404).json({ error: "Alliance not found." });
+      return db;
+    }
+    if (!canRemove(req.user, alliance)) {
+      res.status(403).json({ error: "Only the owner can cancel this offer." });
+      return db;
+    }
+    clearTransfer(alliance);
+    res.json({ transfer: null });
+    return db;
+  });
+});
+
+app.post("/api/alliances/:id/transfer/respond", requireUser, (req, res) => {
+  const accept = req.body?.accept === true || req.body?.accept === "true";
+  writeDb((db) => {
+    const alliance = db.alliances.find((item) => item.id === req.params.id);
+    if (!alliance) {
+      res.status(404).json({ error: "Alliance not found." });
+      return db;
+    }
+    if (normalizeTransfer(alliance)?.toUserId !== req.user.id) {
+      res.status(404).json({ error: "No pending offer for you on that listing." });
+      return db;
+    }
+    if (accept) applyTransfer(alliance, req.user.id);
+    else clearTransfer(alliance);
+    res.json({ ok: true, accepted: accept });
+    return db;
+  });
+});
+
+app.delete("/api/alliances/:id/recruiters/:userId", requireUser, (req, res) => {
+  writeDb((db) => {
+    const alliance = db.alliances.find((item) => item.id === req.params.id);
+    if (!alliance) {
+      res.status(404).json({ error: "Alliance not found." });
+      return db;
+    }
+    const target = String(req.params.userId);
+    if (!canRemove(req.user, alliance) && target !== req.user.id) {
+      res.status(403).json({ error: "You can only remove yourself from a listing." });
+      return db;
+    }
+    alliance.recruiters = normalizeRecruiters(alliance.recruiters).filter((item) => item.userId !== target);
+    res.json({ ok: true });
     return db;
   });
 });

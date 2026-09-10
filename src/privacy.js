@@ -20,7 +20,7 @@ export function privacyView() {
           <li>We do not run ads, analytics pixels, or social tracking scripts.</li>
           <li>If you sign in, we store account, Discord, and (if you verify) Warframe Forum details so you can post.</li>
           <li>Verifying makes your Warframe name findable by clan leaders adding a recruiter to their own listing.</li>
-          <li>Listings you publish are public, including images, any YouTube video you link, Discord invites, and whatever you write in the post. Each listing has a shareable URL.</li>
+          <li>Listings you publish are public, including images, any YouTube video you link, Discord invites, and whatever you write in the post. Each listing has a shareable URL. Other apps can also read that same public post through a read-only JSON feed at <code>/api/v1</code>.</li>
           <li>You can report a dead or dishonest listing. Reports are not public; only admins can read them.</li>
           <li>You can download your data, remove listings, sign out, or delete your account from the ${jump("opt-out", "opt-out section")} or your <a href="/account" data-link>account page</a>.</li>
         </ul>
@@ -63,7 +63,7 @@ export function privacyView() {
       <article class="panel policy-section" id="scope">
         <p class="kicker">02</p>
         <h2>What this policy covers</h2>
-        <p>This policy applies to the WF Clan Recruit website, its application programming interface (API), listing images stored on this host under <code>/uploads/</code> or on Cloudflare R2, and account features such as Discord sign-in and Warframe Forum verification.</p>
+        <p>This policy applies to the WF Clan Recruit website, its application programming interface (API) — including the read-only public feed at <code>/api/v1</code> — listing images stored on this host under <code>/uploads/</code> or on Cloudflare R2, and account features such as Discord sign-in and Warframe Forum verification.</p>
         <p>It does not cover:</p>
         <ul class="policy-bullets">
           <li>Discord servers you join from a listing. Those communities set their own rules and collect their own data.</li>
@@ -77,7 +77,7 @@ export function privacyView() {
       <article class="panel policy-section" id="browse">
         <p class="kicker">03</p>
         <h2>Browsing without an account</h2>
-        <p>Anyone can open the home, clan, alliance, guide, privacy, sitemap, and robots pages without signing in. In that mode we do not create a user record for you.</p>
+        <p>Anyone can open the home, clan, alliance, guide, privacy, sitemap, and robots pages without signing in. In that mode we do not create a user record for you. The same public listings are available as JSON at <code>/api/v1</code> without an account: a client has to name itself in the User-Agent header, and we rate-limit that feed. We do not count those requests as listing views.</p>
         <p>Your browser will still make ordinary web requests to load the page, styles, logo, fonts, and listing data. The hosting provider can see technical request data such as IP address, date, URL, and browser type. We do not write those values into our application database, and we do not use them to build a marketing profile.</p>
         <p>Optional on-device data while browsing:</p>
         <ul class="policy-bullets">
@@ -280,10 +280,10 @@ export function privacyView() {
       <article class="panel policy-section" id="public">
         <p class="kicker">09</p>
         <h2>What is public</h2>
-        <p>Treat every listing as public. That includes Discord invite links, leader names, screenshots, linked video, a pause note if the leader wrote one, and the full post. Listing URLs also expose an Open Graph title, description, and image so Discord and similar apps can show a card. Other visitors, scrapers, and archives may copy public pages. Removing a listing from this site does not erase copies someone else already saved.</p>
+        <p>Treat every listing as public. That includes Discord invite links, leader names, screenshots, linked video, a pause note if the leader wrote one, and the full post. Listing URLs also expose an Open Graph title, description, and image so Discord and similar apps can show a card. Other visitors, scrapers, archives, and third-party apps using the read-only feed at <code>/api/v1</code> may copy public posts. That feed does not include owner ids, pending invites, ownership offers, messages, or view counts. Removing a listing from this site does not erase copies someone else already saved.</p>
         <p>Forum verification requires you to put a short code on your Warframe Forum About Me. That code is public on Digital Extremes’ forums until you delete it. After you verify here, you should remove the code from About Me if you do not want it sitting on the forum.</p>
         <p>Verifying a Warframe Forum profile makes your verified Warframe name findable when a clan leader adds a recruiter. The box on their listing suggests names as they type: it needs at least two characters, returns at most eight names, and only a signed-in leader can run it, and only against a listing they own. It offers nothing else about you — no Discord name, no email, no listings you are on — and it never suggests someone who is already a recruiter on that listing. This is how a leader can add you without you first having to hand them your exact spelling. If you have not verified a forum profile, you are not in it at all.</p>
-        <p>A listing can be handed to someone else. The owner offers it by your verified Warframe name, and nothing moves until you accept: while the offer is pending, only you and that listing's owner can see it. Accepting makes the post yours — your verified name becomes the one recruits whisper, and the previous owner keeps edit access but can no longer delete it. Declining leaves everything as it was.</p>
+        <p>A clan or alliance listing can be handed to someone else. The owner offers it by your verified Warframe name, and nothing moves until you accept: while the offer is pending, only you and that listing's owner can see it. Accepting makes the post yours — on a clan post, your verified name becomes the one recruits whisper, and the previous owner keeps edit access but can no longer delete it. Declining leaves everything as it was.</p>
         <p>Whoever answers whispers on a listing is shown with a label the owner types — "Leader", "Recruiter", or whatever that clan calls the role. It is a title only: it never changes what anyone can do to the post, and it is published alongside your verified name.</p>
         <p>A clan leader can invite you to be a recruiter on their listing. Nothing is published until you accept: while an invite is pending, only you and that listing's owner can see it. Once you accept, your in-game name and online status appear on their public post so recruits can whisper you, and you can leave from your account page at any time.</p>
         <p>An invite says what it is for. A plain recruiter only answers whispers. An owner can instead give you edit access, which lets you change that post — its text, images, tags and links — as well as bump and pause it; the owner can grant or withdraw that at any time, and it takes effect immediately. Nobody but the owner can delete a listing, decide who else is on it, or change what anyone else there can do. An owner who gives you edit access can see the same about you as before: nothing new is collected, and nothing new is published.</p>
@@ -309,6 +309,7 @@ export function privacyView() {
               <tr><td>YouTube (Google)</td><td>Play a video a listing embeds</td><td>Your IP and browser when the player loads on a listing page. We embed through <code>youtube-nocookie.com</code>, so YouTube does not set its usual tracking cookies unless you press play</td></tr>
               <tr><td>Warframe Forums / Digital Extremes</td><td>You publish the code on About Me; we only read that public tab</td><td>Whatever you put on your forum profile</td></tr>
               <tr><td>Other visitors</td><td>The board is public</td><td>Listing content and uploads</td></tr>
+              <tr><td>Third-party apps</td><td>Read the public board through <code>/api/v1</code></td><td>The same public listing fields the website shows, including Discord invites and verified in-game names on a post. Not accounts, messages, or pending invites</td></tr>
               <tr><td>Authorities or a successor</td><td>Only if legally required, or if the project is handed to a new operator who continues the same board</td><td>Relevant records</td></tr>
             </tbody>
           </table>

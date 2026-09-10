@@ -181,8 +181,16 @@ export function pendingInvitesFor(db, userId) {
 
 // Listings this user already answers for, so they can walk away from one.
 export function recruitingOn(db, userId) {
-  return (db.clans || [])
-    .map((clan) => ({ clan, entry: recruiterEntry(clan, userId) }))
-    .filter(({ entry }) => entry?.status === "accepted")
-    .map(({ clan, entry }) => ({ id: clan.id, name: clan.name, tag: clan.tag, role: entry.role }));
+  const from = (list, kind) =>
+    (list || [])
+      .map((item) => ({ item, entry: recruiterEntry(item, userId) }))
+      .filter(({ entry }) => entry?.status === "accepted")
+      .map(({ item, entry }) => ({
+        id: item.id,
+        name: item.name,
+        tag: item.tag,
+        role: entry.role,
+        kind,
+      }));
+  return [...from(db.clans, "clan"), ...from(db.alliances, "alliance")];
 }
