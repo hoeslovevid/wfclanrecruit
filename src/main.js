@@ -47,11 +47,16 @@ import {
   heldUntilNote,
   readLinkRows,
   readRoleRows,
+  resourcesView,
+  hubView,
+  articlePage,
+  articlePostView,
   rosterPanel,
   transferPanel,
 } from "./views.js";
 import { ROLE_MAX, roleFilterOptions } from "./roles.js";
 import { privacyView } from "./privacy.js";
+import { ARTICLE_PLAIN_MAX, articlePath, canWriteGuides, hubOf, hubList } from "./resources.js";
 import {
   aboutTooLong,
   isSafeHref,
@@ -180,7 +185,8 @@ function setActiveNav(path) {
       (match === "/post" && path === "/post-alliance") ||
       (match === "/browse" && path.startsWith("/clans/")) ||
       (match === "/alliances" && path.startsWith("/alliances/")) ||
-      (match === "/players" && (path.startsWith("/players/") || path === "/lfc"));
+      (match === "/players" && (path.startsWith("/players/") || path === "/lfc")) ||
+      (match === "/resources" && (path.startsWith("/resources") || path === "/write-guide"));
     link.classList.toggle("is-active", active);
   });
 }
@@ -1027,6 +1033,7 @@ function bindListingPage() {
     try {
       if (kind === "alliance") await api.reportAlliance(id, payload);
       else if (kind === "player") await api.reportPlayer(id, payload);
+      else if (kind === "article") await api.reportArticle(id, payload);
       else await api.reportClan(id, payload);
       showNote(note, "Report sent. Thanks.", "muted");
       form.querySelector("button[type='submit']").disabled = true;
@@ -1419,9 +1426,13 @@ function bindForumForm() {
 }
 
 function bindStaffForm() {
-  const form = app.querySelector("[data-staff-form]");
+  app.querySelectorAll("[data-staff-form]").forEach((form) => bindGrantForm(form));
+}
+
+function bindGrantForm(form) {
   if (!form) return;
-  const note = app.querySelector("[data-staff-note]");
+  const kind = form.dataset.staffKind === "creator" ? "creator" : "admin";
+  const note = form.querySelector("[data-staff-note]");
   const input = form.querySelector("[data-staff-query]");
   const picked = form.querySelector("[data-staff-user-id]");
   const suggestions = form.querySelector("[data-staff-suggestions]");
@@ -1463,7 +1474,7 @@ function bindStaffForm() {
     options = people.map((person, index) => {
       const option = document.createElement("li");
       option.className = "combo-option";
-      option.id = `staff-option-${index}`;
+      option.id = `${kind}-option-${index}`;
       option.setAttribute("role", "option");
       option.setAttribute("aria-selected", "false");
       option.textContent =
@@ -1494,7 +1505,7 @@ function bindStaffForm() {
     const seq = ++lookupSeq;
     lookupTimer = setTimeout(async () => {
       try {
-        const { people } = await api.searchStaff(q);
+        const { people } = kind === "creator" ? await api.searchCreators(q) : await api.searchStaff(q);
         if (seq !== lookupSeq) return;
         showList(people || []);
       } catch {
@@ -1531,7 +1542,7 @@ function bindStaffForm() {
     const userId = String(data.get("userId") || "").trim();
     const query = String(data.get("query") || "").trim();
     try {
-      await api.grantAdmin(userId ? { userId } : { query });
+      await (kind === "creator" ? api.grantCreator : api.grantAdmin)(userId ? { userId } : { query });
       await render();
     } catch (error) {
       showNote(note, error.message);
@@ -2362,6 +2373,12 @@ function aboutError(form) {
   return aboutTooLong(form.about.value);
 }
 
+function articleError(form) {
+  if (!plainTextFromHtml(form.about?.value || "")) return "Write the article.";
+  if (plainTextFromHtml(form.about.value).length > ARTICLE_PLAIN_MAX) return "The article is too long.";
+  return null;
+}
+
 function mediaTooLarge(form) {
   if (form.image?.files?.[0] && form.image.files[0].size > IMAGE_MAX) {
     return "Image must be 2 MB or smaller.";
@@ -2525,6 +2542,8 @@ async function render() {
   const clanMatch = path.match(/^\/clans\/([^/]+)$/);
   const allianceMatch = path.match(/^\/alliances\/([^/]+)$/);
   const playerMatch = path.match(/^\/players\/([^/]+)$/);
+  const resourceHubMatch = path.match(/^\/resources\/([^/]+)$/);
+  const resourceArticleMatch = path.match(/^\/resources\/([^/]+)\/([^/]+)$/);
   document.title =
     path === "/privacy"
       ? "Privacy Policy — WF Clan Recruit"
@@ -2536,6 +2555,10 @@ async function render() {
             ? "Sign in — WF Clan Recruit"
             : path === "/admin"
               ? "Staff — WF Clan Recruit"
+              : path === "/resources" || path.startsWith("/resources/")
+                ? "Resources — WF Clan Recruit"
+                : path === "/write-guide"
+                  ? "Write a guide — WF Clan Recruit"
               : "WF Clan Recruit — Warframe Clans & Alliances";
 
   if (DIRECTORIES[path]) {
@@ -2867,6 +2890,7 @@ async function render() {
       ? state.players
       : state.players.filter((item) => item.ownerId === state.user.id);
     let reports = [];
+    let articles = [];
     if (state.user.admin) {
       try {
         reports = (await api.reports()).reports || [];
@@ -2874,11 +2898,19 @@ async function render() {
         reports = [];
       }
     }
+    if (canWriteGuides(state.user)) {
+      try {
+        articles = (await api.articles({ mine: true })).articles || [];
+      } catch {
+        articles = [];
+      }
+    }
     app.innerHTML = accountView({
       user: state.user,
       clans: mineClans,
       alliances: mineAlliances,
       players: minePlayers,
+      articles,
       reports,
       saved: resolveSaves(loadSaves(), state),
       viewed: viewedOf(),
@@ -2902,6 +2934,7 @@ async function render() {
       return;
     }
     let staff = { admins: [], pending: [] };
+    let creators = { creators: [], pending: [] };
     let reports = [];
     try {
       staff = await api.staff();
@@ -2910,11 +2943,16 @@ async function render() {
       return;
     }
     try {
+      creators = await api.creators();
+    } catch {
+      creators = { creators: [], pending: [] };
+    }
+    try {
       reports = (await api.reports()).reports || [];
     } catch {
       reports = [];
     }
-    app.innerHTML = adminView({ user: state.user, staff, reports });
+    app.innerHTML = adminView({ user: state.user, staff, creators, reports });
     bindStaffForm();
     return;
   }
@@ -2977,6 +3015,116 @@ async function render() {
     bindListingPage();
     const similarRoot = app.querySelector(".similar-listings");
     if (similarRoot) bindCards(similarRoot);
+    return;
+  }
+
+  if (path === "/resources") {
+    let articles = [];
+    try {
+      articles = (await api.articles()).articles || [];
+    } catch {
+      articles = [];
+    }
+    const counts = {};
+    for (const hub of hubList()) counts[hub.slug] = 0;
+    for (const article of articles) {
+      if (article.published && !article.hidden) counts[article.hub] = (counts[article.hub] || 0) + 1;
+    }
+    app.innerHTML = resourcesView({
+      hubs: hubList(),
+      counts,
+      canWrite: canWriteGuides(state.user),
+    });
+    return;
+  }
+
+  if (resourceHubMatch && !resourceArticleMatch) {
+    const hub = hubOf(resourceHubMatch[1]);
+    document.title = hub ? `${hub.name} — WF Clan Recruit` : "Resources — WF Clan Recruit";
+    let articles = [];
+    try {
+      articles = hub ? (await api.articles({ hub: hub.slug })).articles || [] : [];
+    } catch {
+      articles = [];
+    }
+    app.innerHTML = hubView(hub, articles, { canWrite: canWriteGuides(state.user) });
+    bindCards();
+    return;
+  }
+
+  if (resourceArticleMatch) {
+    let article = null;
+    try {
+      article = (await api.article(resourceArticleMatch[2])).article;
+    } catch {
+      article = null;
+    }
+    if (!article || article.hub !== resourceArticleMatch[1]) {
+      app.innerHTML = `<section class="auth-card"><h1>Guide not found</h1><p class="muted">That guide is gone, still a draft, or the link is wrong.</p><p><a href="/resources" data-link>Back to Resources</a></p></section>`;
+      return;
+    }
+    document.title = `${article.title} — WF Clan Recruit`;
+    app.innerHTML = articlePage(article, {
+      admin: Boolean(state.user?.admin),
+      canEdit: Boolean(article.canEdit),
+    });
+    bindListingPage();
+    return;
+  }
+
+  if (path === "/write-guide") {
+    const draft = params.id
+      ? await (async () => {
+          try {
+            return (await api.article(params.id)).article;
+          } catch {
+            return null;
+          }
+        })()
+      : { hub: params.hub || "", published: false };
+    if (params.id && !draft) {
+      app.innerHTML = `<section class="auth-card"><h1>Guide not found</h1><p class="muted">That guide is gone or the link is wrong.</p></section>`;
+      return;
+    }
+    if (draft?.id && state.user && !draft.canEdit && !state.user.admin) {
+      app.innerHTML = `<section class="auth-card"><h1>Not allowed</h1><p class="muted">You do not have edit access to that guide.</p></section>`;
+      return;
+    }
+    app.innerHTML = articlePostView({ user: state.user, draft: draft || {}, auth: state.auth });
+    const form = app.querySelector("#article-form");
+    if (!form) return;
+    const note = app.querySelector("#form-note");
+    bindListingComposer(form, {
+      imageUrl: draft?.image || null,
+      draftKind: "article",
+      draftId: draft?.id || "",
+      onChange: () => {},
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!form.checkValidity()) {
+        showNote(note, "Fill every required field.");
+        form.reportValidity();
+        return;
+      }
+      const tooBig = mediaTooLarge(form) || articleError(form);
+      if (tooBig) {
+        showNote(note, tooBig);
+        return;
+      }
+      try {
+        const payload = packForm(form);
+        payload.set("published", form.published?.checked ? "1" : "0");
+        const result = draft?.id
+          ? await api.updateArticle(draft.id, payload)
+          : await api.createArticle(payload);
+        clearDraft(draftKey("article", draft?.id || ""));
+        syncPrefs();
+        go(articlePath(result.article));
+      } catch (error) {
+        showNote(note, error.message);
+      }
+    });
     return;
   }
 
@@ -3059,6 +3207,11 @@ const LISTING_CONTROLS = [
     call: (el) => api.hidePlayer(el.dataset.hidePlayer, el.dataset.hidden === "1"),
   },
   {
+    attr: "hide-article",
+    ask: (el) => el.dataset.hidden === "1" && "Hide this guide from Resources? The owner keeps it, and you can unhide it later.",
+    call: (el) => api.hideArticle(el.dataset.hideArticle, el.dataset.hidden === "1"),
+  },
+  {
     // A bump inside its cooling-off window renders disabled, and a disabled
     // button is not a click to answer.
     attr: "bump-clan",
@@ -3097,6 +3250,13 @@ const LISTING_CONTROLS = [
     ask: () => "Remove this player profile for everyone? This cannot be undone.",
     call: (el) => api.deletePlayer(el.dataset.deletePlayer),
     after: () => afterDelete("/players"),
+  },
+  {
+    attr: "delete-article",
+    stops: true,
+    ask: () => "Remove this guide for everyone? This cannot be undone.",
+    call: (el) => api.deleteArticle(el.dataset.deleteArticle),
+    after: () => afterDelete("/resources"),
   },
 ];
 
@@ -3258,6 +3418,30 @@ document.addEventListener("click", async (event) => {
     if (!confirm("Cancel this waiting grant?")) return;
     try {
       await api.revokeAdmin(revokePending.dataset.revokePending);
+      await render();
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
+  const revokeCreator = event.target.closest("[data-revoke-creator]");
+  if (revokeCreator) {
+    event.preventDefault();
+    if (!confirm("Remove write access for this account?")) return;
+    try {
+      await api.revokeCreator(revokeCreator.dataset.revokeCreator);
+      await render();
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
+  const revokeCreatorPending = event.target.closest("[data-revoke-creator-pending]");
+  if (revokeCreatorPending) {
+    event.preventDefault();
+    if (!confirm("Cancel this waiting grant?")) return;
+    try {
+      await api.revokeCreator(revokeCreatorPending.dataset.revokeCreatorPending);
       await render();
     } catch (error) {
       alert(error.message);

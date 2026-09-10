@@ -100,6 +100,8 @@ export function publicAccount(user, { isProd }) {
     id: user.id,
     username: user.username,
     admin: Boolean(user.admin),
+    creator: Boolean(user.creator),
+    canWriteGuides: Boolean(user.admin || user.creator),
     createdAt: user.createdAt,
     discordId: user.discordId || null,
     discordUsername: user.discordUsername || null,

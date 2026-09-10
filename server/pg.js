@@ -65,6 +65,17 @@ const PLAYER_COLUMNS = new Set([
   "bumpedAt",
 ]);
 
+const ARTICLE_COLUMNS = new Set([
+  "id",
+  "ownerId",
+  "hub",
+  "title",
+  "published",
+  "hidden",
+  "createdAt",
+  "updatedAt",
+]);
+
 // Everything above this line is the mirrored lane: tables loaded into memory
 // wholesale and rewritten by persistTables. Some tables cannot live that way -
 // messages grow without bound and every send is a write - so they are queried
@@ -166,6 +177,20 @@ function rowToReport(row) {
     createdAt: iso(row.created_at),
     status: row.status,
     resolvedAt: iso(row.resolved_at),
+  };
+}
+
+function rowToArticle(row) {
+  return {
+    ...(row.data || {}),
+    id: row.id,
+    ownerId: row.owner_id || null,
+    hub: row.hub,
+    title: row.title,
+    published: Boolean(row.published),
+    hidden: Boolean(row.hidden),
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at),
   };
 }
 
@@ -287,6 +312,24 @@ export async function connectPg() {
       granted_by TEXT,
       granted_at TIMESTAMPTZ
     );
+    CREATE TABLE IF NOT EXISTS creator_grants (
+      discord_id TEXT PRIMARY KEY,
+      granted_by TEXT,
+      granted_at TIMESTAMPTZ
+    );
+    CREATE TABLE IF NOT EXISTS articles (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT,
+      hub TEXT NOT NULL,
+      title TEXT NOT NULL,
+      published BOOLEAN NOT NULL DEFAULT FALSE,
+      hidden BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ,
+      data JSONB NOT NULL DEFAULT '{}'::jsonb
+    );
+    CREATE INDEX IF NOT EXISTS articles_hub ON articles (hub);
+    CREATE INDEX IF NOT EXISTS articles_owner ON articles (owner_id);
     CREATE TABLE IF NOT EXISTS emojis (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -359,7 +402,7 @@ async function migrateFromAppState() {
 export async function loadState() {
   // Whatever we thought we had written no longer describes this process's view.
   digests = null;
-  const [users, sessions, clans, alliances, players, reports, grants, emojis] = await Promise.all([
+  const [users, sessions, clans, alliances, players, reports, grants, creatorGrants, articles, emojis] = await Promise.all([
     pool.query("SELECT * FROM users"),
     pool.query("SELECT token, user_id, expires FROM sessions"),
     pool.query("SELECT * FROM clans"),
@@ -367,6 +410,8 @@ export async function loadState() {
     pool.query("SELECT * FROM players"),
     pool.query("SELECT * FROM reports ORDER BY created_at DESC"),
     pool.query("SELECT discord_id, granted_by, granted_at FROM admin_grants"),
+    pool.query("SELECT discord_id, granted_by, granted_at FROM creator_grants"),
+    pool.query("SELECT * FROM articles"),
     pool.query("SELECT id, name, url, created_by, created_at FROM emojis"),
   ]);
   if (
@@ -377,6 +422,8 @@ export async function loadState() {
     !players.rows.length &&
     !reports.rows.length &&
     !grants.rows.length &&
+    !creatorGrants.rows.length &&
+    !articles.rows.length &&
     !emojis.rows.length
   ) {
     return null;
@@ -401,6 +448,12 @@ export async function loadState() {
       grantedBy: row.granted_by || null,
       grantedAt: iso(row.granted_at),
     })),
+    creatorGrants: creatorGrants.rows.map((row) => ({
+      discordId: row.discord_id,
+      grantedBy: row.granted_by || null,
+      grantedAt: iso(row.granted_at),
+    })),
+    articles: articles.rows.map(rowToArticle),
     emojis: emojis.rows.map((row) => ({
       id: row.id,
       name: row.name,
@@ -451,6 +504,8 @@ function emptySnapshot() {
     players: new Map(),
     reports: new Map(),
     admin_grants: new Map(),
+    creator_grants: new Map(),
+    articles: new Map(),
     emojis: new Map(),
   };
 }
@@ -484,7 +539,7 @@ async function reconcile(client, table, column, ids) {
 // immediately. A large unexplained wipe is a bug, so fail loudly instead:
 // writeDb catches this and resyncs the cache from Postgres.
 const WIPE_LIMIT = 25;
-const PROTECTED = new Set(["users", "clans", "alliances", "players"]);
+const PROTECTED = new Set(["users", "clans", "alliances", "players", "articles"]);
 
 // Sessions and reports churn on their own - sessions expire in batches - so
 // only the irreplaceable tables are guarded.
@@ -517,6 +572,8 @@ async function persistTables(db) {
   const players = uniqueBy(db.players, "id");
   const reports = uniqueBy(db.reports, "id");
   const adminGrants = uniqueBy(db.adminGrants || [], "discordId");
+  const creatorGrants = uniqueBy(db.creatorGrants || [], "discordId");
+  const articles = uniqueBy(db.articles || [], "id");
   const emojis = uniqueBy(uniqueByLower(db.emojis || [], "name"), "id");
   const client = await pool.connect();
   pending = emptySnapshot();
@@ -753,6 +810,49 @@ async function persistTables(db) {
       "discord_id",
       adminGrants.map((item) => item.discordId)
     );
+
+    for (const grant of creatorGrants) {
+      await upsert(client, "creator_grants", grant.discordId,
+        `INSERT INTO creator_grants (discord_id, granted_by, granted_at) VALUES ($1,$2,$3)
+         ON CONFLICT (discord_id) DO UPDATE SET granted_by = EXCLUDED.granted_by, granted_at = EXCLUDED.granted_at`,
+        [grant.discordId, grant.grantedBy || null, grant.grantedAt || null]
+      );
+    }
+    await reconcile(
+      client,
+      "creator_grants",
+      "discord_id",
+      creatorGrants.map((item) => item.discordId)
+    );
+
+    for (const article of articles) {
+      await upsert(client, "articles", article.id,
+        `INSERT INTO articles (
+          id, owner_id, hub, title, published, hidden, created_at, updated_at, data
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
+        ON CONFLICT (id) DO UPDATE SET
+          owner_id = EXCLUDED.owner_id,
+          hub = EXCLUDED.hub,
+          title = EXCLUDED.title,
+          published = EXCLUDED.published,
+          hidden = EXCLUDED.hidden,
+          created_at = EXCLUDED.created_at,
+          updated_at = EXCLUDED.updated_at,
+          data = EXCLUDED.data`,
+        [
+          article.id,
+          article.ownerId || null,
+          article.hub,
+          article.title,
+          Boolean(article.published),
+          Boolean(article.hidden),
+          article.createdAt || null,
+          article.updatedAt || null,
+          JSON.stringify(extraData(article, ARTICLE_COLUMNS)),
+        ]
+      );
+    }
+    await reconcile(client, "articles", "id", articles.map((item) => item.id));
 
     for (const emoji of emojis) {
       await upsert(client, "emojis", emoji.id,

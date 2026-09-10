@@ -2482,6 +2482,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .discovery-bar select { width: 140px; border: 0; border-right: 1px solid var(--line); border-radius: 0; background: transparent; }
 .discovery-bar input { min-width: 0; }
 .discovery-paths { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; padding-block: 32px; }
+.discovery-paths-four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .discovery-path { display: flex; flex-direction: column; padding: 28px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); color: var(--text); transition: border-color .2s; }
 .discovery-path:hover { border-color: var(--accent); }
 .path-title { display: flex; justify-content: space-between; gap: 20px; font-size: 26px; font-weight: 600; letter-spacing: -.03em; margin: 15px 0 12px; }

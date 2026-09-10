@@ -156,6 +156,23 @@ import {
   searchStaffCandidates,
   staffList,
 } from "./admins.js";
+import {
+  applyPendingCreator,
+  creatorList,
+  grantCreator,
+  grantCreatorByUserId,
+  revokeCreator,
+  searchCreatorCandidates,
+} from "./creators.js";
+import {
+  canEditArticle,
+  canSeeArticle,
+  canWriteGuides,
+  defaultByline,
+  hubOf,
+  isLiveArticle,
+  parseArticleFields,
+} from "./articles.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const COOKIE = "wfr_session";
@@ -287,6 +304,20 @@ function requireAdmin(req, res, next) {
     return;
   }
   req.user = user;
+  next();
+}
+
+function requireCreator(req, res, next) {
+  const user = currentUser(req);
+  if (!user) {
+    res.status(401).json({ error: "Sign in to continue." });
+    return;
+  }
+  req.user = user;
+  if (!canWriteGuides(user)) {
+    res.status(403).json({ error: "Only designated writers can publish guides." });
+    return;
+  }
   next();
 }
 
@@ -609,6 +640,14 @@ function parseListingLinks(value) {
     return { error: `You can add up to ${LINK_MAX} links.` };
   }
   return { links };
+}
+
+function parseArticleBody(body, user, req) {
+  const parsedMedia = parseListingMedia(body, req);
+  if (parsedMedia.error) return parsedMedia;
+  const parsedLinks = parseListingLinks(body.links);
+  if (parsedLinks.error) return parsedLinks;
+  return parseArticleFields(body, user, { media: parsedMedia.media, links: parsedLinks.links });
 }
 
 // The offer / requirements / how-to-join boxes are all optional rich text now:
@@ -1086,6 +1125,23 @@ function decoratePlayer(player, db) {
   });
 }
 
+function decorateArticle(article, db) {
+  const { hiddenBy, hiddenAt, ...publicArticle } = article;
+  const owner = (db.users || []).find((item) => item.id === article.ownerId);
+  const hub = hubOf(article.hub);
+  return {
+    ...publicArticle,
+    byline: article.byline || defaultByline(owner),
+    hubName: hub?.name || article.hub,
+    hubKicker: hub?.kicker || "",
+  };
+}
+
+function trimArticle(item) {
+  const { about, media, links, hiddenBy, hiddenAt, ...card } = item;
+  return card;
+}
+
 app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
@@ -1394,6 +1450,7 @@ app.get("/api/auth/discord/callback", async (req, res) => {
       user.discordAvatar = discordUser.avatar || null;
       user.discordEmail = discordUser.email || null;
       applyPendingAdmin(db, user);
+      applyPendingCreator(db, user);
       db.sessions.push({
         token: sessionToken,
         userId: user.id,
@@ -1581,6 +1638,7 @@ app.get("/api/auth/export", requireUser, exportLimiter, (req, res) => {
       username: user.username,
       createdAt: user.createdAt,
       admin: Boolean(user.admin),
+      creator: Boolean(user.creator),
       discordId: user.discordId || null,
       discordUsername: user.discordUsername || null,
       discordEmail: user.discordEmail || null,
@@ -1599,6 +1657,7 @@ app.get("/api/auth/export", requireUser, exportLimiter, (req, res) => {
     clans: (db.clans || []).filter((item) => item.ownerId === user.id),
     alliances: (db.alliances || []).filter((item) => item.ownerId === user.id),
     players: (db.players || []).filter((item) => item.ownerId === user.id),
+    articles: (db.articles || []).filter((item) => item.ownerId === user.id),
     reports: (db.reports || []).filter((item) => item.reporterId === user.id),
     prefs: userPrefs(user),
   });
@@ -1637,12 +1696,13 @@ app.delete("/api/auth/account", requireUser, (req, res) => {
     const droppedAlliances = new Set(
       (db.alliances || []).filter((item) => item.ownerId === userId).map((item) => item.id)
     );
-    for (const listing of [...(db.clans || []), ...(db.alliances || []), ...(db.players || [])].filter(
+    for (const listing of [...(db.clans || []), ...(db.alliances || []), ...(db.players || []), ...(db.articles || [])].filter(
       (item) => item.ownerId === userId
     )) {
       removeStoredFile(listing.image);
       dropUnusedMedia(listing);
     }
+    db.articles = (db.articles || []).filter((item) => item.ownerId !== userId);
     db.players = (db.players || []).filter((item) => item.ownerId !== userId);
     db.clans = (db.clans || [])
       .filter((item) => item.ownerId !== userId)
@@ -2286,30 +2346,38 @@ function writeReport(req, res, kind) {
   }
   const reporter = currentUser(req);
   writeDb((db) => {
-    const list = kind === "clan" ? db.clans : kind === "player" ? db.players || [] : db.alliances;
+    const list =
+      kind === "clan"
+        ? db.clans
+        : kind === "player"
+          ? db.players || []
+          : kind === "article"
+            ? db.articles || []
+            : db.alliances;
     const listing = list.find((item) => item.id === req.params.id);
-    if (!listing) {
-      res.status(404).json({ error: "Listing not found." });
+    if (!listing || (kind === "article" && !isLiveArticle(listing))) {
+      res.status(404).json({ error: kind === "article" ? "Guide not found." : "Listing not found." });
       return db;
     }
+    const listingId = kind === "article" ? `${listing.hub}/${listing.id}` : listing.id;
     const hourAgo = Date.now() - 60 * 60 * 1000;
     const duplicate = (db.reports || []).some(
       (item) =>
-        item.listingId === listing.id &&
+        item.listingId === listingId &&
         item.reason === reason &&
         item.reporterId === (reporter?.id || null) &&
         new Date(item.createdAt).getTime() > hourAgo
     );
     if (duplicate) {
-      res.status(429).json({ error: "You already reported this listing." });
+      res.status(429).json({ error: kind === "article" ? "You already reported this guide." : "You already reported this listing." });
       return db;
     }
     db.reports = db.reports || [];
     db.reports.unshift({
       id: `report-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
       kind,
-      listingId: listing.id,
-      listingName: listing.name,
+      listingId,
+      listingName: listing.name || listing.title,
       reason,
       details: String(req.body.details || "").slice(0, 400),
       reporterId: reporter?.id || null,
@@ -2545,6 +2613,185 @@ app.delete("/api/admin/staff/:id", requireAdmin, staffLimiter, (req, res) => {
       return db;
     }
     res.json({ ok: true, ...staffList(db, req.user.id) });
+    return db;
+  });
+});
+
+app.get("/api/articles", (req, res) => {
+  const db = readDb();
+  const user = currentUser(req);
+  const hub = hubOf(req.query?.hub);
+  if (req.query?.hub && !hub) {
+    res.status(400).json({ error: "Unknown hub." });
+    return;
+  }
+  const mine = String(req.query?.mine || "") === "1";
+  if (mine && !user) {
+    res.status(401).json({ error: "Sign in to continue." });
+    return;
+  }
+  const items = (db.articles || [])
+    .filter((item) => {
+      if (hub && item.hub !== hub.slug) return false;
+      if (mine) return Boolean(user) && item.ownerId === user.id && canSeeArticle(user, item);
+      if (isLiveArticle(item)) return true;
+      if (user?.admin && item.hidden) return true;
+      if (user && !item.published && item.ownerId === user.id) return true;
+      return false;
+    })
+    .sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")))
+    .map((item) => trimArticle(decorateArticle(item, db)));
+  res.json({ articles: items });
+});
+
+app.get("/api/articles/:id", (req, res) => {
+  const db = readDb();
+  const user = currentUser(req);
+  const article = (db.articles || []).find((item) => item.id === req.params.id);
+  if (!article || !canSeeArticle(user, article)) {
+    res.status(404).json({ error: "Guide not found." });
+    return;
+  }
+  res.json({
+    article: {
+      ...decorateArticle(article, db),
+      canEdit: canEditArticle(user, article),
+    },
+  });
+});
+
+app.post("/api/articles", requireCreator, listingLimiter, listingUpload, async (req, res) => {
+  if (!assertListingFiles(req, res)) return;
+  if (!(await processListingImages(req, res))) return;
+  const parsed = parseArticleBody(req.body, req.user, req);
+  if (parsed.error) {
+    discardUploads(req);
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+  writeDb((db) => {
+    const now = new Date().toISOString();
+    const article = {
+      id: slugify(parsed.fields.title),
+      ...parsed.fields,
+      image: savedUpload(listingFile(req, "image")),
+      ownerId: req.user.id,
+      hidden: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+    db.articles = db.articles || [];
+    db.articles.unshift(article);
+    res.status(201).json({ article: decorateArticle(article, db) });
+    return db;
+  }).catch(listingWriteFailed(req, res));
+});
+
+app.put("/api/articles/:id", requireUser, listingUpload, async (req, res) => {
+  if (!assertListingFiles(req, res)) return;
+  if (!(await processListingImages(req, res))) return;
+  const parsed = parseArticleBody(req.body, req.user, req);
+  if (parsed.error) {
+    discardUploads(req);
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+  writeDb((db) => {
+    const article = (db.articles || []).find((item) => item.id === req.params.id);
+    if (!article) {
+      discardUploads(req);
+      res.status(404).json({ error: "Guide not found." });
+      return db;
+    }
+    if (!canEditArticle(req.user, article)) {
+      discardUploads(req);
+      res.status(403).json({ error: "You do not have edit access to that guide." });
+      return db;
+    }
+    dropUnusedMedia(article, parsed.fields.media);
+    Object.assign(article, parsed.fields, {
+      image: nextImage(article.image, listingFile(req, "image")),
+      updatedAt: new Date().toISOString(),
+    });
+    res.json({ article: decorateArticle(article, db) });
+    return db;
+  }).catch(listingWriteFailed(req, res));
+});
+
+app.delete("/api/articles/:id", requireUser, (req, res) => {
+  writeDb((db) => {
+    const article = (db.articles || []).find((item) => item.id === req.params.id);
+    if (!article) {
+      res.status(404).json({ error: "Guide not found." });
+      return db;
+    }
+    if (!canEditArticle(req.user, article)) {
+      res.status(403).json({ error: "You do not have edit access to that guide." });
+      return db;
+    }
+    removeStoredFile(article.image);
+    dropUnusedMedia(article);
+    db.articles = (db.articles || []).filter((item) => item.id !== article.id);
+    res.json({ ok: true });
+    return db;
+  });
+});
+
+app.post("/api/articles/:id/hide", requireAdmin, (req, res) => {
+  writeDb((db) => {
+    const article = (db.articles || []).find((item) => item.id === req.params.id);
+    if (!article) {
+      res.status(404).json({ error: "Guide not found." });
+      return db;
+    }
+    const hidden = Boolean(req.body.hidden);
+    article.hidden = hidden;
+    article.hiddenBy = hidden ? req.user.id : null;
+    article.hiddenAt = hidden ? new Date().toISOString() : null;
+    article.updatedAt = new Date().toISOString();
+    res.json({ article: decorateArticle(article, db) });
+    return db;
+  });
+});
+
+app.post("/api/articles/:id/report", reportLimiter, (req, res) => writeReport(req, res, "article"));
+
+app.get("/api/admin/creators", requireAdmin, (req, res) => {
+  res.json(creatorList(readDb(), req.user.id));
+});
+
+app.get("/api/admin/creators/search", requireAdmin, staffSearchLimiter, (req, res) => {
+  res.json({
+    people: searchCreatorCandidates(readDb().users, req.query?.q, req.user.id),
+  });
+});
+
+app.post("/api/admin/creators", requireAdmin, staffLimiter, (req, res) => {
+  writeDb((db) => {
+    const userId = String(req.body?.userId || "").trim();
+    const result = userId
+      ? grantCreatorByUserId(db, userId, req.user)
+      : grantCreator(db, req.body?.query || req.body?.discordId, req.user);
+    if (result.error) {
+      res.status(400).json({ error: result.error });
+      return db;
+    }
+    res.json({ ok: true, pending: Boolean(result.pending), ...creatorList(db, req.user.id) });
+    return db;
+  });
+});
+
+app.delete("/api/admin/creators/:id", requireAdmin, staffLimiter, (req, res) => {
+  writeDb((db) => {
+    const raw = String(req.params.id || "");
+    const result = /^\d{17,20}$/.test(raw)
+      ? revokeCreator(db, { discordId: raw })
+      : revokeCreator(db, { userId: raw });
+    if (result.error) {
+      res.status(400).json({ error: result.error });
+      return db;
+    }
+    res.json({ ok: true, ...creatorList(db, req.user.id) });
     return db;
   });
 });
@@ -3070,6 +3317,7 @@ app.get("/sitemap.xml", (req, res) => {
       clans: db.clans || [],
       alliances: db.alliances || [],
       players: db.players || [],
+      articles: db.articles || [],
     })
   );
 });
@@ -3093,13 +3341,17 @@ async function sendListingPage(req, res, next, vite) {
   }
   const origin = publicOrigin(req);
   const db = readDb();
-  const collections = { clan: db.clans, alliance: db.alliances, player: db.players };
-  const listing = (collections[match.kind] || []).find((item) => item.id === match.id);
+  const collections = { clan: db.clans, alliance: db.alliances, player: db.players, article: db.articles };
+  const listing =
+    match.kind === "article"
+      ? (db.articles || []).find((item) => item.id === match.id && item.hub === match.hub)
+      : (collections[match.kind] || []).find((item) => item.id === match.id);
+  const live = match.kind === "article" ? listing && isLiveArticle(listing) : listing && !listing.hidden;
   const source = isProd ? path.join(distDir, "index.html") : indexPath;
   let html = fs.readFileSync(source, "utf8");
   html = applySocialMeta(
     html,
-    listing && !listing.hidden ? listingSocial(origin, listing, match.kind) : defaultSocial(origin)
+    live ? listingSocial(origin, listing, match.kind) : defaultSocial(origin)
   );
   if (vite) html = await vite.transformIndexHtml(req.originalUrl, html);
   res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).end(html);

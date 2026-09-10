@@ -45,6 +45,13 @@ import {
 import { youTubeEmbedUrl, youTubeThumbUrl } from "./video.js";
 import { MEDIA_MAX, isUploadedImage, mediaList } from "./media.js";
 import {
+  ARTICLE_PLAIN_MAX,
+  articlePath,
+  canWriteGuides,
+  hubList,
+  hubOf,
+} from "./resources.js";
+import {
   CONTACT_LABEL_MAX,
   CONTACT_LABEL_SUGGESTIONS,
   ROLE_MAX,
@@ -386,7 +393,7 @@ export function photo(item, size = 56, { fallback = "" } = {}) {
         : "";
     return `<img class="photo" src="${escapeHtml(src)}" alt="" width="${size}" height="${size}"${onError} />`;
   }
-  const initials = String(item.tag || item.name || "?").slice(0, 2).toUpperCase();
+  const initials = String(item.tag || item.name || item.title || "?").slice(0, 2).toUpperCase();
   return `<div class="photo fallback" style="--hue:${hueFrom(item.id || item.name)}">${escapeHtml(initials)}</div>`;
 }
 
@@ -659,6 +666,7 @@ export function accountMenu(user, badge = "", { messaging = true } = {}) {
         }
         <div class="account-links">
           ${user.admin ? `<a href="/admin" data-link>Staff</a>` : ""}
+          ${canWriteGuides(user) ? `<a href="/write-guide" data-link>Write a guide</a>` : ""}
           <a href="/account" data-link>Settings</a>
           <button type="button" data-logout>Sign out</button>
         </div>
@@ -677,7 +685,7 @@ function reportForm(kind, id) {
   const options = Object.entries(REPORT_REASON_LABELS)
     .map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`)
     .join("");
-  const noun = kind === "message" ? "conversation" : "listing";
+  const noun = kind === "message" ? "conversation" : kind === "article" ? "guide" : "listing";
   return `
     <details class="report-box">
       <summary>Report this ${escapeHtml(noun)}</summary>
@@ -837,6 +845,7 @@ export function homeView({ clans, alliances, players = [], viewed = [] }) {
       <a class="discovery-path discovery-path-player" href="/players" data-link><span class="eyebrow">LOOKING FOR A CLAN</span><span class="path-title">Players looking for a home <span aria-hidden="true">↗</span></span><span class="muted">Browse Tenno who want to join a clan.</span><span class="path-foot">${playerBoard.length ? `${playerBoard.length} player${playerBoard.length === 1 ? "" : "s"} looking` : "Explore looking-for-clan"}</span></a>
     </section>
     ${viewedListingsPanel(viewed, { home: true })}
+    <section class="section"><div class="advertise-panel"><div><p class="eyebrow">RESOURCES</p><h2>How to run the rest of it</h2><p class="muted">Dojo building, clan management, Discord, and how to advertise — written by designated people, not a public wiki.</p></div><div class="advertise-actions"><a class="btn btn-primary" href="/resources" data-link>Open Resources ↗</a></div></div></section>
     ${section("IN THE SPOTLIGHT", "Meet the featured clans", "/browse", featured.map((clan) => clanCard(clan)))}
     ${section("THE RECRUITMENT BOARD", "Discover your next clan", "/browse", recent.map((clan) => clanCard(clan)))}
     ${section("CONNECTED COMMUNITIES", "Discover alliances", "/alliances", allianceBoard.slice(0, 3).map((item) => allianceCard(item)))}
@@ -1554,12 +1563,12 @@ function playstyleGroups(selected = []) {
   ).join("");
 }
 
-function aboutComposer(draft = {}) {
+function aboutComposer(draft = {}, { limit = PLAIN_MAX, hint = "The body of the listing", label = "Full post" } = {}) {
   return `
-    ${richTextField("about", "Full post", draft.about || "", {
+    ${richTextField("about", label, draft.about || "", {
       video: true,
-      hint: "The body of the listing",
-      limit: PLAIN_MAX,
+      hint,
+      limit,
     })}
     ${videoPicker(draft)}
     <small class="field-help">Select text to format. Click in the post, then Video to place the media band. Insert again to move it.</small>
@@ -1964,7 +1973,7 @@ function staffJumpPanel(user) {
   `;
 }
 
-export function accountView({ user, clans, alliances, players = [], reports = [], saved = [], viewed = [] }) {
+export function accountView({ user, clans, alliances, players = [], articles = [], reports = [], saved = [], viewed = [] }) {
   const admin = Boolean(user.admin);
   return `
     <section class="page-hero account-hero">
@@ -2027,6 +2036,7 @@ export function accountView({ user, clans, alliances, players = [], reports = []
       }</div>
       ${listingList(players, "player", "You have not posted a player profile yet.", { admin })}
     </section>
+    ${guidesDesk(user, articles)}
     ${admin ? reportsPanel(reports) : ""}
     <section class="section">
       <div class="panel">
@@ -2469,7 +2479,19 @@ const LISTING_KINDS = {
   // The player composer takes no id: you have one profile, so /lfc is always
   // the edit page for it.
   player: { edit: "/lfc", open: "/players", attr: "player", byId: false },
+  article: { edit: "/write-guide", open: "/resources", attr: "article" },
 };
+
+function reportOpenHref(item) {
+  if (item.kind === "article") {
+    const [hub, ...rest] = String(item.listingId || "").split("/");
+    const id = rest.join("/");
+    if (hub && id) return `/resources/${encodeURIComponent(hub)}/${encodeURIComponent(id)}`;
+    return "/resources";
+  }
+  const spec = LISTING_KINDS[item.kind] || LISTING_KINDS.clan;
+  return `${spec.open}/${encodeURIComponent(item.listingId)}`;
+}
 
 function listingList(items, kind, emptyText, { admin = false } = {}) {
   if (!items.length) return `<p class="muted">${emptyText}</p>`;
@@ -2518,6 +2540,44 @@ function listingList(items, kind, emptyText, { admin = false } = {}) {
     .join("")}</div>`;
 }
 
+function articleBadges(item) {
+  const bits = [];
+  if (!item.published) bits.push(`<span class="pill is-paused">Draft</span>`);
+  if (item.hidden) bits.push(`<span class="pill is-stale">Hidden</span>`);
+  return bits.join("");
+}
+
+function guidesDesk(user, articles = []) {
+  if (!canWriteGuides(user)) return "";
+  return `
+    <section class="section">
+      <div class="section-head"><h2>Your guides</h2><a class="text-link" href="/write-guide" data-link>Write a guide</a></div>
+      ${
+        articles.length
+          ? `<div class="list">${articles
+              .map((item) => {
+                const href = articlePath(item);
+                return `
+            <div class="list-row">
+              ${photo({ ...item, name: item.title }, 44)}
+              <div>
+                <strong>${escapeHtml(item.title)}</strong>
+                <p class="muted">${escapeHtml(item.hubName || item.hub)}${articleBadges(item) ? ` ${articleBadges(item)}` : ""}</p>
+              </div>
+              <div class="list-actions">
+                <a class="btn btn-ghost" href="${escapeHtml(href)}" data-link>Open</a>
+                <a class="btn btn-ghost" href="/write-guide?id=${encodeURIComponent(item.id)}" data-link>Edit</a>
+                <button class="btn btn-ghost" type="button" data-delete-article="${escapeHtml(item.id)}">Remove</button>
+              </div>
+            </div>`;
+              })
+              .join("")}</div>`
+          : `<p class="muted">You have not written a guide yet. They live under Resources, in one of the four hubs.</p>`
+      }
+    </section>
+  `;
+}
+
 function reportsPanel(reports) {
   const open = reports.filter((item) => item.status === "open");
   const rest = reports.filter((item) => item.status !== "open");
@@ -2537,7 +2597,7 @@ function reportsPanel(reports) {
             ${item.details ? `<p class="muted">${escapeHtml(item.details)}</p>` : ""}
           </div>
           <div class="list-actions">
-            <a class="btn btn-ghost" href="${(LISTING_KINDS[item.kind] || LISTING_KINDS.clan).open}/${encodeURIComponent(item.listingId)}" data-link>Open</a>
+            <a class="btn btn-ghost" href="${reportOpenHref(item)}" data-link>Open</a>
             ${
               item.status === "open"
                 ? `<button class="btn btn-ghost" type="button" data-resolve-report="${escapeHtml(item.id)}" data-status="resolved">Resolve</button>
@@ -2582,7 +2642,88 @@ function staffRow(person) {
     </div>`;
 }
 
-export function adminView({ staff = { admins: [], pending: [] }, reports = [] }) {
+function creatorRow(person) {
+  const who = person.discordUsername || person.username || "Writer";
+  const discord = person.discordId
+    ? `<p class="muted staff-id">${escapeHtml(person.discordId)}${
+        person.discordUsername ? ` · ${escapeHtml(person.discordUsername)}` : ""
+      }</p>`
+    : `<p class="muted">No Discord linked</p>`;
+  return `
+    <div class="list-row">
+      <div>
+        <strong>${escapeHtml(who)}</strong>
+        ${discord}
+      </div>
+      <div class="list-actions">
+        <button class="btn btn-ghost" type="button" data-revoke-creator="${escapeHtml(person.id)}">Remove</button>
+      </div>
+    </div>`;
+}
+
+function creatorsPanel(creators = { creators: [], pending: [] }) {
+  const people = creators.creators || [];
+  const pending = creators.pending || [];
+  return `
+    <section class="section">
+      <div class="panel">
+        <p class="kicker">Resources writers</p>
+        <h2>Grant a creator</h2>
+        <p class="muted">Creators write guides in Resources. They cannot hide listings, read reports, or grant staff. Admins can already write without this.</p>
+        <form class="stack staff-form" data-staff-form data-staff-kind="creator">
+          <label class="field">
+            <span>Their name on this site</span>
+            <div class="combo">
+              <input
+                name="query"
+                data-staff-query
+                role="combobox"
+                aria-expanded="false"
+                aria-controls="creator-suggestions"
+                aria-autocomplete="list"
+                autocomplete="off"
+                required
+                maxlength="40"
+              />
+              <ul class="combo-list" id="creator-suggestions" role="listbox" aria-label="Matching accounts" data-staff-suggestions hidden></ul>
+            </div>
+            <input type="hidden" name="userId" data-staff-user-id value="" />
+          </label>
+          <p class="muted">Same lookup as staff. Paste a Discord user ID if they have not signed in yet.</p>
+          <p class="error" data-staff-note hidden></p>
+          <button class="btn btn-primary" type="submit">Add writer</button>
+        </form>
+      </div>
+    </section>
+    <section class="section">
+      <div class="section-head"><h2>Creators</h2><p class="muted">${people.length} live</p></div>
+      ${people.length ? `<div class="list">${people.map(creatorRow).join("")}</div>` : `<div class="panel"><p class="muted">Nobody designated yet.</p></div>`}
+    </section>
+    <section class="section">
+      <div class="section-head"><h2>Writers waiting to sign in</h2><p class="muted">${pending.length} pending</p></div>
+      ${
+        pending.length
+          ? `<div class="list">${pending
+              .map(
+                (item) => `
+        <div class="list-row">
+          <div>
+            <strong class="staff-id">${escapeHtml(item.discordId)}</strong>
+            <p class="muted">Granted${item.grantedAt ? ` ${timeAgo(item.grantedAt)}` : ""}. They can write on their next Discord sign-in.</p>
+          </div>
+          <div class="list-actions">
+            <button class="btn btn-ghost" type="button" data-revoke-creator-pending="${escapeHtml(item.discordId)}">Cancel</button>
+          </div>
+        </div>`
+              )
+              .join("")}</div>`
+          : `<div class="panel"><p class="muted">No Discord IDs waiting.</p></div>`
+      }
+    </section>
+  `;
+}
+
+export function adminView({ staff = { admins: [], pending: [] }, creators = { creators: [], pending: [] }, reports = [] }) {
   const admins = staff.admins || [];
   const pending = staff.pending || [];
   return `
@@ -2595,7 +2736,7 @@ export function adminView({ staff = { admins: [], pending: [] }, reports = [] })
       <div class="panel">
         <p class="kicker">Add admin</p>
         <h2>Grant from the dashboard</h2>
-        <form class="stack staff-form" data-staff-form>
+        <form class="stack staff-form" data-staff-form data-staff-kind="admin">
           <label class="field">
             <span>Their name on this site</span>
             <div class="combo">
@@ -2645,6 +2786,7 @@ export function adminView({ staff = { admins: [], pending: [] }, reports = [] })
           : `<div class="panel"><p class="muted">No Discord IDs waiting. Paste one above if they do not have an account yet.</p></div>`
       }
     </section>
+    ${creatorsPanel(creators)}
     ${reportsPanel(reports)}
   `;
 }
@@ -2674,6 +2816,12 @@ export function guideView() {
           <p class="muted">They read the post, click through, introduce themselves, then wait for the invite.</p>
         </article>
       </div>
+      <article class="panel">
+        <p class="kicker">Resources</p>
+        <h3>Dojo, clan, Discord, advertise</h3>
+        <p class="muted">Resources is a library of guides, not a wiki. Designated writers publish into four hubs: dojo building, how to run a clan, Discord setup, and how to advertise.</p>
+        <p><a class="text-link" href="/resources" data-link>Open Resources</a></p>
+      </article>
       <article class="panel">
         <p class="kicker">For recruits</p>
         <h3>How to pick a clan</h3>
@@ -2712,6 +2860,189 @@ export function guideView() {
         <a class="btn btn-primary" href="/browse" data-link>Browse clans</a>
         <a class="btn btn-ghost" href="/post" data-link>Post a listing</a>
       </div>
+    </section>
+  `;
+}
+
+export function articleCard(article) {
+  const hub = hubOf(article.hub);
+  const href = articlePath(article);
+  return `
+    <article class="card" data-href="${escapeHtml(href)}" tabindex="0">
+      <header class="card-head">
+        ${photo({ ...article, name: article.title, tag: hub?.name || article.hub })}
+        <div>
+          <p class="kicker">${escapeHtml(article.hubKicker || hub?.kicker || hub?.name || "")}</p>
+          <h3>${escapeHtml(article.title)}</h3>
+          <p class="muted">${escapeHtml(article.byline || "")}${article.updatedAt ? ` · ${timeAgo(article.updatedAt)}` : ""}</p>
+        </div>
+        <div class="card-pills">${articleBadges(article)}</div>
+      </header>
+      <p class="muted">${escapeHtml(article.summary || "")}</p>
+      <footer class="card-foot">
+        <a class="btn btn-ghost" href="${escapeHtml(href)}" data-link>Read</a>
+      </footer>
+    </article>
+  `;
+}
+
+export function resourcesView({ hubs = hubList(), counts = {}, canWrite = false } = {}) {
+  return `
+    <section class="page-hero">
+      <p class="eyebrow">Resources</p>
+      <h1>How to run the rest of it</h1>
+      <p class="lead">Four closed libraries: dojo building, clan management, Discord, and how to advertise. Designated writers publish here. It is not a public wiki.</p>
+      ${canWrite ? `<p><a class="btn btn-primary" href="/write-guide" data-link>Write a guide</a></p>` : ""}
+    </section>
+    <section class="section discovery-paths discovery-paths-four" aria-label="Resource hubs">
+      ${hubs
+        .map((hub) => {
+          const count = Number(counts[hub.slug] || 0);
+          return `<a class="discovery-path" href="/resources/${escapeHtml(hub.slug)}" data-link><span class="eyebrow">${escapeHtml(
+            hub.kicker
+          )}</span><span class="path-title">${escapeHtml(hub.name)} <span aria-hidden="true">↗</span></span><span class="muted">${escapeHtml(
+            hub.lead
+          )}</span><span class="path-foot">${count ? `${count} guide${count === 1 ? "" : "s"}` : "Open this library"}</span></a>`;
+        })
+        .join("")}
+    </section>
+  `;
+}
+
+export function hubView(hub, articles = [], { canWrite = false } = {}) {
+  if (!hub) {
+    return `<section class="auth-card"><h1>Unknown library</h1><p class="muted">Resources only has four hubs.</p><p><a href="/resources" data-link>Back to Resources</a></p></section>`;
+  }
+  return `
+    <section class="page-hero">
+      <p class="eyebrow"><a href="/resources" data-link>Resources</a></p>
+      <h1>${escapeHtml(hub.name)}</h1>
+      <p class="lead">${escapeHtml(hub.lead)}</p>
+      <p class="muted">${escapeHtml(hub.kicker)}</p>
+      ${canWrite ? `<p><a class="btn btn-ghost" href="/write-guide?hub=${encodeURIComponent(hub.slug)}" data-link>Write in this hub</a></p>` : ""}
+    </section>
+    <section class="section">
+      ${
+        articles.length
+          ? `<div class="grid">${articles.map((item) => articleCard(item)).join("")}</div>`
+          : `<div class="empty"><h3>Nothing published here yet</h3><p class="muted">When a designated writer posts a guide, it will show up in this library.</p></div>`
+      }
+    </section>
+  `;
+}
+
+export function articlePage(article, { admin = false, canEdit = false } = {}) {
+  const hub = hubOf(article.hub);
+  return `
+    <article class="listing-page panel">
+      <p class="eyebrow"><a href="/resources" data-link>Resources</a> · <a href="/resources/${escapeHtml(article.hub)}" data-link>${escapeHtml(
+        hub?.name || article.hubName || article.hub
+      )}</a></p>
+      <div class="modal-hero">
+        ${photo({ ...article, name: article.title }, 72)}
+        <div>
+          <div class="modal-kicker">
+            <p class="kicker">${escapeHtml(article.hubKicker || hub?.kicker || "")}</p>
+            ${articleBadges(article)}
+          </div>
+          <h1>${escapeHtml(article.title)}</h1>
+          <p class="headline">${escapeHtml(article.summary)}</p>
+          ${linkRow(article)}
+        </div>
+      </div>
+      <p class="muted">${escapeHtml(article.byline || "")}${article.updatedAt ? ` · Updated ${timeAgo(article.updatedAt)}` : ""}</p>
+      <h2>Guide</h2>
+      ${postBodyHtml(article.about, mediaList(article))}
+      <div class="row listing-actions">
+        <button class="btn btn-ghost" type="button" data-copy-url>Copy link</button>
+        ${canEdit ? `<a class="btn btn-ghost" href="/write-guide?id=${encodeURIComponent(article.id)}" data-link>Edit</a>` : ""}
+        ${
+          admin
+            ? `<button class="btn btn-ghost" type="button" data-hide-article="${escapeHtml(article.id)}" data-hidden="${
+                article.hidden ? "0" : "1"
+              }">${article.hidden ? "Unhide guide" : "Hide guide"}</button>
+        <button class="btn btn-ghost" type="button" data-delete-article="${escapeHtml(article.id)}">Remove guide</button>`
+            : ""
+        }
+      </div>
+      ${article.published && !article.hidden ? reportForm("article", article.id) : ""}
+    </article>
+  `;
+}
+
+function writeGuideGate(auth = {}) {
+  return `
+    <section class="auth-card">
+      <p class="eyebrow">Resources</p>
+      <h1>Writers are designated</h1>
+      <p class="lead">Resources is not a public wiki. Staff grant write access to specific accounts. Anyone can still read published guides.</p>
+      <div class="row">
+        <a class="btn btn-primary" href="/resources" data-link>Browse Resources</a>
+        ${auth.discord ? discordButton("/write-guide") : `<a class="btn btn-ghost" href="/login?next=${encodeURIComponent("/write-guide")}" data-link>Sign in</a>`}
+      </div>
+    </section>
+  `;
+}
+
+export function articlePostView({ user, draft = {}, auth = {} }) {
+  const next = draft.id ? `/write-guide?id=${encodeURIComponent(draft.id)}` : "/write-guide";
+  if (!user) return authGate(next, auth);
+  if (!canWriteGuides(user)) return writeGuideGate(auth);
+  const editing = Boolean(draft.id);
+  const hubs = hubList();
+  return `
+    <section class="page-hero">
+      <p class="eyebrow">Resources</p>
+      <h1>${editing ? "Edit guide" : "Write a guide"}</h1>
+      <p class="lead">${
+        editing
+          ? "Update this guide. A draft stays off the board until you publish it."
+          : "Pick one of the four hubs. Save a draft if it is not ready, or publish it into that library."
+      }</p>
+    </section>
+    <section class="composer">
+      <form id="article-form" class="stack" novalidate>
+        <p class="muted" data-draft-note hidden>Your last draft is back. Images are not kept in the draft.</p>
+        <div class="form-block">
+          <h2>Library</h2>
+          <label class="field">
+            <span>Hub</span>
+            <select name="hub" required>
+              <option value="">Pick a hub</option>
+              ${hubs
+                .map(
+                  (hub) =>
+                    `<option value="${escapeHtml(hub.slug)}" ${draft.hub === hub.slug ? "selected" : ""}>${escapeHtml(hub.name)}</option>`
+                )
+                .join("")}
+            </select>
+          </label>
+          <label class="field"><span>Title</span><input name="title" required maxlength="${HEADLINE_MAX}" value="${escapeHtml(
+            draft.title || ""
+          )}" /></label>
+          <label class="field"><span>Summary</span><textarea name="summary" required maxlength="${SUMMARY_MAX}" rows="3">${escapeHtml(
+            draft.summary || ""
+          )}</textarea></label>
+          <label class="field"><span>Byline <small class="field-optional">how readers see the author</small></span><input name="byline" maxlength="48" value="${escapeHtml(
+            draft.byline || user.forumName || user.username || ""
+          )}" /></label>
+          ${imagePicker("Guide image")}
+        </div>
+        <div class="form-block">
+          <h2>Article</h2>
+          ${aboutComposer(draft, { limit: ARTICLE_PLAIN_MAX, hint: "The body of the guide", label: "The guide" })}
+          ${linksField(draft)}
+        </div>
+        <label class="check"><input type="checkbox" name="published" value="1" ${
+          draft.published ? "checked" : ""
+        } /><span>Publish this guide. Unchecked keeps it as a draft only you and staff can read.</span></label>
+        <p class="error" id="form-note" hidden></p>
+        <div class="row">
+          <button class="btn btn-primary" type="submit">${editing ? "Save guide" : "Save guide"}</button>
+          <a class="btn btn-ghost" href="${editing ? articlePath(draft) : "/resources"}" data-link>Cancel</a>
+        </div>
+        ${deleteFromComposer("article", draft.id, "guide")}
+      </form>
     </section>
   `;
 }
