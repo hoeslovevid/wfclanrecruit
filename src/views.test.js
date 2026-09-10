@@ -18,6 +18,7 @@ import {
   filterThreads,
   guideView,
   homeView,
+  hubView,
   navAccount,
   ignoreListHtml,
   ignoreRow,
@@ -27,6 +28,9 @@ import {
   messagesView,
   playersView,
   relativeTime,
+  resourcesView,
+  articlePage,
+  articlePostView,
   saveButton,
   threadRow,
   verifiedTick,
@@ -303,6 +307,19 @@ test("the settings page gives staff a dashboard card", () => {
   assert.match(html, /Open staff dashboard/);
 });
 
+test("the settings page lists guides for designated writers", () => {
+  const html = accountView({
+    user: { ...me, creator: true, canWriteGuides: true, canPublish: true },
+    clans: [],
+    alliances: [],
+    players: [],
+    articles: [{ id: "rooms", hub: "dojo", hubName: "Dojo building", title: "Decorate the hall", published: false }],
+  });
+  assert.match(html, /Your guides/);
+  assert.match(html, /Decorate the hall/);
+  assert.match(html, /href="\/write-guide"/);
+});
+
 test("the settings page hides the dashboard card from everyone else", () => {
   const html = accountView({
     user: { ...me, admin: false, canPublish: true },
@@ -336,6 +353,29 @@ test("the staff page lists live admins and waiting Discord IDs", () => {
   assert.match(html, /Password operator/);
   assert.match(html, /data-revoke-pending="999999999999999999"/);
   assert.doesNotMatch(html, /Custom emojis/);
+});
+
+test("the staff page also grants Resource writers", () => {
+  const html = adminView({
+    user: { id: "user-a", admin: true },
+    staff: { admins: [], pending: [] },
+    creators: {
+      creators: [{ id: "user-c", username: "gamma", discordId: "222222222222222222" }],
+      pending: [{ discordId: "333333333333333333", grantedAt: new Date().toISOString() }],
+    },
+    reports: [],
+  });
+  assert.match(html, /data-staff-kind="creator"/);
+  assert.match(html, /Add writer/);
+  assert.match(html, /data-revoke-creator="user-c"/);
+  assert.match(html, /data-revoke-creator-pending="333333333333333333"/);
+  assert.doesNotMatch(html, /listing admin/);
+});
+
+test("a creator sees Write a guide in the account menu; a recruit does not", () => {
+  assert.match(accountMenu({ ...me, creator: true, canWriteGuides: true }), /href="\/write-guide"/);
+  assert.doesNotMatch(accountMenu(me), /href="\/write-guide"/);
+  assert.match(accountMenu({ ...me, admin: true, canWriteGuides: true }), /href="\/write-guide"/);
 });
 
 test("the hold is disabled and dimmed while you are invisible", () => {
@@ -460,6 +500,70 @@ test("the guide points other apps at the public feed", () => {
   const html = guideView();
   assert.match(html, /\/api\/v1/);
   assert.match(html, /User-Agent/);
+});
+
+test("the guide and home send people into Resources", () => {
+  assert.match(guideView(), /href="\/resources"/);
+  assert.match(homeView({ clans: [], alliances: [], players: [] }), /href="\/resources"/);
+});
+
+test("Resources is four closed hubs, not a wiki", () => {
+  const html = resourcesView({ canWrite: false });
+  assert.match(html, /Dojo building/);
+  assert.match(html, /With Architects Anonymous/);
+  assert.match(html, /How to run a clan/);
+  assert.match(html, /href="\/resources\/discord"/);
+  assert.match(html, /How to advertise/);
+  assert.match(html, /not a public wiki/i);
+  assert.doesNotMatch(html, /Write a guide/);
+  assert.match(resourcesView({ canWrite: true }), /href="\/write-guide"/);
+});
+
+test("a hub lists guides; an unknown hub is refused", () => {
+  const live = {
+    id: "rooms",
+    hub: "dojo",
+    title: "Decorate the hall",
+    summary: "A layout",
+    published: true,
+    byline: "--Gunson--",
+  };
+  assert.match(hubView({ slug: "dojo", name: "Dojo building", kicker: "With Architects Anonymous", lead: "Layouts." }, [live]), /Decorate the hall/);
+  assert.match(hubView(null, []), /Unknown library/);
+});
+
+test("a published guide page can be reported; a draft cannot", () => {
+  const article = {
+    id: "rooms",
+    hub: "dojo",
+    title: "Decorate the hall",
+    summary: "A layout",
+    about: "<p>Build it.</p>",
+    published: true,
+    hidden: false,
+    byline: "--Gunson--",
+    hubKicker: "With Architects Anonymous",
+  };
+  const live = articlePage(article, { admin: false, canEdit: false });
+  assert.match(live, /data-report-kind="article"/);
+  assert.match(live, /Report this guide/);
+  const draft = articlePage({ ...article, published: false }, { canEdit: true });
+  assert.doesNotMatch(draft, /data-report-kind="article"/);
+  assert.match(draft, /href="\/write-guide\?id=rooms"/);
+});
+
+test("the guide composer is a designated-writer form, not the listing gate", () => {
+  const gate = articlePostView({ user: { ...me, canWriteGuides: false }, draft: {}, auth: {} });
+  assert.match(gate, /Writers are designated/);
+  assert.doesNotMatch(gate, /verify a Warframe Forum/);
+  const form = articlePostView({
+    user: { ...me, creator: true, canWriteGuides: true },
+    draft: { hub: "dojo" },
+    auth: {},
+  });
+  assert.match(form, /name="hub"/);
+  assert.match(form, /name="published"/);
+  assert.match(form, /id="article-form"/);
 });
 
 test("inbox search filters by name, listing, and preview", () => {

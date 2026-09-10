@@ -43,6 +43,8 @@ function emptyDb() {
     players: [],
     reports: [],
     adminGrants: [],
+    creatorGrants: [],
+    articles: [],
     emojis: [],
   };
 }
@@ -207,6 +209,8 @@ export async function initStorage() {
     cache = JSON.parse(fs.readFileSync(dbPath, "utf8"));
     if (!Array.isArray(cache.reports)) cache.reports = [];
     if (!Array.isArray(cache.adminGrants)) cache.adminGrants = [];
+    if (!Array.isArray(cache.creatorGrants)) cache.creatorGrants = [];
+    if (!Array.isArray(cache.articles)) cache.articles = [];
     if (!Array.isArray(cache.emojis)) cache.emojis = [];
     storageReady = true;
   }
@@ -238,6 +242,8 @@ export function readDb() {
   // every reader treats it as a list.
   if (!Array.isArray(cache.players)) cache.players = [];
   if (!Array.isArray(cache.adminGrants)) cache.adminGrants = [];
+  if (!Array.isArray(cache.creatorGrants)) cache.creatorGrants = [];
+  if (!Array.isArray(cache.articles)) cache.articles = [];
   if (!Array.isArray(cache.emojis)) cache.emojis = [];
   return cache;
 }
@@ -252,6 +258,8 @@ export function writeDb(mutator) {
       if (!Array.isArray(next.reports)) next.reports = [];
       if (!Array.isArray(next.players)) next.players = [];
       if (!Array.isArray(next.adminGrants)) next.adminGrants = [];
+      if (!Array.isArray(next.creatorGrants)) next.creatorGrants = [];
+      if (!Array.isArray(next.articles)) next.articles = [];
       if (!Array.isArray(next.emojis)) next.emojis = [];
       writeDbFile(next);
       await persist(next);

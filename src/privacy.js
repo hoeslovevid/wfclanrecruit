@@ -21,6 +21,7 @@ export function privacyView() {
           <li>If you sign in, we store account, Discord, and (if you verify) Warframe Forum details so you can post.</li>
           <li>Verifying makes your Warframe name findable by clan leaders adding a recruiter to their own listing.</li>
           <li>Listings you publish are public, including images, any YouTube video you link, Discord invites, and whatever you write in the post. Each listing has a shareable URL. Other apps can also read that same public post through a read-only JSON feed at <code>/api/v1</code>.</li>
+          <li>Published Resource guides are also public. Drafts are not. Staff designate who can write those guides; that is not the same as listing admin.</li>
           <li>You can report a dead or dishonest listing. Reports are not public; only admins can read them.</li>
           <li>You can download your data, remove listings, sign out, or delete your account from the ${jump("opt-out", "opt-out section")} or your <a href="/account" data-link>account page</a>.</li>
         </ul>
@@ -77,14 +78,14 @@ export function privacyView() {
       <article class="panel policy-section" id="browse">
         <p class="kicker">03</p>
         <h2>Browsing without an account</h2>
-        <p>Anyone can open the home, clan, alliance, guide, privacy, sitemap, and robots pages without signing in. In that mode we do not create a user record for you. The same public listings are available as JSON at <code>/api/v1</code> without an account: a client has to name itself in the User-Agent header, and we rate-limit that feed. We do not count those requests as listing views.</p>
+        <p>Anyone can open the home, clan, alliance, player, Resources, guide, privacy, sitemap, and robots pages without signing in. In that mode we do not create a user record for you. The same public listings are available as JSON at <code>/api/v1</code> without an account: a client has to name itself in the User-Agent header, and we rate-limit that feed. We do not count those requests as listing views. Published Resource guides are on the website; they are not part of that JSON feed.</p>
         <p>Your browser will still make ordinary web requests to load the page, styles, logo, fonts, and listing data. The hosting provider can see technical request data such as IP address, date, URL, and browser type. We do not write those values into our application database, and we do not use them to build a marketing profile.</p>
         <p>Optional on-device data while browsing:</p>
         <ul class="policy-bullets">
           <li><strong>Theme preference.</strong> If you use the light/dark switch, the choice is stored only in your browser as <code>wfr-theme</code>. We never send that value to our server.</li>
           <li><strong>Message alerts.</strong> If you sign in, Sound ping and Desktop alert live in your account menu. Those choices stay in your browser as <code>wfr-alerts</code>. Desktop alerts use the browser’s notification permission; we do not get a push subscription, and nothing is sent when this site is closed.</li>
           <li><strong>Saved listings.</strong> If you save a clan, alliance, or player post, the shortlist stays in your browser as <code>wfr-saves</code>. If you are signed in, we also store that list on your account so it follows you to another device. Unsave or delete the account to drop it from the server.</li>
-          <li><strong>Composer drafts.</strong> If you start a listing and leave, the text is stored in your browser as <code>wfr-drafts</code>. Images are not kept in the draft. If you are signed in, we also store those drafts on your account. Publishing or deleting the account clears them from the server.</li>
+          <li><strong>Composer drafts.</strong> If you start a listing or a Resource guide and leave, the text is stored in your browser as <code>wfr-drafts</code>. Images are not kept in the draft. If you are signed in, we also store those drafts on your account. Publishing or deleting the account clears them from the server.</li>
           <li><strong>Recently viewed.</strong> Opening a listing remembers the last ten on this device as <code>wfr-viewed</code>. We never send that list to our server.</li>
           <li><strong>Browse filters.</strong> The last filters you used on Clans, Alliances, or Players stay in your browser as <code>wfr-filters</code>. Reset on that directory, or clear this site’s data, forgets them. We never send that map to our server.</li>
           <li><strong>Google Fonts.</strong> The page loads Rajdhani from Google’s font servers. Google may process your IP address under Google’s policies. Blocking that request still lets the site run on your system fonts.</li>
@@ -108,6 +109,7 @@ export function privacyView() {
               <tr><td>Password hash</td><td>Yes, hashed. Discord accounts get a random unused password.</td><td>No</td></tr>
               <tr><td>Account created time</td><td>Yes</td><td>No</td></tr>
               <tr><td>Admin flag</td><td>Yes, for staff accounts. An existing admin can grant this from the staff page by choosing an account on this site, or by pasting a Discord user id. If that person has not signed in yet, we store the id until they do.</td><td>No</td></tr>
+              <tr><td>Creator flag</td><td>Yes, for designated Resource writers. An admin can grant this the same way as staff. Creators cannot hide listings, read reports, or grant staff. Admins can write guides without this flag.</td><td>No. Published guides show a byline the writer types.</td></tr>
               <tr><td>Discord user id</td><td>Yes</td><td>No</td></tr>
               <tr><td>Discord display name</td><td>Yes</td><td>No. Visible to you on your account page.</td></tr>
               <tr><td>Discord email</td><td>Yes, if Discord returns one</td><td>No. We do not print it on listings or in the public API account object.</td></tr>
@@ -136,15 +138,18 @@ export function privacyView() {
         </ul>
         <p>Do not put private phone numbers, home addresses, government IDs, or passwords in a listing. Recruits and search engines can see public posts.</p>
 
+        <h3>Resource guides (if staff designated you to write)</h3>
+        <p>Published guides under Resources are public. We store the hub, title, summary, body, optional image and links, byline, owner id, published and hidden flags, and created/updated times. A draft (<code>published: false</code>) is visible only to its owner and to admins. A hidden guide is visible only to admins. Writing a guide does not require Warframe Forum verification. Creators are not listing admins.</p>
+
         <h3>Reports</h3>
-        <p>Anyone can send a listing report (dead invite, inactive, fake, stolen name, or other). We store the reason, optional details, listing id and name, time, status, and the reporter’s account id if they were signed in. Reports are not shown on the public board.</p>
+        <p>Anyone can send a listing or guide report (dead invite, inactive, fake, stolen name, or other). We store the reason, optional details, listing or guide id and name, time, status, and the reporter’s account id if they were signed in. Reports are not shown on the public board.</p>
 
         <h3>On-site messages</h3>
         <p>If you use Messages, we store the plain text you write, who is in the conversation, the listing it is about, and whether you muted that thread on your side. Messages are not shown on the public board. The other person in the thread can read them. Muting does not hide the chat from them.</p>
 
         <h3>Technical data we do not store in the app database</h3>
         <ul class="policy-bullets">
-          <li>We do not store IP addresses, GPS, payment cards, or device advertising IDs in the application database. Production uses Postgres tables (users, sessions, clans, alliances, players, reports, admin_grants) when <code>DATABASE_URL</code> is set. Local development can use a <code>db.json</code> file instead.</li>
+          <li>We do not store IP addresses, GPS, payment cards, or device advertising IDs in the application database. Production uses Postgres tables (users, sessions, clans, alliances, players, reports, admin_grants, creator_grants, articles) when <code>DATABASE_URL</code> is set. Local development can use a <code>db.json</code> file instead.</li>
           <li>We do not keep Discord OAuth access or refresh tokens after sign-in finishes.</li>
           <li>We do not store the HTML of your Warframe Forum profile after the verification check. We only keep whether the code matched, plus the profile URL and name.</li>
           <li>The host (Railway) and any reverse proxy may still log IPs and user agents for security and uptime. Those logs are not a feature of this app and are not used to target ads.</li>
@@ -183,7 +188,8 @@ export function privacyView() {
               <tr><td>Let you keep a saved shortlist and listing drafts across devices</td><td>Saved listing ids and composer text, only if you are signed in</td></tr>
               <tr><td>Ping you about a new message while this site is open</td><td>Sender name and a short preview, only in a browser notification if you turned Desktop alert on</td></tr>
               <tr><td>Enforce cooldowns (new listing 15 minutes, bump 12 hours, forum check a few seconds)</td><td>Timestamps on listings and the last forum check</td></tr>
-              <tr><td>Moderation by staff</td><td>Admins can hide or remove any listing, read reports, and grant or revoke staff</td></tr>
+              <tr><td>Moderation by staff</td><td>Admins can hide or remove any listing, read reports, grant or revoke staff, and designate Resource writers. Creators can only write their own guides.</td></tr>
+              <tr><td>Publish Resource guides</td><td>Hub, title, summary, body, images, links, byline. Forum verification is not required for this.</td></tr>
               <tr><td>Security and abuse handling</td><td>Sessions, Discord ids, host logs</td></tr>
               <tr><td>Honor download and deletion requests</td><td>Your account record and listings</td></tr>
             </tbody>
@@ -281,6 +287,7 @@ export function privacyView() {
         <p class="kicker">09</p>
         <h2>What is public</h2>
         <p>Treat every listing as public. That includes Discord invite links, leader names, screenshots, linked video, a pause note if the leader wrote one, and the full post. Listing URLs also expose an Open Graph title, description, and image so Discord and similar apps can show a card. Other visitors, scrapers, archives, and third-party apps using the read-only feed at <code>/api/v1</code> may copy public posts. That feed does not include owner ids, pending invites, ownership offers, messages, or view counts. Removing a listing from this site does not erase copies someone else already saved.</p>
+        <p>Published Resource guides are public in the same way, including the byline and any image or links. Drafts are not public. Hidden guides are not public. Guides are not included in <code>/api/v1</code>.</p>
         <p>Forum verification requires you to put a short code on your Warframe Forum About Me. That code is public on Digital Extremes’ forums until you delete it. After you verify here, you should remove the code from About Me if you do not want it sitting on the forum.</p>
         <p>Verifying a Warframe Forum profile makes your verified Warframe name findable when a clan leader adds a recruiter. The box on their listing suggests names as they type: it needs at least two characters, returns at most eight names, and only a signed-in leader can run it, and only against a listing they own. It offers nothing else about you — no Discord name, no email, no listings you are on — and it never suggests someone who is already a recruiter on that listing. This is how a leader can add you without you first having to hand them your exact spelling. If you have not verified a forum profile, you are not in it at all.</p>
         <p>A clan or alliance listing can be handed to someone else. The owner offers it by your verified Warframe name, and nothing moves until you accept: while the offer is pending, only you and that listing's owner can see it. Accepting makes the post yours — on a clan post, your verified name becomes the one recruits whisper, and the previous owner keeps edit access but can no longer delete it. Declining leaves everything as it was.</p>
@@ -454,7 +461,9 @@ export function privacyView() {
         <h2>Definitions</h2>
         <dl class="policy-defs">
           <div><dt>Personal data</dt><dd>Information that identifies you or can reasonably be linked to you, such as a Discord id or email.</dd></div>
-          <div><dt>Listing</dt><dd>A clan or alliance post on this board.</dd></div>
+          <div><dt>Listing</dt><dd>A clan, alliance, or player post on this board.</dd></div>
+          <div><dt>Guide</dt><dd>An article in Resources, written into one of four closed hubs. Not a listing, and not a public wiki.</dd></div>
+          <div><dt>Creator</dt><dd>An account staff designated to write Resource guides. Not the same as a listing admin.</dd></div>
           <div><dt>Processor / service provider</dt><dd>A vendor that handles data for us, such as the host, not for its own advertising.</dd></div>
           <div><dt>Sell</dt><dd>Exchanging personal information for money. We do not do this.</dd></div>
           <div><dt>Share (CPRA)</dt><dd>Disclosing personal information for cross-context behavioral advertising. We do not do this.</dd></div>

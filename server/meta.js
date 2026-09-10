@@ -18,6 +18,14 @@ export function listingFromPath(pathname) {
   if (alliance) return { kind: "alliance", id: decodeURIComponent(alliance[1]) };
   const player = String(pathname || "").match(/^\/players\/([^/]+)\/?$/);
   if (player) return { kind: "player", id: decodeURIComponent(player[1]) };
+  const article = String(pathname || "").match(/^\/resources\/([^/]+)\/([^/]+)\/?$/);
+  if (article) {
+    return {
+      kind: "article",
+      hub: decodeURIComponent(article[1]),
+      id: decodeURIComponent(article[2]),
+    };
+  }
   return null;
 }
 
@@ -57,6 +65,15 @@ const LISTING_PATHS = {
 };
 
 export function listingSocial(origin, listing, kind) {
+  if (kind === "article") {
+    return socialTags({
+      title: `${listing.title} — WF Clan Recruit`,
+      description: String(listing.summary || "A guide on WF Clan Recruit.").slice(0, 200),
+      url: `${origin}/resources/${listing.hub}/${listing.id}`,
+      image: absoluteUrl(origin, listing.image),
+      kind: "article",
+    });
+  }
   const path = `${LISTING_PATHS[kind] || LISTING_PATHS.clan}/${listing.id}`;
   const title = listing.tag ? `[${listing.tag}] ${listing.name}` : listing.name;
   const description = [listing.headline, listing.summary].filter(Boolean).join(" — ").slice(0, 200);
@@ -90,6 +107,7 @@ Disallow: /register
 Disallow: /post
 Disallow: /post-alliance
 Disallow: /lfc
+Disallow: /write-guide
 Disallow: /admin
 
 Sitemap: ${origin}/sitemap.xml
@@ -110,13 +128,28 @@ function urlEntry(origin, path, lastmod) {
   return `  <url>\n    <loc>${xmlEscape(loc)}</loc>${mod}\n  </url>`;
 }
 
-export function sitemapXml(origin, { clans = [], alliances = [], players = [] } = {}) {
-  const staticPages = ["/", "/browse", "/alliances", "/players", "/guide", "/privacy"];
+export function sitemapXml(origin, { clans = [], alliances = [], players = [], articles = [] } = {}) {
+  const staticPages = [
+    "/",
+    "/browse",
+    "/alliances",
+    "/players",
+    "/resources",
+    "/resources/dojo",
+    "/resources/clan",
+    "/resources/discord",
+    "/resources/advertise",
+    "/guide",
+    "/privacy",
+  ];
   const urls = [
     ...staticPages.map((path) => urlEntry(origin, path)),
     ...clans.filter((item) => !item.hidden).map((item) => urlEntry(origin, `/clans/${item.id}`, item.bumpedAt || item.createdAt)),
     ...alliances.filter((item) => !item.hidden).map((item) => urlEntry(origin, `/alliances/${item.id}`, item.bumpedAt || item.createdAt)),
     ...players.filter((item) => !item.hidden).map((item) => urlEntry(origin, `/players/${item.id}`, item.bumpedAt || item.createdAt)),
+    ...articles
+      .filter((item) => item.published && !item.hidden)
+      .map((item) => urlEntry(origin, `/resources/${item.hub}/${item.id}`, item.updatedAt || item.createdAt)),
   ];
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">

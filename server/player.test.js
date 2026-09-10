@@ -94,6 +94,45 @@ test("robots keeps the staff page out of the index", () => {
   assert.ok(robotsTxt("https://example.com").includes("Disallow: /admin"));
 });
 
+test("robots keeps the guide composer out of the index", () => {
+  assert.ok(robotsTxt("https://example.com").includes("Disallow: /write-guide"));
+});
+
+test("/resources/:hub/:id is an article for social cards", () => {
+  assert.deepEqual(listingFromPath("/resources/dojo/rooms-abc"), {
+    kind: "article",
+    hub: "dojo",
+    id: "rooms-abc",
+  });
+  assert.equal(listingFromPath("/resources/dojo"), null);
+});
+
+test("a live guide is in the sitemap; a draft is not", () => {
+  const xml = sitemapXml("https://example.com", {
+    articles: [
+      { id: "rooms-abc", hub: "dojo", published: true, hidden: false, updatedAt: "2026-09-10" },
+      { id: "draft-one", hub: "dojo", published: false, hidden: false },
+      { id: "hidden-one", hub: "clan", published: true, hidden: true },
+    ],
+  });
+  assert.ok(xml.includes("https://example.com/resources</loc>"));
+  assert.ok(xml.includes("https://example.com/resources/dojo</loc>"));
+  assert.ok(xml.includes("https://example.com/resources/dojo/rooms-abc"));
+  assert.ok(!xml.includes("draft-one"));
+  assert.ok(!xml.includes("hidden-one"));
+});
+
+test("guide social cards use the title and summary", () => {
+  const tags = listingSocial(
+    "https://example.com",
+    { id: "rooms-abc", hub: "dojo", title: "Decorate the hall", summary: "A layout." },
+    "article"
+  );
+  assert.ok(tags.includes("<title>Decorate the hall — WF Clan Recruit</title>"), tags);
+  assert.ok(tags.includes("https://example.com/resources/dojo/rooms-abc"));
+  assert.ok(tags.includes("A layout."));
+});
+
 // --- Discord username, not an invite ---------------------------------------
 
 test("a Discord username is accepted in both the new and legacy shapes", () => {

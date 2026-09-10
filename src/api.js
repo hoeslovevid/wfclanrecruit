@@ -129,4 +129,27 @@ export const api = {
       body: JSON.stringify(typeof body === "string" ? { query: body } : body),
     }),
   revokeAdmin: (id) => request(`/api/admin/staff/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  articles: (query = {}) => {
+    const params = new URLSearchParams();
+    if (query.hub) params.set("hub", query.hub);
+    if (query.mine) params.set("mine", "1");
+    const qs = params.toString();
+    return request(`/api/articles${qs ? `?${qs}` : ""}`);
+  },
+  article: (id) => request(`/api/articles/${encodeURIComponent(id)}`),
+  createArticle: (formData) => request("/api/articles", { method: "POST", body: formData }),
+  updateArticle: (id, formData) => request(`/api/articles/${encodeURIComponent(id)}`, { method: "PUT", body: formData }),
+  hideArticle: (id, hidden) =>
+    request(`/api/articles/${encodeURIComponent(id)}/hide`, { method: "POST", body: JSON.stringify({ hidden }) }),
+  reportArticle: (id, body) =>
+    request(`/api/articles/${encodeURIComponent(id)}/report`, { method: "POST", body: JSON.stringify(body) }),
+  deleteArticle: (id) => request(`/api/articles/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  creators: () => request("/api/admin/creators"),
+  searchCreators: (q) => request(`/api/admin/creators/search?q=${encodeURIComponent(q)}`),
+  grantCreator: (body) =>
+    request("/api/admin/creators", {
+      method: "POST",
+      body: JSON.stringify(typeof body === "string" ? { query: body } : body),
+    }),
+  revokeCreator: (id) => request(`/api/admin/creators/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };
