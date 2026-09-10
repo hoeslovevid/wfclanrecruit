@@ -22,7 +22,7 @@ import {
 import * as store from "./store.js";
 import { PING_MS, publish, subscribe } from "./live.js";
 import { dropLegacyVideos } from "../src/video.js";
-import { MEDIA_MAX, mediaList, normalizeMedia, setUploadPublicBase, uploadedUrls, videoIdsOf } from "../src/media.js";
+import { IMAGE_MAX, MEDIA_MAX, mediaList, normalizeMedia, setUploadPublicBase, uploadedUrls, videoIdsOf } from "../src/media.js";
 import { normalizeContactLabel, normalizeRoles, roleTextError } from "../src/roles.js";
 import { resizeListingImage } from "./image.js";
 import { deleteR2Object, putR2Object, r2Enabled, r2PartialEnv, r2PublicUrl, readLocalFile } from "./r2.js";
@@ -41,7 +41,7 @@ import {
 import { inspectDiscordInvite, listingsNeedingInviteCheck, applyInviteCheck, INVITE_RECHECK_GAP_MS } from "./invite.js";
 import {
   REPORT_REASONS,
-  activityAt as listingActivity,
+  activityAt,
   applyAllianceRoster,
   applyPause,
   isHidden,
@@ -65,7 +65,9 @@ import {
   LINK_MAX,
   PLAYER_NAME_MAX,
   PLAYER_STATUSES,
+  SECTION_LABELS,
   SUMMARY_MAX,
+  TIER_CAPS,
   isDiscordName,
   normalizeDiscordName,
   TAG_MAX,
@@ -148,15 +150,6 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const COOKIE = "wfr_session";
 const isProd = process.env.NODE_ENV === "production";
 const PORT = Number(process.env.PORT || (isProd ? 3001 : 5173));
-const TIER_CAPS = {
-  Ghost: 10,
-  Shadow: 30,
-  Storm: 100,
-  Mountain: 300,
-  Moon: 1000,
-};
-
-const IMAGE_MAX = 2 * 1024 * 1024;
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 const EXT_BY_TYPE = {
   "image/png": ".png",
@@ -406,10 +399,6 @@ function decodeOauth(value) {
 
 const BUMP_COOLDOWN_MS = 12 * 60 * 60 * 1000;
 
-function activityAt(item) {
-  return listingActivity(item);
-}
-
 function bumpWaitMessage(item) {
   const elapsed = Date.now() - new Date(activityAt(item)).getTime();
   const wait = BUMP_COOLDOWN_MS - elapsed;
@@ -608,12 +597,6 @@ function parseListingLinks(value) {
 // The offer / requirements / how-to-join boxes are all optional rich text now:
 // an empty one is a section the listing does not show. Length is the only thing
 // that can fail, and it says which box was too long.
-const SECTION_LABELS = {
-  offering: "What you offer",
-  requirements: "Requirements",
-  howToJoin: "How to join",
-};
-
 function parseListingSections(body) {
   const out = {};
   for (const [name, label] of Object.entries(SECTION_LABELS)) {
@@ -1612,35 +1595,247 @@ function trimListing(item) {
   return out;
 }
 
-app.get("/api/clans", (req, res) => {
-  const db = readDb();
-  const user = currentUser(req);
-  const clans = db.clans
-    .filter((clan) => canSeeListing(user, clan))
-    .map((clan) => withOwnerStats(decorateClan(clan, db), clan, user))
-    .sort(sortListings)
-    .map(trimListing);
-  res.json({ clans });
-});
+// --- Listings --------------------------------------------------------------
+//
+// Clans, alliances and player profiles are three different posts that live the
+// same life: they are listed, read, bumped, paused, hidden, reported and
+// removed through routes that differed only in the collection they touch and
+// the words in their errors. Those routes are described here and mounted once
+// per kind, so a change to how a post is removed is one edit rather than three.
+//
+// What genuinely differs stays hand-written below: creating and updating a
+// post validates fields that are specific to it, and only clans have
+// recruiters and transfers.
 
-app.get("/api/clans/:id", (req, res) => {
-  const db = readDb();
-  const clan = db.clans.find((item) => item.id === req.params.id);
-  const user = currentUser(req);
-  if (!clan || !canSeeListing(user, clan)) {
-    res.status(404).json({ error: "Clan not found." });
-    return;
+const LISTING_KINDS = {
+  clan: {
+    collection: "clans",
+    label: "Clan",
+    // Reading a post counts as a read of the post.
+    countsViews: true,
+    whisper: true,
+    read: (item, db, user) => withOwnerStats(decorateClan(item, db), item, user),
+    written: (item, db) => decorateClan(item, db),
+    bump: {
+      gate: requirePoster,
+      allowed: canEditListing,
+      denied: "You do not have edit access to that post.",
+      // An invite can rot between posting and bumping, and a bump is the one
+      // moment we have the leader's attention to say so.
+      rechecksInvite: true,
+    },
+    pause: { allowed: canEditListing, denied: "You do not have edit access to that post." },
+    remove: { denied: "You can only remove your own posts." },
+  },
+  alliance: {
+    collection: "alliances",
+    label: "Alliance",
+    countsViews: false,
+    whisper: false,
+    read: (item, db, user) => decorateAlliance(item, db, user),
+    // Deliberately without the user: a mutation's reply is the public shape of
+    // the post, which for an alliance means its member clans minus any that
+    // are hidden. The board re-reads the listing straight after anyway.
+    written: (item, db) => decorateAlliance(item, db),
+    bump: {
+      gate: requirePoster,
+      allowed: canRemove,
+      denied: "You can only bump your own posts.",
+      rechecksInvite: true,
+    },
+    pause: { allowed: canRemove, denied: "You can only pause your own posts." },
+    remove: {
+      denied: "You can only remove your own posts.",
+      // A clan outlives the alliance it belonged to; it just stops naming one.
+      after(db, alliance) {
+        db.clans = db.clans.map((clan) =>
+          clan.allianceId === alliance.id ? { ...clan, allianceId: null } : clan
+        );
+      },
+    },
+  },
+  player: {
+    collection: "players",
+    label: "Player",
+    countsViews: true,
+    whisper: true,
+    read: (item, db, user) => withOwnerStats(decoratePlayer(item, db), item, user),
+    written: (item, db) => decoratePlayer(item, db),
+    bump: {
+      // Asking to be recruited is the low-stakes direction of the board, so a
+      // signed-in account is the whole gate - see the create route below.
+      gate: requireUser,
+      allowed: canRemove,
+      denied: "You can only bump your own profile.",
+      // Nothing external to re-check: a username is not a link that can rot,
+      // which is most of why this side of the board publishes one.
+      rechecksInvite: false,
+    },
+    pause: { allowed: canRemove, denied: "You can only pause your own profile." },
+    remove: { denied: "You can only remove your own profile." },
+  },
+};
+
+function listingsOf(db, kind) {
+  return db[LISTING_KINDS[kind].collection] || [];
+}
+
+function findListing(db, kind, id) {
+  return listingsOf(db, kind).find((item) => item.id === id) || null;
+}
+
+// The 404 and 403 both sides of every write share. Returns the listing, or
+// null once it has already answered the request.
+function listingOr404(res, db, kind, id, { allowed, user, denied } = {}) {
+  const spec = LISTING_KINDS[kind];
+  const item = findListing(db, kind, id);
+  if (!item) {
+    res.status(404).json({ error: `${spec.label} not found.` });
+    return null;
   }
-  // Only the detail route returns the post body, so this is a read of the post
-  // rather than a card impression.
-  if (!clan.hidden && !looksLikeBot(req.headers["user-agent"])) countView(clan.id);
-  res.json({ clan: withOwnerStats(decorateClan(clan, db), clan, user) });
-});
+  if (allowed && !allowed(user, item)) {
+    res.status(403).json({ error: denied });
+    return null;
+  }
+  return item;
+}
 
-app.post("/api/clans/:id/whisper", statsLimiter, (req, res) => {
-  if (!looksLikeBot(req.headers["user-agent"])) countWhisper(String(req.params.id));
-  res.json({ ok: true });
-});
+function mountListingRoutes(kind) {
+  const spec = LISTING_KINDS[kind];
+  const { collection } = spec;
+  const base = `/api/${collection}`;
+
+  app.get(base, (req, res) => {
+    const db = readDb();
+    const user = currentUser(req);
+    const items = listingsOf(db, kind)
+      .filter((item) => canSeeListing(user, item))
+      .map((item) => spec.read(item, db, user))
+      .sort(sortListings)
+      .map(trimListing);
+    res.json({ [collection]: items });
+  });
+
+  app.get(`${base}/:id`, (req, res) => {
+    const db = readDb();
+    const user = currentUser(req);
+    const item = findListing(db, kind, req.params.id);
+    if (!item || !canSeeListing(user, item)) {
+      res.status(404).json({ error: `${spec.label} not found.` });
+      return;
+    }
+    // Only the detail route returns the post body, so this is a read of the
+    // post rather than a card impression.
+    if (spec.countsViews && !item.hidden && !looksLikeBot(req.headers["user-agent"])) {
+      countView(item.id);
+    }
+    res.json({ [kind]: spec.read(item, db, user) });
+  });
+
+  if (spec.whisper) {
+    app.post(`${base}/:id/whisper`, statsLimiter, (req, res) => {
+      if (!looksLikeBot(req.headers["user-agent"])) countWhisper(String(req.params.id));
+      res.json({ ok: true });
+    });
+  }
+
+  app.post(`${base}/:id/bump`, spec.bump.gate, async (req, res) => {
+    const current = findListing(readDb(), kind, req.params.id);
+    if (!current) {
+      res.status(404).json({ error: `${spec.label} not found.` });
+      return;
+    }
+    if (!spec.bump.allowed(req.user, current)) {
+      res.status(403).json({ error: spec.bump.denied });
+      return;
+    }
+    const wait = bumpWaitMessage(current);
+    if (wait) {
+      res.status(429).json({ error: wait });
+      return;
+    }
+    const invite =
+      spec.bump.rechecksInvite && current.discord
+        ? await inspectDiscordInvite(current.discord, { required: false })
+        : { ok: true, skipped: true };
+    writeDb((db) => {
+      const item = listingOr404(res, db, kind, req.params.id);
+      if (!item) return db;
+      if (!invite.ok) {
+        item.inviteOk = false;
+        res.status(400).json({ error: invite.error });
+        return db;
+      }
+      if (!invite.skipped) {
+        item.discord = invite.url;
+        item.inviteOk = true;
+        item.inviteCheckedAt = invite.checkedAt;
+      }
+      item.bumpedAt = new Date().toISOString();
+      res.json({ [kind]: spec.written(item, db) });
+      return db;
+    });
+  });
+
+  app.post(`${base}/:id/pause`, requireUser, (req, res) => {
+    writeDb((db) => {
+      const item = listingOr404(res, db, kind, req.params.id, {
+        allowed: spec.pause.allowed,
+        user: req.user,
+        denied: spec.pause.denied,
+      });
+      if (!item) return db;
+      applyPause(item, req.body.paused, req.body.reason ?? req.body.pauseReason);
+      res.json({ [kind]: spec.written(item, db) });
+      return db;
+    });
+  });
+
+  app.post(`${base}/:id/hide`, requireAdmin, (req, res) => {
+    writeDb((db) => {
+      const item = listingOr404(res, db, kind, req.params.id);
+      if (!item) return db;
+      const hidden = Boolean(req.body.hidden);
+      item.hidden = hidden;
+      item.hiddenAt = hidden ? new Date().toISOString() : null;
+      item.hiddenBy = hidden ? req.user.id : null;
+      res.json({ [kind]: spec.written(item, db) });
+      return db;
+    });
+  });
+
+  app.post(`${base}/:id/report`, reportLimiter, (req, res) => writeReport(req, res, kind));
+
+  app.delete(`${base}/:id`, requireUser, (req, res) => {
+    writeDb((db) => {
+      const item = listingOr404(res, db, kind, req.params.id, {
+        allowed: canRemove,
+        user: req.user,
+        denied: spec.remove.denied,
+      });
+      if (!item) return db;
+      removeStoredFile(item.image);
+      dropUnusedMedia(item);
+      // An open report on a post that no longer exists is nothing a moderator
+      // can act on, so removal closes it.
+      const now = new Date().toISOString();
+      db.reports = (db.reports || []).map((report) =>
+        report.listingId === item.id && report.status === "open"
+          ? { ...report, status: "resolved", resolvedAt: now }
+          : report
+      );
+      spec.remove.after?.(db, item);
+      db[collection] = listingsOf(db, kind).filter((other) => other.id !== item.id);
+      dropThreadsFor(item.id);
+      res.json({ ok: true });
+      return db;
+    });
+  });
+}
+
+mountListingRoutes("clan");
+mountListingRoutes("alliance");
+mountListingRoutes("player");
 
 app.post("/api/clans", requirePoster, listingLimiter, listingUpload, async (req, res) => {
   if (!assertListingFiles(req, res)) return;
@@ -1742,46 +1937,6 @@ app.put("/api/clans/:id", requirePoster, listingUpload, async (req, res) => {
     res.json({ clan: decorateClan(clan, db) });
     return db;
   }).catch(listingWriteFailed(req, res));
-});
-
-app.post("/api/clans/:id/bump", requirePoster, async (req, res) => {
-  const current = readDb().clans.find((item) => item.id === req.params.id);
-  if (!current) {
-    res.status(404).json({ error: "Clan not found." });
-    return;
-  }
-  if (!canEditListing(req.user, current)) {
-    res.status(403).json({ error: "You do not have edit access to that post." });
-    return;
-  }
-  const wait = bumpWaitMessage(current);
-  if (wait) {
-    res.status(429).json({ error: wait });
-    return;
-  }
-  const invite = current.discord
-    ? await inspectDiscordInvite(current.discord, { required: false })
-    : { ok: true, skipped: true };
-  writeDb((db) => {
-    const clan = db.clans.find((item) => item.id === req.params.id);
-    if (!clan) {
-      res.status(404).json({ error: "Clan not found." });
-      return db;
-    }
-    if (!invite.ok) {
-      clan.inviteOk = false;
-      res.status(400).json({ error: invite.error });
-      return db;
-    }
-    if (!invite.skipped) {
-      clan.discord = invite.url;
-      clan.inviteOk = true;
-      clan.inviteCheckedAt = invite.checkedAt;
-    }
-    clan.bumpedAt = new Date().toISOString();
-    res.json({ clan: decorateClan(clan, db) });
-    return db;
-  });
 });
 
 // Recruiters are contacts, not co-owners: only the owner (or an admin) changes
@@ -1994,39 +2149,6 @@ app.post("/api/clans/:id/transfer/respond", requireUser, (req, res) => {
   });
 });
 
-app.post("/api/clans/:id/pause", requireUser, (req, res) => {
-  writeDb((db) => {
-    const clan = db.clans.find((item) => item.id === req.params.id);
-    if (!clan) {
-      res.status(404).json({ error: "Clan not found." });
-      return db;
-    }
-    if (!canEditListing(req.user, clan)) {
-      res.status(403).json({ error: "You do not have edit access to that post." });
-      return db;
-    }
-    applyPause(clan, req.body.paused, req.body.reason ?? req.body.pauseReason);
-    res.json({ clan: decorateClan(clan, db) });
-    return db;
-  });
-});
-
-app.post("/api/clans/:id/hide", requireAdmin, (req, res) => {
-  writeDb((db) => {
-    const clan = db.clans.find((item) => item.id === req.params.id);
-    if (!clan) {
-      res.status(404).json({ error: "Clan not found." });
-      return db;
-    }
-    const hidden = Boolean(req.body.hidden);
-    clan.hidden = hidden;
-    clan.hiddenAt = hidden ? new Date().toISOString() : null;
-    clan.hiddenBy = hidden ? req.user.id : null;
-    res.json({ clan: decorateClan(clan, db) });
-    return db;
-  });
-});
-
 function writeReport(req, res, kind) {
   const reason = String(req.body.reason || "");
   if (!REPORT_REASONS.includes(reason)) {
@@ -2070,34 +2192,6 @@ function writeReport(req, res, kind) {
   });
 }
 
-app.post("/api/clans/:id/report", reportLimiter, (req, res) => writeReport(req, res, "clan"));
-
-app.delete("/api/clans/:id", requireUser, (req, res) => {
-  writeDb((db) => {
-    const clan = db.clans.find((item) => item.id === req.params.id);
-    if (!clan) {
-      res.status(404).json({ error: "Clan not found." });
-      return db;
-    }
-    if (!canRemove(req.user, clan)) {
-      res.status(403).json({ error: "You can only remove your own posts." });
-      return db;
-    }
-    removeStoredFile(clan.image);
-    dropUnusedMedia(clan);
-    const now = new Date().toISOString();
-    db.reports = (db.reports || []).map((item) =>
-      item.listingId === clan.id && item.status === "open"
-        ? { ...item, status: "resolved", resolvedAt: now }
-        : item
-    );
-    db.clans = db.clans.filter((item) => item.id !== clan.id);
-    dropThreadsFor(clan.id);
-    res.json({ ok: true });
-    return db;
-  });
-});
-
 // One profile per account. Two posts describing the same person is either a
 // mistake or an attempt to take two slots on the board, and neither is worth
 // supporting - so this is an upsert everywhere it is exposed, and a unique index
@@ -2105,34 +2199,6 @@ app.delete("/api/clans/:id", requireUser, (req, res) => {
 function playerOf(db, userId) {
   return (db.players || []).find((item) => item.ownerId === userId) || null;
 }
-
-app.get("/api/players", (req, res) => {
-  const db = readDb();
-  const user = currentUser(req);
-  const players = (db.players || [])
-    .filter((player) => canSeeListing(user, player))
-    .map((player) => withOwnerStats(decoratePlayer(player, db), player, user))
-    .sort(sortListings)
-    .map(trimListing);
-  res.json({ players });
-});
-
-app.get("/api/players/:id", (req, res) => {
-  const db = readDb();
-  const player = (db.players || []).find((item) => item.id === req.params.id);
-  const user = currentUser(req);
-  if (!player || !canSeeListing(user, player)) {
-    res.status(404).json({ error: "Player not found." });
-    return;
-  }
-  if (!player.hidden && !looksLikeBot(req.headers["user-agent"])) countView(player.id);
-  res.json({ player: withOwnerStats(decoratePlayer(player, db), player, user) });
-});
-
-app.post("/api/players/:id/whisper", statsLimiter, (req, res) => {
-  if (!looksLikeBot(req.headers["user-agent"])) countWhisper(String(req.params.id));
-  res.json({ ok: true });
-});
 
 // Signing in is the whole gate here, deliberately. `requirePoster` demands a
 // verified forum profile, which is the right bar for advertising an
@@ -2200,119 +2266,6 @@ app.put("/api/players/:id", requireUser, playerUpload, async (req, res) => {
     res.json({ player: decoratePlayer(player, db) });
     return db;
   }).catch(listingWriteFailed(req, res));
-});
-
-app.post("/api/players/:id/bump", requireUser, async (req, res) => {
-  const current = (readDb().players || []).find((item) => item.id === req.params.id);
-  if (!current) {
-    res.status(404).json({ error: "Player not found." });
-    return;
-  }
-  if (!canRemove(req.user, current)) {
-    res.status(403).json({ error: "You can only bump your own profile." });
-    return;
-  }
-  const wait = bumpWaitMessage(current);
-  if (wait) {
-    res.status(429).json({ error: wait });
-    return;
-  }
-  // Nothing external to re-check: a username is not a link that can rot, which
-  // is most of why this side of the board publishes one.
-  writeDb((db) => {
-    const player = (db.players || []).find((item) => item.id === req.params.id);
-    if (!player) {
-      res.status(404).json({ error: "Player not found." });
-      return db;
-    }
-    player.bumpedAt = new Date().toISOString();
-    res.json({ player: decoratePlayer(player, db) });
-    return db;
-  });
-});
-
-app.post("/api/players/:id/pause", requireUser, (req, res) => {
-  writeDb((db) => {
-    const player = (db.players || []).find((item) => item.id === req.params.id);
-    if (!player) {
-      res.status(404).json({ error: "Player not found." });
-      return db;
-    }
-    if (!canRemove(req.user, player)) {
-      res.status(403).json({ error: "You can only pause your own profile." });
-      return db;
-    }
-    applyPause(player, req.body.paused, req.body.reason ?? req.body.pauseReason);
-    res.json({ player: decoratePlayer(player, db) });
-    return db;
-  });
-});
-
-app.post("/api/players/:id/hide", requireAdmin, (req, res) => {
-  writeDb((db) => {
-    const player = (db.players || []).find((item) => item.id === req.params.id);
-    if (!player) {
-      res.status(404).json({ error: "Player not found." });
-      return db;
-    }
-    const hidden = Boolean(req.body.hidden);
-    player.hidden = hidden;
-    player.hiddenAt = hidden ? new Date().toISOString() : null;
-    player.hiddenBy = hidden ? req.user.id : null;
-    res.json({ player: decoratePlayer(player, db) });
-    return db;
-  });
-});
-
-app.post("/api/players/:id/report", reportLimiter, (req, res) => writeReport(req, res, "player"));
-
-app.delete("/api/players/:id", requireUser, (req, res) => {
-  writeDb((db) => {
-    const player = (db.players || []).find((item) => item.id === req.params.id);
-    if (!player) {
-      res.status(404).json({ error: "Player not found." });
-      return db;
-    }
-    if (!canRemove(req.user, player)) {
-      res.status(403).json({ error: "You can only remove your own profile." });
-      return db;
-    }
-    dropUnusedMedia(player);
-    const now = new Date().toISOString();
-    db.reports = (db.reports || []).map((item) =>
-      item.listingId === player.id && item.status === "open"
-        ? { ...item, status: "resolved", resolvedAt: now }
-        : item
-    );
-    db.players = (db.players || []).filter((item) => item.id !== player.id);
-    dropThreadsFor(player.id);
-    res.json({ ok: true });
-    return db;
-  });
-});
-
-app.get("/api/alliances", (req, res) => {
-  const db = readDb();
-  const user = currentUser(req);
-  const alliances = db.alliances
-    .filter((item) => canSeeListing(user, item))
-    .map((alliance) => decorateAlliance(alliance, db, user))
-    .sort(sortListings)
-    .map(trimListing);
-  res.json({ alliances });
-});
-
-app.get("/api/alliances/:id", (req, res) => {
-  const db = readDb();
-  const user = currentUser(req);
-  const alliance = db.alliances.find((item) => item.id === req.params.id);
-  if (!alliance || !canSeeListing(user, alliance)) {
-    res.status(404).json({ error: "Alliance not found." });
-    return;
-  }
-  res.json({
-    alliance: decorateAlliance(alliance, db, user),
-  });
 });
 
 app.post("/api/alliances", requirePoster, listingLimiter, listingUpload, async (req, res) => {
@@ -2407,81 +2360,6 @@ app.put("/api/alliances/:id", requirePoster, listingUpload, async (req, res) => 
   }).catch(listingWriteFailed(req, res));
 });
 
-app.post("/api/alliances/:id/bump", requirePoster, async (req, res) => {
-  const current = readDb().alliances.find((item) => item.id === req.params.id);
-  if (!current) {
-    res.status(404).json({ error: "Alliance not found." });
-    return;
-  }
-  if (!canRemove(req.user, current)) {
-    res.status(403).json({ error: "You can only bump your own posts." });
-    return;
-  }
-  const wait = bumpWaitMessage(current);
-  if (wait) {
-    res.status(429).json({ error: wait });
-    return;
-  }
-  const invite = current.discord
-    ? await inspectDiscordInvite(current.discord, { required: false })
-    : { ok: true, skipped: true };
-  writeDb((db) => {
-    const alliance = db.alliances.find((item) => item.id === req.params.id);
-    if (!alliance) {
-      res.status(404).json({ error: "Alliance not found." });
-      return db;
-    }
-    if (!invite.ok) {
-      alliance.inviteOk = false;
-      res.status(400).json({ error: invite.error });
-      return db;
-    }
-    if (!invite.skipped) {
-      alliance.discord = invite.url;
-      alliance.inviteOk = true;
-      alliance.inviteCheckedAt = invite.checkedAt;
-    }
-    alliance.bumpedAt = new Date().toISOString();
-    res.json({ alliance: decorateAlliance(alliance, db) });
-    return db;
-  });
-});
-
-app.post("/api/alliances/:id/pause", requireUser, (req, res) => {
-  writeDb((db) => {
-    const alliance = db.alliances.find((item) => item.id === req.params.id);
-    if (!alliance) {
-      res.status(404).json({ error: "Alliance not found." });
-      return db;
-    }
-    if (!canRemove(req.user, alliance)) {
-      res.status(403).json({ error: "You can only pause your own posts." });
-      return db;
-    }
-    applyPause(alliance, req.body.paused, req.body.reason ?? req.body.pauseReason);
-    res.json({ alliance: decorateAlliance(alliance, db) });
-    return db;
-  });
-});
-
-app.post("/api/alliances/:id/hide", requireAdmin, (req, res) => {
-  writeDb((db) => {
-    const alliance = db.alliances.find((item) => item.id === req.params.id);
-    if (!alliance) {
-      res.status(404).json({ error: "Alliance not found." });
-      return db;
-    }
-    const hidden = Boolean(req.body.hidden);
-    alliance.hidden = hidden;
-    alliance.hiddenAt = hidden ? new Date().toISOString() : null;
-    alliance.hiddenBy = hidden ? req.user.id : null;
-    res.json({ alliance: decorateAlliance(alliance, db) });
-    return db;
-  });
-});
-
-app.post("/api/alliances/:id/report", reportLimiter, (req, res) => writeReport(req, res, "alliance"));
-
 app.get("/api/reports", requireAdmin, (_req, res) => {
   const db = readDb();
   res.json({ reports: db.reports || [] });
@@ -2538,35 +2416,6 @@ app.delete("/api/admin/staff/:id", requireAdmin, staffLimiter, (req, res) => {
       return db;
     }
     res.json({ ok: true, ...staffList(db, req.user.id) });
-    return db;
-  });
-});
-
-app.delete("/api/alliances/:id", requireUser, (req, res) => {
-  writeDb((db) => {
-    const alliance = db.alliances.find((item) => item.id === req.params.id);
-    if (!alliance) {
-      res.status(404).json({ error: "Alliance not found." });
-      return db;
-    }
-    if (!canRemove(req.user, alliance)) {
-      res.status(403).json({ error: "You can only remove your own posts." });
-      return db;
-    }
-    removeStoredFile(alliance.image);
-    dropUnusedMedia(alliance);
-    const now = new Date().toISOString();
-    db.reports = (db.reports || []).map((item) =>
-      item.listingId === alliance.id && item.status === "open"
-        ? { ...item, status: "resolved", resolvedAt: now }
-        : item
-    );
-    db.clans = db.clans.map((clan) =>
-      clan.allianceId === alliance.id ? { ...clan, allianceId: null } : clan
-    );
-    db.alliances = db.alliances.filter((item) => item.id !== alliance.id);
-    dropThreadsFor(alliance.id);
-    res.json({ ok: true });
     return db;
   });
 });

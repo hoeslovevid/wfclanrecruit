@@ -1,3 +1,5 @@
+import { activityAt } from "../src/data.js";
+
 export const PAUSE_REASON_MAX = 140;
 export const STALE_AFTER_MS = 21 * 24 * 60 * 60 * 1000;
 
@@ -60,9 +62,9 @@ export function cloneListingFields(listing) {
 
 export const REPORT_REASONS = ["dead_invite", "inactive", "fake", "stolen_name", "other"];
 
-export function activityAt(item) {
-  return item.bumpedAt || item.createdAt;
-}
+// The board and the server age a listing off the same date; it is defined
+// beside the rest of the shared vocabulary.
+export { activityAt };
 
 export function isStale(item, now = Date.now()) {
   const at = new Date(activityAt(item)).getTime();

@@ -10,6 +10,10 @@
 
 import { YOUTUBE_ID, parseYouTubeId } from "./video.js";
 
+// The upload cap, shared so the composer refuses a file the server would
+// only reject after the wait.
+export const IMAGE_MAX = 2 * 1024 * 1024;
+
 export const MEDIA_MAX = 8;
 export const VIDEO_MAX = 4;
 

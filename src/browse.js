@@ -1,4 +1,4 @@
-import { PLAYSTYLES, TIER_CAPS, normalizePlaystyle } from "./data.js";
+import { PLAYSTYLES, TIER_CAPS, activityAt, normalizePlaystyle } from "./data.js";
 import { hasOpenRole } from "./roles.js";
 
 export const PAGE_SIZE = 12;
@@ -151,7 +151,7 @@ export function applyClanFilters(clans, filters) {
   } else {
     list.sort((a, b) => {
       if (a.recruiting !== b.recruiting) return a.recruiting ? -1 : 1;
-      return new Date(b.bumpedAt || b.createdAt) - new Date(a.bumpedAt || a.createdAt);
+      return new Date(activityAt(b)) - new Date(activityAt(a));
     });
   }
   return list;
@@ -175,7 +175,7 @@ export function applyAllianceFilters(alliances, filters) {
     })
     .sort((a, b) => {
       if (a.recruiting !== b.recruiting) return a.recruiting ? -1 : 1;
-      return new Date(b.bumpedAt || b.createdAt) - new Date(a.bumpedAt || a.createdAt);
+      return new Date(activityAt(b)) - new Date(activityAt(a));
     });
 }
 
@@ -218,7 +218,7 @@ export function applyPlayerFilters(players, filters) {
   } else {
     list.sort((a, b) => {
       if (a.recruiting !== b.recruiting) return a.recruiting ? -1 : 1;
-      return new Date(b.bumpedAt || b.createdAt) - new Date(a.bumpedAt || a.createdAt);
+      return new Date(activityAt(b)) - new Date(activityAt(a));
     });
   }
   return list;

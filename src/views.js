@@ -20,6 +20,7 @@ import {
   TAG_MAX,
   TIER_CAPS,
   TIERS,
+  activityAt,
   cardPlaystyles,
   discordAddFriendHint,
   groupOf,
@@ -94,10 +95,6 @@ export function timeAgo(iso) {
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days}d ago`;
   return `${Math.floor(days / 30)}mo ago`;
-}
-
-function activityAt(item) {
-  return item.bumpedAt || item.createdAt;
 }
 
 function postedStat(item) {
@@ -817,7 +814,7 @@ export function homeView({ clans, alliances, players = [], viewed = [] }) {
   const allianceBoard = (alliances || []).filter(item => !item.hidden);
   const playerBoard = (players || []).filter(item => !item.hidden);
   const featured = board.filter(item => item.featured).slice(0, 3);
-  const recent = [...board].sort((a, b) => new Date(b.bumpedAt || b.createdAt) - new Date(a.bumpedAt || a.createdAt)).slice(0, 6);
+  const recent = [...board].sort((a, b) => new Date(activityAt(b)) - new Date(activityAt(a))).slice(0, 6);
   const section = (label, title, href, cards) => cards.length ? `<section class="section community-section"><div class="section-head"><div><p class="eyebrow">${label}</p><h2>${title}</h2></div><a class="text-link" href="${href}" data-link>Explore all <span aria-hidden="true">↗</span></a></div><div class="grid">${cards.join("")}</div></section>` : "";
   return `
     <section class="hero recruitment-hero">
@@ -904,18 +901,77 @@ function roleFilterField(options, selected) {
   `;
 }
 
-export function browseView(clans, filters, pager, roleOptions = []) {
-  const total = pager?.total ?? clans.length;
-  const label = total === 1 ? "1 clan" : `${total} clans`;
+// The three directories are one page. Each brings its own heading, its own
+// filter fields and its own cards; everything around them - the collapsible
+// filter rail, the tabs between the three boards, the live result count and
+// the sort control - is directory furniture and is built here once.
+const DIRECTORY_TABS = [
+  { path: "/browse", label: "Clans" },
+  { path: "/alliances", label: "Alliances" },
+  { path: "/players", label: "Players" },
+];
+
+function directoryTabs(active) {
+  const links = DIRECTORY_TABS.map(
+    (tab) =>
+      `<a href="${tab.path}" data-link aria-current="${tab.path === active ? "page" : "false"}">${tab.label}</a>`
+  ).join("");
+  return `<nav class="directory-tabs" aria-label="Community directories">${links}</nav>`;
+}
+
+function sortControl(options, selected) {
+  if (!options.length) return "";
+  const list = options
+    .map(
+      ([value, label]) =>
+        `<option value="${value}" ${selected === value ? "selected" : ""}>${label}</option>`
+    )
+    .join("\n              ");
+  return `<label class="field inline"><span>Sort</span>
+            <select name="sort" form="filter-form">
+              ${list}
+            </select>
+          </label>`;
+}
+
+// A board with nothing to sort by is just its count line; the row only exists
+// to put the sort control opposite it.
+function countRow(count, sort) {
+  const line = `<p class="muted" id="result-count" role="status" aria-live="polite" aria-atomic="true">${escapeHtml(count)}</p>`;
+  if (!sort) return line;
+  return `<div class="row-between">
+          ${line}
+          ${sort}
+        </div>`;
+}
+
+function directoryView({
+  path,
+  eyebrow,
+  title,
+  postHref,
+  postLabel,
+  filters,
+  // Every board opens on the people still looking; only the word for it
+  // changes between advertising a clan and asking for one.
+  recruitingLabel,
+  fields,
+  // The one-click filter shortcuts above the results; each board names its own.
+  presets,
+  count,
+  sort = [],
+  results,
+}) {
+  const active = activeFilterCount(filters);
   return `
     <section class="page-hero">
-      <div class="directory-topline"><p class="eyebrow">Clan directory</p><a class="text-link" href="/post" data-link>Advertise a clan ↗</a></div>
-      <h1>Find a clan to call home.</h1>
+      <div class="directory-topline"><p class="eyebrow">${escapeHtml(eyebrow)}</p><a class="text-link" href="${postHref}" data-link>${escapeHtml(postLabel)} ↗</a></div>
+      <h1>${escapeHtml(title)}</h1>
     </section>
     <section class="browse">
       <aside class="filters is-collapsed" data-filters>
         <button class="filters-toggle" type="button" data-filters-toggle aria-expanded="false">
-          <span>Filters <em data-filter-count ${activeFilterCount(filters) ? "" : "hidden"}>${activeFilterCount(filters)}</em></span>
+          <span>Filters <em data-filter-count ${active ? "" : "hidden"}>${active}</em></span>
           <span class="filters-caret" aria-hidden="true">▾</span>
         </button>
         <div class="row-between">
@@ -925,83 +981,108 @@ export function browseView(clans, filters, pager, roleOptions = []) {
         <form id="filter-form">
           <label class="check" for="filter-recruiting"><input id="filter-recruiting" type="checkbox" name="recruiting" value="1" ${
             filters.recruiting ? "checked" : ""
-          } /><span>Recruiting now</span></label>
-          <label class="field"><span>Keyword</span><input type="search" name="q" value="${escapeHtml(filters.q)}" placeholder="Name, tag, playstyle…" /></label>
-          <label class="field"><span>Platform</span><select name="platform"><option value="">Any</option>${optionList(PLATFORMS, filters.platform)}</select></label>
-          <label class="field"><span>Tier</span><select name="tier"><option value="">Any</option>${optionList(TIERS, filters.tier)}</select></label>
-          ${roleFilterField(roleOptions, filters.role)}
-          <fieldset class="fieldset">
-            <legend>Playstyles</legend>
-            <div class="filter-groups">${filterPlaystyleGroups(filters.playstyles || [])}</div>
-          </fieldset>
-          <label class="field"><span>Region</span><select name="region"><option value="">Any</option>${optionList(REGIONS, filters.region)}</select></label>
-          <label class="field"><span>Language</span><select name="language"><option value="">Any</option>${optionList(LANGUAGES, filters.language)}</select></label>
-          <label class="field"><span>Status</span><select name="status"><option value="">Any</option>${optionList(STATUSES, filters.status)}</select></label>
-          <label class="check" for="filter-online"><input id="filter-online" type="checkbox" name="online" value="1" ${
-            filters.online ? "checked" : ""
-          } /><span>Online now</span></label>
-          <label class="field"><span>Your MR <em id="mr-readout">${masteryDisplay(filters.mr || 0, false)}</em></span><input type="range" name="mr" min="0" max="36" value="${escapeHtml(filters.mr || "0")}" /></label>
+          } /><span>${escapeHtml(recruitingLabel)}</span></label>
+          ${fields}
         </form>
       </aside>
       <div class="browse-main">
-        <nav class="directory-tabs" aria-label="Community directories"><a href="/browse" data-link aria-current="page">Clans</a><a href="/alliances" data-link aria-current="false">Alliances</a><a href="/players" data-link aria-current="false">Players</a></nav>
-        ${filterPresetRow(filters)}
-        <div class="row-between">
-          <p class="muted" id="result-count" role="status" aria-live="polite" aria-atomic="true">${label}</p>
-          <label class="field inline"><span>Sort</span>
-            <select name="sort" form="filter-form">
-              <option value="newest" ${filters.sort === "newest" ? "selected" : ""}>Newest</option>
-              <option value="online" ${filters.sort === "online" ? "selected" : ""}>Online first</option>
-              <option value="open" ${filters.sort === "open" ? "selected" : ""}>Open first</option>
-              <option value="space" ${filters.sort === "space" ? "selected" : ""}>Most space</option>
-              <option value="mr" ${filters.sort === "mr" ? "selected" : ""}>Lowest MR</option>
-            </select>
-          </label>
-        </div>
-        <div id="results">${clanResultsHtml(clans, filters, pager)}</div>
+        ${directoryTabs(path)}
+        ${filterPresetRow(filters, path, presets)}
+        ${countRow(count, sortControl(sort, filters.sort))}
+        <div id="results">${results}</div>
       </div>
     </section>
   `;
 }
 
+// The filter rows two of the boards share verbatim.
+function keywordField(placeholder, value) {
+  return `<label class="field"><span>Keyword</span><input type="search" name="q" value="${escapeHtml(value)}"${
+    placeholder ? ` placeholder="${escapeHtml(placeholder)}"` : ""
+  } /></label>`;
+}
+
+function selectField(label, name, options, selected) {
+  return `<label class="field"><span>${escapeHtml(label)}</span><select name="${name}"><option value="">Any</option>${optionList(options, selected)}</select></label>`;
+}
+
+function onlineField(checked) {
+  return `<label class="check" for="filter-online"><input id="filter-online" type="checkbox" name="online" value="1" ${
+    checked ? "checked" : ""
+  } /><span>Online now</span></label>`;
+}
+
+function masteryField(label, value) {
+  return `<label class="field"><span>${escapeHtml(label)} <em id="mr-readout">${masteryDisplay(value || 0, false)}</em></span><input type="range" name="mr" min="0" max="36" value="${escapeHtml(value || "0")}" /></label>`;
+}
+
+function playstyleField(selected = []) {
+  return `<fieldset class="fieldset">
+            <legend>Playstyles</legend>
+            <div class="filter-groups">${filterPlaystyleGroups(selected)}</div>
+          </fieldset>`;
+}
+
+export function browseView(clans, filters, pager, roleOptions = []) {
+  const total = pager?.total ?? clans.length;
+  return directoryView({
+    path: "/browse",
+    eyebrow: "Clan directory",
+    title: "Find a clan to call home.",
+    postHref: "/post",
+    postLabel: "Advertise a clan",
+    filters,
+    recruitingLabel: "Recruiting now",
+    presets: FILTER_PRESETS,
+    count: total === 1 ? "1 clan" : `${total} clans`,
+    fields: [
+      keywordField("Name, tag, playstyle…", filters.q),
+      selectField("Platform", "platform", PLATFORMS, filters.platform),
+      selectField("Tier", "tier", TIERS, filters.tier),
+      roleFilterField(roleOptions, filters.role),
+      playstyleField(filters.playstyles || []),
+      selectField("Region", "region", REGIONS, filters.region),
+      selectField("Language", "language", LANGUAGES, filters.language),
+      selectField("Status", "status", STATUSES, filters.status),
+      onlineField(filters.online),
+      masteryField("Your MR", filters.mr),
+    ].join("\n          "),
+    sort: [
+      ["newest", "Newest"],
+      ["online", "Online first"],
+      ["open", "Open first"],
+      ["space", "Most space"],
+      ["mr", "Lowest MR"],
+    ],
+    results: clanResultsHtml(clans, filters, pager),
+  });
+}
+
 export function alliancesView(alliances, filters, pager) {
   const total = pager?.total ?? alliances.length;
-  const label = total === 1 ? "1 alliance" : `${total} alliances`;
-  return `
-    <section class="page-hero">
-      <div class="directory-topline"><p class="eyebrow">Alliance directory</p><a class="text-link" href="/post-alliance" data-link>Advertise an alliance ↗</a></div>
-      <h1>Find an alliance for your clan.</h1>
-    </section>
-    <section class="browse">
-      <aside class="filters is-collapsed" data-filters>
-        <button class="filters-toggle" type="button" data-filters-toggle aria-expanded="false">
-          <span>Filters <em data-filter-count ${activeFilterCount(filters) ? "" : "hidden"}>${activeFilterCount(filters)}</em></span>
-          <span class="filters-caret" aria-hidden="true">▾</span>
-        </button>
-        <div class="row-between">
-          <h2>Filters</h2>
-          <button class="text-link" type="button" data-clear-filters>Reset</button>
-        </div>
-        <form id="filter-form">
-          <label class="check" for="filter-recruiting"><input id="filter-recruiting" type="checkbox" name="recruiting" value="1" ${
-            filters.recruiting ? "checked" : ""
-          } /><span>Recruiting now</span></label>
-          <label class="field"><span>Keyword</span><input type="search" name="q" value="${escapeHtml(filters.q)}" /></label>
-          <label class="field"><span>Platform</span><select name="platform"><option value="">Any</option>${optionList(PLATFORMS, filters.platform)}</select></label>
-          <label class="field"><span>Region</span><select name="region"><option value="">Any</option>${optionList(REGIONS, filters.region)}</select></label>
-          <label class="field"><span>Language</span><select name="language"><option value="">Any</option>${optionList(LANGUAGES, filters.language)}</select></label>
-          <label class="field"><span>Status</span><select name="status"><option value="">Any</option>${optionList(STATUSES, filters.status)}</select></label>
-        </form>
-      </aside>
-      <div class="browse-main">
-        <nav class="directory-tabs" aria-label="Community directories"><a href="/browse" data-link aria-current="false">Clans</a><a href="/alliances" data-link aria-current="page">Alliances</a><a href="/players" data-link aria-current="false">Players</a></nav>
-        ${filterPresetRow(filters, "/alliances", ALLIANCE_PRESETS)}
-        <p class="muted" id="result-count" role="status" aria-live="polite" aria-atomic="true">${label}</p>
-        <div id="results">${allianceResultsHtml(alliances, filters, pager)}</div>
-      </div>
-    </section>
-  `;
+  return directoryView({
+    path: "/alliances",
+    eyebrow: "Alliance directory",
+    title: "Find an alliance for your clan.",
+    postHref: "/post-alliance",
+    postLabel: "Advertise an alliance",
+    filters,
+    recruitingLabel: "Recruiting now",
+    presets: ALLIANCE_PRESETS,
+    count: total === 1 ? "1 alliance" : `${total} alliances`,
+    fields: [
+      keywordField("", filters.q),
+      selectField("Platform", "platform", PLATFORMS, filters.platform),
+      selectField("Region", "region", REGIONS, filters.region),
+      selectField("Language", "language", LANGUAGES, filters.language),
+      selectField("Status", "status", STATUSES, filters.status),
+    ].join("\n          "),
+    // An alliance board is short enough that newest-first is the only order
+    // anyone has wanted.
+    results: allianceResultsHtml(alliances, filters, pager),
+  });
 }
+
 
 export function emptyState(title = "Your community could be next", detail = "Post your clan or alliance so other players can find you.") {
   return `<div class="empty"><h3>${escapeHtml(title)}</h3><p class="muted">${escapeHtml(detail)}</p></div>`;
@@ -3014,58 +3095,33 @@ export function playerResultsHtml(players, filters, pager) {
 
 export function playersView(players, filters, pager) {
   const total = pager?.total ?? players.length;
-  const label = total === 1 ? "1 player" : `${total} players`;
-  return `
-    <section class="page-hero">
-      <div class="directory-topline"><p class="eyebrow">Player directory</p><a class="text-link" href="/lfc" data-link>Post your profile ↗</a></div>
-      <h1>Find players looking for a clan.</h1>
-    </section>
-    <section class="browse">
-      <aside class="filters is-collapsed" data-filters>
-        <button class="filters-toggle" type="button" data-filters-toggle aria-expanded="false">
-          <span>Filters <em data-filter-count ${activeFilterCount(filters) ? "" : "hidden"}>${activeFilterCount(filters)}</em></span>
-          <span class="filters-caret" aria-hidden="true">▾</span>
-        </button>
-        <div class="row-between">
-          <h2>Filters</h2>
-          <button class="text-link" type="button" data-clear-filters>Reset</button>
-        </div>
-        <form id="filter-form">
-          <label class="check" for="filter-recruiting"><input id="filter-recruiting" type="checkbox" name="recruiting" value="1" ${
-            filters.recruiting ? "checked" : ""
-          } /><span>Still looking</span></label>
-          <label class="field"><span>Keyword</span><input type="search" name="q" value="${escapeHtml(filters.q)}" placeholder="Name, playstyle…" /></label>
-          <label class="field"><span>Platform</span><select name="platform"><option value="">Any</option>${optionList(PLATFORMS, filters.platform)}</select></label>
-          <fieldset class="fieldset">
-            <legend>Playstyles</legend>
-            <div class="filter-groups">${filterPlaystyleGroups(filters.playstyles || [])}</div>
-          </fieldset>
-          <label class="field"><span>Region</span><select name="region"><option value="">Any</option>${optionList(REGIONS, filters.region)}</select></label>
-          <label class="field"><span>Language</span><select name="language"><option value="">Any</option>${optionList(LANGUAGES, filters.language)}</select></label>
-          <label class="field"><span>Looking</span><select name="status"><option value="">Any</option>${optionList(PLAYER_STATUSES, filters.status)}</select></label>
-          <label class="field"><span>Plays</span><select name="hours"><option value="">Any</option>${optionList(HOURS, filters.hours)}</select></label>
-          <label class="check" for="filter-online"><input id="filter-online" type="checkbox" name="online" value="1" ${
-            filters.online ? "checked" : ""
-          } /><span>Online now</span></label>
-          <label class="field"><span>Minimum MR <em id="mr-readout">${masteryDisplay(filters.mr || 0, false)}</em></span><input type="range" name="mr" min="0" max="36" value="${escapeHtml(filters.mr || "0")}" /></label>
-        </form>
-      </aside>
-      <div class="browse-main">
-        <nav class="directory-tabs" aria-label="Community directories"><a href="/browse" data-link aria-current="false">Clans</a><a href="/alliances" data-link aria-current="false">Alliances</a><a href="/players" data-link aria-current="page">Players</a></nav>
-        ${filterPresetRow(filters, "/players", PLAYER_PRESETS)}
-        <div class="row-between">
-          <p class="muted" id="result-count" role="status" aria-live="polite" aria-atomic="true">${label}</p>
-          <label class="field inline"><span>Sort</span>
-            <select name="sort" form="filter-form">
-              <option value="newest" ${filters.sort === "newest" ? "selected" : ""}>Newest</option>
-              <option value="mr" ${filters.sort === "mr" ? "selected" : ""}>Highest MR</option>
-            </select>
-          </label>
-        </div>
-        <div id="results">${playerResultsHtml(players, filters, pager)}</div>
-      </div>
-    </section>
-  `;
+  return directoryView({
+    path: "/players",
+    eyebrow: "Player directory",
+    title: "Find players looking for a clan.",
+    postHref: "/lfc",
+    postLabel: "Post your profile",
+    filters,
+    recruitingLabel: "Still looking",
+    presets: PLAYER_PRESETS,
+    count: total === 1 ? "1 player" : `${total} players`,
+    fields: [
+      keywordField("Name, playstyle…", filters.q),
+      selectField("Platform", "platform", PLATFORMS, filters.platform),
+      playstyleField(filters.playstyles || []),
+      selectField("Region", "region", REGIONS, filters.region),
+      selectField("Language", "language", LANGUAGES, filters.language),
+      selectField("Looking", "status", PLAYER_STATUSES, filters.status),
+      selectField("Plays", "hours", HOURS, filters.hours),
+      onlineField(filters.online),
+      masteryField("Minimum MR", filters.mr),
+    ].join("\n          "),
+    sort: [
+      ["newest", "Newest"],
+      ["mr", "Highest MR"],
+    ],
+    results: playerResultsHtml(players, filters, pager),
+  });
 }
 
 export function playerPage(player, { admin = false, mine = false, user = null, similar = [], live = false } = {}) {

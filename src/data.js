@@ -193,6 +193,23 @@ export function playstylesByGroup(list) {
 export const HEADLINE_MAX = 90;
 export const SUMMARY_MAX = 220;
 
+// The one date a listing is judged on: a bump replaces the post date for
+// everything that sorts, ages out, or is shown as "Bumped 2h ago". The board,
+// the composer and the server all read it from here so a bump means the same
+// thing in all three.
+export function activityAt(item) {
+  return item.bumpedAt || item.createdAt;
+}
+
+// The optional sections of a post, and what each is called wherever it is
+// named - the composer's field, the listing page's heading, and the
+// "that section is too long" error the server sends back.
+export const SECTION_LABELS = {
+  offering: "What you offer",
+  requirements: "Requirements",
+  howToJoin: "How to join",
+};
+
 export const REGIONS = ["North America", "Europe", "South America", "Asia", "Oceania", "Global"];
 export const LANGUAGES = [
   "English",

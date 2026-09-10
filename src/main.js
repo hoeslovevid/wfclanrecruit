@@ -1,6 +1,6 @@
 import { masteryDisplay } from "./mastery.js";
 import { bindFilterUpdates, resetFilterForm } from "./filter-ui.js";
-import { LINK_MAX, isDiscordName, normalizeDiscordName } from "./data.js";
+import { LINK_MAX, SECTION_LABELS, isDiscordName, normalizeDiscordName } from "./data.js";
 import { api } from "./api.js";
 import {
   activeFilterCount,
@@ -70,7 +70,7 @@ import {
   zoomAbout,
 } from "./crop.js";
 import { parseYouTubeId } from "./video.js";
-import { MEDIA_MAX, parseImageUrl, setUploadPublicBase } from "./media.js";
+import { IMAGE_MAX, MEDIA_MAX, parseImageUrl, setUploadPublicBase } from "./media.js";
 import {
   alertPlan,
   claimAlert,
@@ -1541,8 +1541,6 @@ function showNote(el, message, kind = "error") {
   el.classList.toggle("muted", kind === "muted");
 }
 
-const IMAGE_MAX = 2 * 1024 * 1024;
-
 // What the cropper writes back. 512 is the largest the emblem is ever drawn -
 // the post header at 72 on a 3x screen - and a square of it re-encodes small
 // enough that the 2 MB cap stops being something a leader can hit.
@@ -2342,12 +2340,6 @@ function bindListingComposer(form, { imageUrl = null, onChange, draftKind = "", 
 // Offer, requirements and how-to-join are optional: an empty one is a section
 // the listing does not show. Length is the only thing left that can fail, and
 // it names the box so the leader knows which one to cut.
-const SECTION_LABELS = {
-  offering: "What you offer",
-  requirements: "Requirements",
-  howToJoin: "How to join",
-};
-
 function sectionError(form) {
   for (const [name, label] of Object.entries(SECTION_LABELS)) {
     const value = form.elements[name]?.value;
@@ -2423,6 +2415,96 @@ function packForm(form, ...listFields) {
   return fd;
 }
 
+// The three directories - clans, alliances, players - are one page rendered
+// three times. Each supplies its own list, filter and card markup; the shell
+// around them (paginate, repaint on filter change, keep the query string in
+// step, page through the results) is the same page behaviour and lives here.
+const DIRECTORIES = {
+  "/browse": {
+    noun: "clan",
+    plural: "clans",
+    items: () => state.clans,
+    filter: applyClanFilters,
+    view: (items, filters, pager) => browseView(items, filters, pager, roleFilterOptions(state.clans)),
+    results: clanResultsHtml,
+  },
+  "/alliances": {
+    noun: "alliance",
+    plural: "alliances",
+    items: () => state.alliances,
+    filter: applyAllianceFilters,
+    view: (items, filters, pager) => alliancesView(items, filters, pager),
+    results: allianceResultsHtml,
+  },
+  "/players": {
+    noun: "player",
+    plural: "players",
+    items: () => state.players,
+    filter: applyPlayerFilters,
+    view: (items, filters, pager) => playersView(items, filters, pager),
+    results: playerResultsHtml,
+  },
+};
+
+function renderDirectory(path) {
+  const dir = DIRECTORIES[path];
+  // Coming back to a board from a post should land on the filters you left it
+  // under, so a bare /browse reopens the last search made on it.
+  restoreDirectorySearch(path);
+  const { filters: initial, page: startPage } = filtersFromSearch(window.location.search);
+  let page = startPage;
+  const windowed = paginate(dir.filter(dir.items(), initial), startPage);
+  page = windowed.page;
+  app.innerHTML = dir.view(windowed.items, initial, windowed);
+  const form = app.querySelector("#filter-form");
+
+  const paint = (nextPage = 1) => {
+    const next = readFilters(form);
+    const badge = app.querySelector("[data-filter-count]");
+    const activeCount = activeFilterCount(next);
+    if (badge) { badge.textContent = String(activeCount); badge.hidden = activeCount === 0; }
+    const windowedNext = paginate(dir.filter(dir.items(), next), nextPage);
+    page = windowedNext.page;
+    // Only the directories that filter on mastery draw a readout to update.
+    const mr = app.querySelector("#mr-readout");
+    if (mr) mr.innerHTML = masteryDisplay(next.mr, false);
+    const count = app.querySelector("#result-count");
+    if (count) {
+      count.textContent =
+        windowedNext.total === 1 ? `1 ${dir.noun}` : `${windowedNext.total} ${dir.plural}`;
+    }
+    const results = app.querySelector("#results");
+    results.innerHTML = dir.results(windowedNext.items, next, windowedNext);
+    bindCards(results);
+    // The filters live in the URL so a filtered board can be linked and
+    // reloaded, but they are a replace rather than a push: back should leave
+    // the directory, not step through every filter tweak.
+    const qs = filtersToSearch(next, page);
+    rememberDirectory(path, qs);
+    const nextUrl = `${path}${qs}`;
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+      history.replaceState({}, "", nextUrl);
+    }
+  };
+
+  bindFilterUpdates(app.querySelector(".browse"), paint);
+  bindFiltersToggle();
+  app.querySelector("[data-clear-filters]")?.addEventListener("click", () => {
+    // Reset means reset: the remembered search goes with the filters.
+    clearRememberedSearch(path);
+    resetFilterForm(form);
+    paint(1);
+  });
+  app.querySelector("#results")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-page]");
+    if (!button || button.disabled) return;
+    paint(Number(button.dataset.page));
+    app.querySelector("#results")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  bindCards();
+  rememberDirectory(path, filtersToSearch(initial, page));
+}
+
 async function render() {
   const { path, params } = parseRoute();
   closeDrawer();
@@ -2449,97 +2531,8 @@ async function render() {
               ? "Staff — WF Clan Recruit"
               : "WF Clan Recruit — Warframe Clans & Alliances";
 
-  if (path === "/browse") {
-    restoreDirectorySearch("/browse");
-    const { filters: initial, page: startPage } = filtersFromSearch(window.location.search);
-    let page = startPage;
-    const windowed = paginate(applyClanFilters(state.clans, initial), page);
-    page = windowed.page;
-    app.innerHTML = browseView(windowed.items, initial, windowed, roleFilterOptions(state.clans));
-    const form = app.querySelector("#filter-form");
-    const paint = (nextPage = 1) => {
-      const next = readFilters(form);
-      const badge = app.querySelector("[data-filter-count]");
-      const activeCount = activeFilterCount(next);
-      if (badge) { badge.textContent = String(activeCount); badge.hidden = activeCount === 0; }
-      const list = applyClanFilters(state.clans, next);
-      const windowedNext = paginate(list, nextPage);
-      page = windowedNext.page;
-      const mr = app.querySelector("#mr-readout");
-      if (mr) mr.innerHTML = masteryDisplay(next.mr, false);
-      const count = app.querySelector("#result-count");
-      if (count) count.textContent = windowedNext.total === 1 ? "1 clan" : `${windowedNext.total} clans`;
-      const results = app.querySelector("#results");
-      results.innerHTML = clanResultsHtml(windowedNext.items, next, windowedNext);
-      bindCards(results);
-      const qs = filtersToSearch(next, page);
-      rememberDirectory("/browse", qs);
-      const nextUrl = `/browse${qs}`;
-      if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
-        history.replaceState({}, "", nextUrl);
-      }
-    };
-    bindFilterUpdates(app.querySelector(".browse"), paint);
-    bindFiltersToggle();
-    app.querySelector("[data-clear-filters]")?.addEventListener("click", () => {
-      clearRememberedSearch("/browse");
-      resetFilterForm(form);
-      paint(1);
-    });
-    app.querySelector("#results")?.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-page]");
-      if (!button || button.disabled) return;
-      paint(Number(button.dataset.page));
-      app.querySelector("#results")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-    bindCards();
-    rememberDirectory("/browse", filtersToSearch(initial, page));
-    return;
-  }
-
-  if (path === "/alliances") {
-    restoreDirectorySearch("/alliances");
-    const { filters: initial, page: startPage } = filtersFromSearch(window.location.search);
-    let page = startPage;
-    const windowed = paginate(applyAllianceFilters(state.alliances, initial), page);
-    page = windowed.page;
-    app.innerHTML = alliancesView(windowed.items, initial, windowed);
-    const form = app.querySelector("#filter-form");
-    const paint = (nextPage = 1) => {
-      const next = readFilters(form);
-      const badge = app.querySelector("[data-filter-count]");
-      const activeCount = activeFilterCount(next);
-      if (badge) { badge.textContent = String(activeCount); badge.hidden = activeCount === 0; }
-      const list = applyAllianceFilters(state.alliances, next);
-      const windowedNext = paginate(list, nextPage);
-      page = windowedNext.page;
-      const count = app.querySelector("#result-count");
-      if (count) count.textContent = windowedNext.total === 1 ? "1 alliance" : `${windowedNext.total} alliances`;
-      const results = app.querySelector("#results");
-      results.innerHTML = allianceResultsHtml(windowedNext.items, next, windowedNext);
-      bindCards(results);
-      const qs = filtersToSearch(next, page);
-      rememberDirectory("/alliances", qs);
-      const nextUrl = `/alliances${qs}`;
-      if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
-        history.replaceState({}, "", nextUrl);
-      }
-    };
-    bindFilterUpdates(app.querySelector(".browse"), paint);
-    bindFiltersToggle();
-    app.querySelector("[data-clear-filters]")?.addEventListener("click", () => {
-      clearRememberedSearch("/alliances");
-      resetFilterForm(form);
-      paint(1);
-    });
-    app.querySelector("#results")?.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-page]");
-      if (!button || button.disabled) return;
-      paint(Number(button.dataset.page));
-      app.querySelector("#results")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-    bindCards();
-    rememberDirectory("/alliances", filtersToSearch(initial, page));
+  if (DIRECTORIES[path]) {
+    renderDirectory(path);
     return;
   }
 
@@ -2575,54 +2568,6 @@ async function render() {
       if (!row) return;
       openConversation(row.dataset.thread);
     });
-    return;
-  }
-
-  if (path === "/players") {
-    restoreDirectorySearch("/players");
-    const { filters: initial, page: startPage } = filtersFromSearch(window.location.search);
-    let page = startPage;
-    const windowed = paginate(applyPlayerFilters(state.players, initial), page);
-    page = windowed.page;
-    app.innerHTML = playersView(windowed.items, initial, windowed);
-    const form = app.querySelector("#filter-form");
-    const paint = (nextPage = 1) => {
-      const next = readFilters(form);
-      const badge = app.querySelector("[data-filter-count]");
-      const activeCount = activeFilterCount(next);
-      if (badge) { badge.textContent = String(activeCount); badge.hidden = activeCount === 0; }
-      const list = applyPlayerFilters(state.players, next);
-      const windowedNext = paginate(list, nextPage);
-      page = windowedNext.page;
-      const mr = app.querySelector("#mr-readout");
-      if (mr) mr.innerHTML = masteryDisplay(next.mr, false);
-      const count = app.querySelector("#result-count");
-      if (count) count.textContent = windowedNext.total === 1 ? "1 player" : `${windowedNext.total} players`;
-      const results = app.querySelector("#results");
-      results.innerHTML = playerResultsHtml(windowedNext.items, next, windowedNext);
-      bindCards(results);
-      const qs = filtersToSearch(next, page);
-      rememberDirectory("/players", qs);
-      const nextUrl = `/players${qs}`;
-      if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
-        history.replaceState({}, "", nextUrl);
-      }
-    };
-    bindFilterUpdates(app.querySelector(".browse"), paint);
-    bindFiltersToggle();
-    app.querySelector("[data-clear-filters]")?.addEventListener("click", () => {
-      clearRememberedSearch("/players");
-      resetFilterForm(form);
-      paint(1);
-    });
-    app.querySelector("#results")?.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-page]");
-      if (!button || button.disabled) return;
-      paint(Number(button.dataset.page));
-      app.querySelector("#results")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-    bindCards();
-    rememberDirectory("/players", filtersToSearch(initial, page));
     return;
   }
 
@@ -3059,6 +3004,119 @@ async function render() {
   bindCards();
 }
 
+// The owner and admin controls on a post - pause, hide, bump, remove - are one
+// interaction with four names: call the API, then repaint. What differs is the
+// call, whether it asks first, and whether the post still exists afterwards,
+// so that is all each entry says.
+const LISTING_CONTROLS = [
+  {
+    attr: "pause-clan",
+    // Pausing offers a note for recruits; backing out of the note backs out of
+    // the pause, which is why this is a value rather than a confirm.
+    prompt: (el) => pauseReasonPrompt(el.dataset.paused === "1"),
+    call: (el, reason) => api.pauseClan(el.dataset.pauseClan, el.dataset.paused === "1", reason),
+  },
+  {
+    attr: "pause-alliance",
+    // Pausing offers a note for recruits; backing out of the note backs out of
+    // the pause, which is why this is a value rather than a confirm.
+    prompt: (el) => pauseReasonPrompt(el.dataset.paused === "1"),
+    call: (el, reason) => api.pauseAlliance(el.dataset.pauseAlliance, el.dataset.paused === "1", reason),
+  },
+  {
+    attr: "pause-player",
+    // Pausing offers a note for recruits; backing out of the note backs out of
+    // the pause, which is why this is a value rather than a confirm.
+    prompt: (el) => pauseReasonPrompt(el.dataset.paused === "1"),
+    call: (el, reason) => api.pausePlayer(el.dataset.pausePlayer, el.dataset.paused === "1", reason),
+  },
+  {
+    attr: "hide-clan",
+    // Unhiding is reversible and undramatic; hiding someone else's post is the
+    // half worth confirming.
+    ask: (el) => el.dataset.hidden === "1" && "Hide this listing from the board? The owner keeps it, and you can unhide it later.",
+    call: (el) => api.hideClan(el.dataset.hideClan, el.dataset.hidden === "1"),
+  },
+  {
+    attr: "hide-alliance",
+    ask: (el) => el.dataset.hidden === "1" && "Hide this listing from the board? The owner keeps it, and you can unhide it later.",
+    call: (el) => api.hideAlliance(el.dataset.hideAlliance, el.dataset.hidden === "1"),
+  },
+  {
+    attr: "hide-player",
+    ask: (el) => el.dataset.hidden === "1" && "Hide this profile from the board? The owner keeps it, and you can unhide it later.",
+    call: (el) => api.hidePlayer(el.dataset.hidePlayer, el.dataset.hidden === "1"),
+  },
+  {
+    // A bump inside its cooling-off window renders disabled, and a disabled
+    // button is not a click to answer.
+    attr: "bump-clan",
+    whenEnabled: true,
+    call: (el) => api.bumpClan(el.dataset.bumpClan),
+  },
+  {
+    attr: "bump-alliance",
+    whenEnabled: true,
+    call: (el) => api.bumpAlliance(el.dataset.bumpAlliance),
+  },
+  {
+    attr: "bump-player",
+    whenEnabled: true,
+    call: (el) => api.bumpPlayer(el.dataset.bumpPlayer),
+  },
+  {
+    // Removal buttons sit on cards and on the post itself, both of which are
+    // clickable, so the click stops here.
+    attr: "delete-clan",
+    stops: true,
+    ask: () => "Remove this clan post for everyone? This cannot be undone.",
+    call: (el) => api.deleteClan(el.dataset.deleteClan),
+    after: () => afterDelete("/clans"),
+  },
+  {
+    attr: "delete-alliance",
+    stops: true,
+    ask: () => "Remove this alliance post for everyone? This cannot be undone.",
+    call: (el) => api.deleteAlliance(el.dataset.deleteAlliance),
+    after: () => afterDelete("/alliances"),
+  },
+  {
+    attr: "delete-player",
+    stops: true,
+    ask: () => "Remove this player profile for everyone? This cannot be undone.",
+    call: (el) => api.deletePlayer(el.dataset.deletePlayer),
+    after: () => afterDelete("/players"),
+  },
+];
+
+// Returns true once a control has claimed the click.
+async function runListingControl(event) {
+  for (const control of LISTING_CONTROLS) {
+    const el = event.target.closest(`[data-${control.attr}]`);
+    if (!el || (control.whenEnabled && el.disabled)) continue;
+    event.preventDefault();
+    if (control.stops) event.stopPropagation();
+    const question = control.ask?.(el);
+    if (question && !confirm(question)) return true;
+    let answer;
+    if (control.prompt) {
+      answer = control.prompt(el);
+      if (answer === null) return true;
+    }
+    try {
+      await control.call(el, answer);
+    } catch (error) {
+      alert(error.message);
+      return true;
+    }
+    await refresh();
+    if (control.after) control.after();
+    else render();
+    return true;
+  }
+  return false;
+}
+
 document.addEventListener("click", async (event) => {
   const link = event.target.closest("a[data-link]");
   if (link && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
@@ -3135,93 +3193,7 @@ document.addEventListener("click", async (event) => {
     }
     return;
   }
-  const pauseClan = event.target.closest("[data-pause-clan]");
-  if (pauseClan) {
-    event.preventDefault();
-    const pausing = pauseClan.dataset.paused === "1";
-    const reason = pauseReasonPrompt(pausing);
-    if (reason === null) return;
-    try {
-      await api.pauseClan(pauseClan.dataset.pauseClan, pausing, reason);
-      await refresh();
-      render();
-    } catch (error) {
-      alert(error.message);
-    }
-    return;
-  }
-  const pauseAlliance = event.target.closest("[data-pause-alliance]");
-  if (pauseAlliance) {
-    event.preventDefault();
-    const pausing = pauseAlliance.dataset.paused === "1";
-    const reason = pauseReasonPrompt(pausing);
-    if (reason === null) return;
-    try {
-      await api.pauseAlliance(pauseAlliance.dataset.pauseAlliance, pausing, reason);
-      await refresh();
-      render();
-    } catch (error) {
-      alert(error.message);
-    }
-    return;
-  }
-  const hideClan = event.target.closest("[data-hide-clan]");
-  if (hideClan) {
-    event.preventDefault();
-    const hide = hideClan.dataset.hidden === "1";
-    if (hide && !confirm("Hide this listing from the board? The owner keeps it, and you can unhide it later.")) return;
-    try {
-      await api.hideClan(hideClan.dataset.hideClan, hide);
-      await refresh();
-      render();
-    } catch (error) {
-      alert(error.message);
-    }
-    return;
-  }
-  const hideAlliance = event.target.closest("[data-hide-alliance]");
-  if (hideAlliance) {
-    event.preventDefault();
-    const hide = hideAlliance.dataset.hidden === "1";
-    if (hide && !confirm("Hide this listing from the board? The owner keeps it, and you can unhide it later.")) return;
-    try {
-      await api.hideAlliance(hideAlliance.dataset.hideAlliance, hide);
-      await refresh();
-      render();
-    } catch (error) {
-      alert(error.message);
-    }
-    return;
-  }
-  const pausePlayer = event.target.closest("[data-pause-player]");
-  if (pausePlayer) {
-    event.preventDefault();
-    const pausing = pausePlayer.dataset.paused === "1";
-    const reason = pauseReasonPrompt(pausing);
-    if (reason === null) return;
-    try {
-      await api.pausePlayer(pausePlayer.dataset.pausePlayer, pausing, reason);
-      await refresh();
-      render();
-    } catch (error) {
-      alert(error.message);
-    }
-    return;
-  }
-  const hidePlayer = event.target.closest("[data-hide-player]");
-  if (hidePlayer) {
-    event.preventDefault();
-    const hide = hidePlayer.dataset.hidden === "1";
-    if (hide && !confirm("Hide this profile from the board? The owner keeps it, and you can unhide it later.")) return;
-    try {
-      await api.hidePlayer(hidePlayer.dataset.hidePlayer, hide);
-      await refresh();
-      render();
-    } catch (error) {
-      alert(error.message);
-    }
-    return;
-  }
+  if (await runListingControl(event)) return;
   const messageButton = event.target.closest("[data-message-listing]");
   if (messageButton) {
     event.preventDefault();
@@ -3280,86 +3252,6 @@ document.addEventListener("click", async (event) => {
       alert(error.message);
     }
     return;
-  }
-  const deleteClan = event.target.closest("[data-delete-clan]");
-  if (deleteClan) {
-    event.preventDefault();
-    event.stopPropagation();
-    if (!confirm("Remove this clan post for everyone? This cannot be undone.")) return;
-    try {
-      await api.deleteClan(deleteClan.dataset.deleteClan);
-    } catch (error) {
-      alert(error.message);
-      return;
-    }
-    await refresh();
-    afterDelete("/clans");
-    return;
-  }
-  const deleteAlliance = event.target.closest("[data-delete-alliance]");
-  if (deleteAlliance) {
-    event.preventDefault();
-    event.stopPropagation();
-    if (!confirm("Remove this alliance post for everyone? This cannot be undone.")) return;
-    try {
-      await api.deleteAlliance(deleteAlliance.dataset.deleteAlliance);
-    } catch (error) {
-      alert(error.message);
-      return;
-    }
-    await refresh();
-    afterDelete("/alliances");
-    return;
-  }
-  const deletePlayer = event.target.closest("[data-delete-player]");
-  if (deletePlayer) {
-    event.preventDefault();
-    event.stopPropagation();
-    if (!confirm("Remove this player profile for everyone? This cannot be undone.")) return;
-    try {
-      await api.deletePlayer(deletePlayer.dataset.deletePlayer);
-    } catch (error) {
-      alert(error.message);
-      return;
-    }
-    await refresh();
-    afterDelete("/players");
-    return;
-  }
-  const bumpPlayer = event.target.closest("[data-bump-player]");
-  if (bumpPlayer && !bumpPlayer.disabled) {
-    event.preventDefault();
-    try {
-      await api.bumpPlayer(bumpPlayer.dataset.bumpPlayer);
-      await refresh();
-      render();
-    } catch (error) {
-      alert(error.message);
-    }
-    return;
-  }
-  const bumpClan = event.target.closest("[data-bump-clan]");
-  if (bumpClan && !bumpClan.disabled) {
-    event.preventDefault();
-    try {
-      await api.bumpClan(bumpClan.dataset.bumpClan);
-      await refresh();
-      render();
-    } catch (error) {
-      alert(error.message);
-    }
-    return;
-  }
-  const bumpAlliance = event.target.closest("[data-bump-alliance]");
-  if (bumpAlliance && !bumpAlliance.disabled) {
-    event.preventDefault();
-    try {
-      await api.bumpAlliance(bumpAlliance.dataset.bumpAlliance);
-      await refresh();
-      render();
-    } catch (error) {
-      alert(error.message);
-    }
   }
 });
 
