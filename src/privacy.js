@@ -8,7 +8,7 @@ export function privacyView() {
       <p class="eyebrow">Legal</p>
       <h1>Privacy Policy</h1>
       <p class="lead">This page explains what WF Clan Recruit collects, why, who sees it, how long it stays, and how you can opt out. It describes this website as it works today, not a generic template.</p>
-      <p class="muted">Last updated 9 September 2026. This site is independent and is not affiliated with Digital Extremes, Warframe, Discord, or Google.</p>
+      <p class="muted">Last updated 10 September 2026. This site is independent and is not affiliated with Digital Extremes, Warframe, Discord, or Google.</p>
     </section>
 
     <section class="policy-page">
@@ -140,14 +140,11 @@ export function privacyView() {
         <p>Anyone can send a listing report (dead invite, inactive, fake, stolen name, or other). We store the reason, optional details, listing id and name, time, status, and the reporter’s account id if they were signed in. Reports are not shown on the public board.</p>
 
         <h3>On-site messages</h3>
-        <p>If you use Messages, we store what you write, including formatting, any links you insert, and any emoji you pick (standard characters from the picker, or custom images staff have added). We also store who is in the conversation, the listing it is about, and whether you muted that thread on your side. Messages are not shown on the public board. The other person in the thread can read them. Muting does not hide the chat from them.</p>
-
-        <h3>Custom emojis</h3>
-        <p>Staff can upload small custom emoji images (PNG, JPG, WEBP, or GIF). We resize them the same way as listing photos and, when Cloudflare R2 is configured, copy them to that bucket and delete the local file. Signed-in users see those images in the message picker. The files stay until staff remove them.</p>
+        <p>If you use Messages, we store the plain text you write, who is in the conversation, the listing it is about, and whether you muted that thread on your side. Messages are not shown on the public board. The other person in the thread can read them. Muting does not hide the chat from them.</p>
 
         <h3>Technical data we do not store in the app database</h3>
         <ul class="policy-bullets">
-          <li>We do not store IP addresses, GPS, payment cards, or device advertising IDs in the application database. Production uses Postgres tables (users, sessions, clans, alliances, players, reports, admin_grants, emojis) when <code>DATABASE_URL</code> is set. Local development can use a <code>db.json</code> file instead.</li>
+          <li>We do not store IP addresses, GPS, payment cards, or device advertising IDs in the application database. Production uses Postgres tables (users, sessions, clans, alliances, players, reports, admin_grants) when <code>DATABASE_URL</code> is set. Local development can use a <code>db.json</code> file instead.</li>
           <li>We do not keep Discord OAuth access or refresh tokens after sign-in finishes.</li>
           <li>We do not store the HTML of your Warframe Forum profile after the verification check. We only keep whether the code matched, plus the profile URL and name.</li>
           <li>The host (Railway) and any reverse proxy may still log IPs and user agents for security and uptime. Those logs are not a feature of this app and are not used to target ads.</li>
@@ -182,12 +179,11 @@ export function privacyView() {
               <tr><td>Keep names and tags unique, hide stale or paused Discord buttons</td><td>Listing name, tag, bump time, paused flag, invite check</td></tr>
               <tr><td>Show a preview when a listing URL is pasted in Discord or similar</td><td>Public title, headline, summary, and listing image</td></tr>
               <tr><td>Handle “report this listing”</td><td>Report reason, optional details, reporter id if signed in</td></tr>
-              <tr><td>Let signed-in people message about a listing</td><td>Message text and formatting, emoji, thread membership, mute choice</td></tr>
+              <tr><td>Let signed-in people message about a listing</td><td>Message text, thread membership, mute choice</td></tr>
               <tr><td>Let you keep a saved shortlist and listing drafts across devices</td><td>Saved listing ids and composer text, only if you are signed in</td></tr>
               <tr><td>Ping you about a new message while this site is open</td><td>Sender name and a short preview, only in a browser notification if you turned Desktop alert on</td></tr>
-              <tr><td>Staff custom emojis in the message picker</td><td>Short name, image file, uploader id</td></tr>
               <tr><td>Enforce cooldowns (new listing 15 minutes, bump 12 hours, forum check a few seconds)</td><td>Timestamps on listings and the last forum check</td></tr>
-              <tr><td>Moderation by staff</td><td>Admins can hide or remove any listing, read reports, grant or revoke staff, and add or remove custom emojis</td></tr>
+              <tr><td>Moderation by staff</td><td>Admins can hide or remove any listing, read reports, and grant or revoke staff</td></tr>
               <tr><td>Security and abuse handling</td><td>Sessions, Discord ids, host logs</td></tr>
               <tr><td>Honor download and deletion requests</td><td>Your account record and listings</td></tr>
             </tbody>
@@ -305,8 +301,8 @@ export function privacyView() {
               <tr><th>Recipient</th><th>Why</th><th>What they may see</th></tr>
             </thead>
             <tbody>
-              <tr><td>Railway (hosting and optional Postgres)</td><td>Run the app and store listings. When Cloudflare R2 is not configured, listing images and custom emoji images stay on this host</td><td>The same data we store, plus ordinary server logs</td></tr>
-              <tr><td>Cloudflare R2</td><td>Store and serve listing images and custom emoji images</td><td>The image files you or staff upload, and ordinary request logs when someone loads those images</td></tr>
+              <tr><td>Railway (hosting and optional Postgres)</td><td>Run the app and store listings. When Cloudflare R2 is not configured, listing images stay on this host</td><td>The same data we store, plus ordinary server logs</td></tr>
+              <tr><td>Cloudflare R2</td><td>Store and serve listing images</td><td>The image files you upload, and ordinary request logs when someone loads those images</td></tr>
               <tr><td>Discord</td><td>Sign-in and invite checks</td><td>That you authorized this app; Discord already has your Discord account. Invite lookups send the invite code</td></tr>
               <tr><td>Jina AI reader (<code>r.jina.ai</code>)</td><td>Read a public About Me page when Cloudflare blocks our server</td><td>The public forum profile URL you submitted, at the moment you click to check</td></tr>
               <tr><td>Google Fonts</td><td>Load Rajdhani</td><td>Your IP and browser when the font CSS and files load</td></tr>
@@ -333,14 +329,13 @@ export function privacyView() {
           <li><strong>Public listings</strong> until you or a moderator remove them, or you delete your account (which also removes your listings and uploads). A moderator hide takes a listing off the public board but keeps the owner’s record until it is removed.</li>
           <li><strong>Listing reports</strong> until an admin resolves them or the project is shut down. Deleting your account clears your reporter id from reports you filed; the report text can remain for moderation history.</li>
           <li><strong>Account records</strong> until you delete the account, or an admin deletes it for abuse or shutdown.</li>
-          <li><strong>On-site messages</strong> until you leave the conversation or delete your account. Leaving a chat removes it from your inbox; the other person keeps their copy unless they leave too. Formatting and emoji you insert are stored with the message.</li>
+          <li><strong>On-site messages</strong> until you leave the conversation or delete your account. Leaving a chat removes it from your inbox; the other person keeps their copy unless they leave too.</li>
           <li><strong>Sessions</strong> 30 days from issue, or until you sign out. Signing out removes that session token, and expired session records are deleted automatically. Other devices stay signed in until those sessions expire or you delete the account.</li>
           <li><strong>OAuth cookie</strong> 10 minutes.</li>
           <li><strong>Forum verification code</strong> on our side until you verify. The copy on Warframe Forums stays until you edit About Me.</li>
           <li><strong>Recruiter roster</strong> until you leave the listing, the owner removes you, the listing is deleted, or you delete your account, which withdraws you from every listing you recruited for.</li>
           <li><strong>Online status</strong> your chosen status until you change it or delete your account. The live “online right now” signal is memory-only: it expires about two and a half minutes after your last heartbeat, and a server restart clears it.</li>
           <li><strong>Admin grants</strong> until another admin revokes them. A Discord id waiting for first sign-in is dropped when that person signs in (it becomes an admin flag on their account) or when the grant is cancelled.</li>
-          <li><strong>Custom emoji images</strong> until staff remove them from the Staff page. Removing one deletes that image from this host and from R2. Old messages that used it no longer show the picture.</li>
           <li><strong>Theme</strong> in your browser until you clear it.</li>
           <li><strong>Message-alert choices</strong> in your browser until you clear them or turn the toggles off.</li>
           <li><strong>Recently viewed and browse filters</strong> in your browser until you clear them.</li>

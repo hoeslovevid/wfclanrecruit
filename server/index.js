@@ -11,7 +11,6 @@ import { hashPassword, newToken, verifyPassword } from "./auth.js";
 import { initStorage, paths, postgresEnabled, readDb, storageLabel, writeDb, closePg } from "./db.js";
 import { rateLimit } from "./ratelimit.js";
 import {
-  BODY_MAX,
   blockedBetween,
   bodyError,
   normalizeBody,
@@ -25,7 +24,7 @@ import { PING_MS, publish, subscribe } from "./live.js";
 import { dropLegacyVideos } from "../src/video.js";
 import { MEDIA_MAX, mediaList, normalizeMedia, setUploadPublicBase, uploadedUrls, videoIdsOf } from "../src/media.js";
 import { normalizeContactLabel, normalizeRoles, roleTextError } from "../src/roles.js";
-import { resizeEmojiImage, resizeListingImage } from "./image.js";
+import { resizeListingImage } from "./image.js";
 import { deleteR2Object, putR2Object, r2Enabled, r2PartialEnv, r2PublicUrl, readLocalFile } from "./r2.js";
 import {
   HEARTBEAT_MS,
@@ -144,7 +143,6 @@ import {
   searchStaffCandidates,
   staffList,
 } from "./admins.js";
-import { addEmojiError, normalizeEmojiName, publicEmoji } from "../src/emojis.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const COOKIE = "wfr_session";
@@ -229,7 +227,6 @@ const listingUpload = upload.fields([
 // account. Accepting an `image` field anyway would write a file to disk that
 // nothing ever points at, so the field is simply not offered.
 const playerUpload = upload.fields([{ name: "mediaImage", maxCount: MEDIA_MAX }]);
-const emojiUpload = upload.fields([{ name: "image", maxCount: 1 }]);
 
 const app = express();
 app.set("trust proxy", 1);
@@ -514,8 +511,8 @@ async function processListingImages(req, res) {
 }
 
 // Same hop listing photos take: resize on this host, copy to R2, delete the
-// local file. Custom emojis are smaller (128px) but they must not linger in
-// /uploads/ when the board already has a media bucket.
+// local file so it does not linger in /uploads/ when the board already has a
+// media bucket.
 async function storeUploadRemotely(req, res, file, kind = "listing") {
   if (!r2Enabled()) return true;
   try {
@@ -532,22 +529,6 @@ async function storeUploadRemotely(req, res, file, kind = "listing") {
     return false;
   }
   return true;
-}
-
-async function processEmojiImage(req, res) {
-  const file = listingFile(req, "image");
-  if (!file) return true;
-  try {
-    const filename = await resizeEmojiImage(file.path);
-    file.filename = filename;
-    file.path = path.join(paths.uploadDir, filename);
-  } catch (error) {
-    console.error("Emoji resize failed:", error.message);
-    discardUploads(req);
-    res.status(400).json({ error: "That image could not be read. Use a PNG, JPG, WEBP, or GIF." });
-    return false;
-  }
-  return storeUploadRemotely(req, res, file, "emoji");
 }
 
 function assertListingFiles(req, res) {
@@ -2557,54 +2538,6 @@ app.delete("/api/admin/staff/:id", requireAdmin, staffLimiter, (req, res) => {
       return db;
     }
     res.json({ ok: true, ...staffList(db, req.user.id) });
-    return db;
-  });
-});
-
-app.get("/api/emojis", requireUser, (_req, res) => {
-  res.json({ emojis: (readDb().emojis || []).map(publicEmoji) });
-});
-
-app.post("/api/admin/emojis", requireAdmin, staffLimiter, emojiUpload, async (req, res) => {
-  if (!assertListingFiles(req, res)) return;
-  if (!(await processEmojiImage(req, res))) return;
-  const file = listingFile(req, "image");
-  if (!file) {
-    res.status(400).json({ error: "Choose a PNG, JPG, WEBP, or GIF." });
-    return;
-  }
-  const name = normalizeEmojiName(req.body?.name);
-  writeDb((db) => {
-    if (!Array.isArray(db.emojis)) db.emojis = [];
-    const problem = addEmojiError(db.emojis, name);
-    if (problem) {
-      removeStoredFile(savedUpload(file));
-      res.status(400).json({ error: problem });
-      return db;
-    }
-    db.emojis.push({
-      id: store.newId("emoji"),
-      name,
-      url: savedUpload(file),
-      createdBy: req.user.id,
-      createdAt: new Date().toISOString(),
-    });
-    res.json({ emojis: db.emojis.map(publicEmoji) });
-    return db;
-  });
-});
-
-app.delete("/api/admin/emojis/:id", requireAdmin, staffLimiter, (req, res) => {
-  writeDb((db) => {
-    if (!Array.isArray(db.emojis)) db.emojis = [];
-    const found = db.emojis.find((item) => item.id === req.params.id);
-    if (!found) {
-      res.status(404).json({ error: "That emoji was not found." });
-      return db;
-    }
-    removeStoredFile(found.url);
-    db.emojis = db.emojis.filter((item) => item.id !== req.params.id);
-    res.json({ emojis: db.emojis.map(publicEmoji) });
     return db;
   });
 });

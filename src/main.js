@@ -27,6 +27,7 @@ import {
   messageBubble,
   messagePresence,
   messagesView,
+  MESSAGE_MAX,
   threadListHtml,
   filterThreads,
   unreadBadge,
@@ -140,7 +141,6 @@ const state = {
   players: [],
   threads: [],
   unread: 0,
-  emojis: [],
   auth: { discord: false, passwordRegister: false, minAgeDays: 7 },
 };
 
@@ -208,26 +208,12 @@ function closeMenus(except = null) {
   });
 }
 
-// Clicking away from a dropdown should dismiss it. <details> has no such
-// behaviour of its own - it stays open until its summary is clicked again,
-// which is why one left open followed you around the site.
-function closeEmojiPops() {
-  document.querySelectorAll("[data-emoji-pop]").forEach((pop) => {
-    pop.hidden = true;
-    pop.closest(".emoji-wrap")?.querySelector("[data-emoji-toggle]")?.setAttribute("aria-expanded", "false");
-  });
-}
-
 document.addEventListener("click", (event) => {
   closeMenus(event.target.closest(MENUS));
-  if (!event.target.closest(".emoji-wrap")) closeEmojiPops();
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") {
-    closeMenus();
-    closeEmojiPops();
-  }
+  if (event.key === "Escape") closeMenus();
 });
 
 function renderNav() {
@@ -259,13 +245,6 @@ async function refresh() {
     mergeSaves(state.user.prefs?.saves);
     mergeDrafts(state.user.prefs?.drafts);
     syncPrefs();
-    try {
-      state.emojis = (await api.emojis()).emojis || [];
-    } catch {
-      state.emojis = state.emojis || [];
-    }
-  } else {
-    state.emojis = [];
   }
   renderNav();
   startHeartbeat();
@@ -526,7 +505,7 @@ function onIncoming(message) {
   if (viewing) {
     const bubbles = panel.querySelector("[data-bubbles]");
     if (bubbles) {
-      bubbles.insertAdjacentHTML("beforeend", messageBubble(message, state.user?.id, state.emojis));
+      bubbles.insertAdjacentHTML("beforeend", messageBubble(message, state.user?.id));
       bubbles.scrollTop = bubbles.scrollHeight;
       api
         .readThread(message.threadId)
@@ -683,7 +662,7 @@ async function openConversation(id) {
   try {
     const { thread, messages } = await readConversation(id);
     panel.dataset.threadId = thread.id;
-    panel.innerHTML = conversationHtml(thread, messages, state.user?.id, state.emojis, {
+    panel.innerHTML = conversationHtml(thread, messages, state.user?.id, {
       snippets: listingOwnedBy(thread.kind, thread.listingId, state.user) ? REPLY_SNIPPETS : [],
     });
     const bubbles = panel.querySelector("[data-bubbles]");
@@ -699,64 +678,42 @@ async function openConversation(id) {
 function bindConversation(panel, thread) {
   const form = panel.querySelector("[data-send-form]");
   const note = panel.querySelector("[data-send-note]");
-  const shell = form?.querySelector("[data-rich-editor-shell]");
-  const box = form?.querySelector("textarea");
-  const editor = form?.querySelector("[data-rich-editor]");
+  const box = form?.querySelector("textarea[name=body]");
   const count = panel.querySelector("[data-count]");
-  const max = Number(shell?.dataset.plainLimit || 2000);
-  // The budget is readable characters, the same cap the server enforces. HTML
-  // tags are free in the count, so a bold word is not more expensive than a
-  // plain one.
+  const max = Number(box?.maxLength || MESSAGE_MAX);
   const paintCount = () => {
     if (!count) return;
-    const used = editor ? plainTextFromHtml(editor.innerHTML).length : box?.value.length || 0;
+    const used = box?.value.length || 0;
     count.textContent = `${used}/${max} chars.`;
   };
-  if (shell) bindRichTextField(shell, paintCount);
+  box?.addEventListener("input", paintCount);
   const submit = async (event) => {
     event?.preventDefault();
     const body = (box?.value || "").trim();
-    if (!plainTextFromHtml(body)) return;
-    closeEmojiPops();
-    // Cleared optimistically so a slow send cannot be submitted twice, but put
-    // back if it fails: losing what someone typed is worse than an error.
-    if (editor) {
-      editor.innerHTML = "";
-      editor.dispatchEvent(new Event("input", { bubbles: true }));
-    } else if (box) {
-      box.value = "";
-    }
+    if (!body) return;
+    const previous = box.value;
+    box.value = "";
+    paintCount();
     try {
       const { message } = await api.send(thread.id, body);
       const bubbles = panel.querySelector("[data-bubbles]");
       if (bubbles) {
         if (!bubbles.querySelector(".bubble")) bubbles.innerHTML = "";
-        bubbles.insertAdjacentHTML("beforeend", messageBubble(message, state.user?.id, state.emojis));
+        bubbles.insertAdjacentHTML("beforeend", messageBubble(message, state.user?.id));
         bubbles.scrollTop = bubbles.scrollHeight;
       }
       showNote(note, "", "muted");
-      paintCount();
       await loadInbox(thread.id);
     } catch (error) {
-      if (editor) {
-        editor.innerHTML = toEditorHtml(body);
-        editor.dispatchEvent(new Event("input", { bubbles: true }));
-      } else if (box) {
-        box.value = body;
-      }
+      box.value = previous;
       paintCount();
       showNote(note, error.message);
     }
   };
   form?.addEventListener("submit", submit);
   paintCount();
-  // Enter sends, Shift+Enter is a newline. Enter inside a list still makes a
-  // new bullet - that is formatting, not a send.
-  editor?.addEventListener("keydown", (event) => {
+  box?.addEventListener("keydown", (event) => {
     if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
-    const node = window.getSelection()?.anchorNode;
-    const el = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
-    if (el?.closest("li, ul, ol")) return;
     event.preventDefault();
     submit(event);
   });
@@ -780,7 +737,7 @@ function bindConversation(panel, thread) {
       if (thread.draft && blocking) {
         // Nothing was ever written, and the open route now refuses this pair.
         // There is no conversation to redraw - only an inbox to go back to.
-        panel.innerHTML = conversationHtml(null, [], state.user?.id, state.emojis);
+        panel.innerHTML = conversationHtml(null, [], state.user?.id);
         delete panel.dataset.threadId;
         await loadInbox();
         return;
@@ -804,7 +761,7 @@ function bindConversation(panel, thread) {
     }
     try {
       await api.deleteThread(event.currentTarget.dataset.deleteThread);
-      panel.innerHTML = conversationHtml(null, [], state.user?.id, state.emojis);
+      panel.innerHTML = conversationHtml(null, [], state.user?.id);
       delete panel.dataset.threadId;
       await refreshUnread();
       await loadInbox();
@@ -999,19 +956,12 @@ function listingOwnedBy(kind, listingId, user) {
 }
 
 function insertComposerText(panel, text) {
-  const editor = panel.querySelector("[data-rich-editor]");
   const box = panel.querySelector("textarea[name=body]");
-  if (editor) {
-    editor.focus();
-    document.execCommand("insertText", false, text);
-    editor.dispatchEvent(new Event("input", { bubbles: true }));
-    return;
-  }
-  if (box) {
-    box.focus();
-    box.value = box.value ? `${box.value} ${text}` : text;
-    box.dispatchEvent(new Event("input", { bubbles: true }));
-  }
+  if (!box) return;
+  box.focus();
+  const next = box.value ? `${box.value} ${text}` : text;
+  box.value = next.slice(0, box.maxLength || MESSAGE_MAX);
+  box.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 let prefsTimer;
@@ -1575,25 +1525,6 @@ function bindStaffForm() {
     const query = String(data.get("query") || "").trim();
     try {
       await api.grantAdmin(userId ? { userId } : { query });
-      await render();
-    } catch (error) {
-      showNote(note, error.message);
-      if (button) button.disabled = false;
-    }
-  });
-}
-
-function bindEmojiForm() {
-  const form = app.querySelector("[data-emoji-form]");
-  if (!form) return;
-  const note = app.querySelector("[data-emoji-note]");
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const button = form.querySelector("button[type='submit']");
-    if (button) button.disabled = true;
-    try {
-      const { emojis } = await api.addEmoji(new FormData(form));
-      state.emojis = emojis || [];
       await render();
     } catch (error) {
       showNote(note, error.message);
@@ -2197,21 +2128,6 @@ function decorateVideoMarks(editor) {
   });
 }
 
-function decorateCustomEmojis(editor) {
-  editor.querySelectorAll("img[data-emoji]").forEach((img) => {
-    const item = (state.emojis || []).find((entry) => entry.id === img.dataset.emoji);
-    if (!item) {
-      img.remove();
-      return;
-    }
-    img.className = "msg-emoji";
-    img.src = item.url;
-    img.alt = `:${item.name}:`;
-    img.contentEditable = "false";
-    img.draggable = false;
-  });
-}
-
 function ensureVideoMarker(editor) {
   if (!editor || editor.querySelector("[data-video]")) return;
   insertVideoAtEditor(editor);
@@ -2246,7 +2162,6 @@ function bindRichTextField(field, onChange) {
 
   function sync() {
     if (hasVideo) decorateVideoMarks(editor);
-    decorateCustomEmojis(editor);
     editor.querySelectorAll("a").forEach((link) => {
       const safe = isSafeHref(link.getAttribute("href"));
       if (!safe) {
@@ -2264,7 +2179,6 @@ function bindRichTextField(field, onChange) {
 
   editor.innerHTML = toEditorHtml(textarea.value);
   if (hasVideo) decorateVideoMarks(editor);
-  decorateCustomEmojis(editor);
   textarea.value = sanitizePostHtml(editor.innerHTML);
   paintPlaceholder();
 
@@ -2297,50 +2211,6 @@ function bindRichTextField(field, onChange) {
       document.execCommand("createLink", false, safe);
     }
     sync();
-  });
-
-  const emojiPop = field.querySelector("[data-emoji-pop]");
-  const emojiToggle = field.querySelector("[data-emoji-toggle]");
-  emojiToggle?.addEventListener("click", () => {
-    const willOpen = emojiPop?.hidden;
-    closeEmojiPops();
-    if (willOpen && emojiPop) {
-      emojiPop.hidden = false;
-      emojiToggle.setAttribute("aria-expanded", "true");
-    }
-  });
-  emojiPop?.addEventListener("click", (event) => {
-    const tab = event.target.closest("[data-emoji-tab]");
-    if (tab) {
-      const which = tab.dataset.emojiTab;
-      emojiPop.querySelectorAll("[data-emoji-tab]").forEach((btn) => {
-        const on = btn === tab;
-        btn.classList.toggle("is-active", on);
-        btn.setAttribute("aria-selected", on ? "true" : "false");
-      });
-      emojiPop.querySelectorAll("[data-emoji-pane]").forEach((pane) => {
-        pane.hidden = pane.dataset.emojiPane !== which;
-      });
-      return;
-    }
-    const unicode = event.target.closest("[data-insert-emoji]");
-    if (unicode) {
-      const char = unicode.dataset.insertEmoji || "";
-      if (limit && roomLeft() < char.length) return;
-      editor.focus();
-      document.execCommand("insertText", false, char);
-      sync();
-      return;
-    }
-    const custom = event.target.closest("[data-insert-custom]");
-    if (custom) {
-      const item = (state.emojis || []).find((entry) => entry.id === custom.dataset.insertCustom);
-      if (!item) return;
-      if (limit && roomLeft() < 2) return;
-      editor.focus();
-      document.execCommand("insertHTML", false, `<img data-emoji="${item.id}">`);
-      sync();
-    }
   });
 
   // The budget has to bite while typing, or the leader writes a paragraph the
@@ -3088,9 +2958,8 @@ async function render() {
     } catch {
       reports = [];
     }
-    app.innerHTML = adminView({ user: state.user, staff, reports, emojis: state.emojis });
+    app.innerHTML = adminView({ user: state.user, staff, reports });
     bindStaffForm();
-    bindEmojiForm();
     return;
   }
 
@@ -3406,19 +3275,6 @@ document.addEventListener("click", async (event) => {
     if (!confirm("Cancel this waiting grant?")) return;
     try {
       await api.revokeAdmin(revokePending.dataset.revokePending);
-      await render();
-    } catch (error) {
-      alert(error.message);
-    }
-    return;
-  }
-  const deleteEmoji = event.target.closest("[data-delete-emoji]");
-  if (deleteEmoji) {
-    event.preventDefault();
-    if (!confirm("Remove this emoji from the picker for everyone?")) return;
-    try {
-      const { emojis } = await api.deleteEmoji(deleteEmoji.dataset.deleteEmoji);
-      state.emojis = emojis || [];
       await render();
     } catch (error) {
       alert(error.message);

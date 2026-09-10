@@ -13,12 +13,12 @@ import {
 } from "./messages.js";
 import { listenerCount, publish, reset, subscribe, STREAMS_PER_USER } from "./live.js";
 
-test("a body keeps the words and drops markup that is not allowed", () => {
+test("a body keeps the words and drops markup", () => {
   assert.equal(normalizeBody("  hi  "), "hi");
-  assert.equal(normalizeBody("a\r\nb"), "a<br>b");
-  assert.equal(normalizeBody("<strong>hello</strong>"), "<strong>hello</strong>");
+  assert.equal(normalizeBody("a\r\nb"), "a\nb");
+  assert.equal(normalizeBody("<strong>hello</strong>"), "hello");
   const mixed = normalizeBody("<strong>hello</strong><script>alert(1)</script>");
-  assert.match(mixed, /<strong>hello<\/strong>/);
+  assert.equal(mixed, "hello");
   assert.doesNotMatch(mixed, /<script/);
 });
 
@@ -77,14 +77,6 @@ test("the inbox preview is one line of readable text, not markup", () => {
   const long = previewOf("x".repeat(200), 10);
   assert.equal(long.length, 10);
   assert.ok(long.endsWith("…"));
-});
-
-test("a custom emoji is stored as data-emoji only", () => {
-  const out = normalizeBody(`<img data-emoji="emoji-1" src="https://evil.example/x.png" onerror="alert(1)">`);
-  assert.match(out, /data-emoji="emoji-1"/);
-  assert.doesNotMatch(out, /src=/);
-  assert.doesNotMatch(out, /onerror/);
-  assert.doesNotMatch(out, /evil\.example/);
 });
 
 test("a block cuts both directions", () => {

@@ -2,7 +2,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 export const IMAGE_MAX_EDGE = 960;
-export const EMOJI_MAX_EDGE = 128;
 
 let sharpLoader = null;
 
@@ -45,8 +44,4 @@ async function resizeToWebp(filePath, edge) {
 
 export function resizeListingImage(filePath) {
   return resizeToWebp(filePath, IMAGE_MAX_EDGE);
-}
-
-export function resizeEmojiImage(filePath) {
-  return resizeToWebp(filePath, EMOJI_MAX_EDGE);
 }

@@ -1186,92 +1186,6 @@ select {
   user-select: none;
 }
 .rt-video-mark:empty::before { content: "Media appears here"; }
-.emoji-wrap { position: relative; }
-.emoji-pop {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 40;
-  width: min(304px, calc(100vw - 48px));
-  max-height: 280px;
-  overflow: auto;
-  padding: 10px;
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
-  border-radius: 12px;
-  box-shadow: 0 12px 30px rgb(0 0 0 / 18%);
-}
-.emoji-tabs {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 8px;
-}
-.emoji-tab {
-  min-height: 28px;
-  padding: 0 10px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 650;
-}
-.emoji-tab.is-active,
-.emoji-tab:hover,
-.emoji-tab:focus-visible {
-  color: var(--text);
-  background: var(--ghost-hover);
-  border-color: var(--line-strong);
-}
-.emoji-group + .emoji-group { margin-top: 10px; }
-.emoji-group .kicker { margin: 0 0 6px; }
-.emoji-chars {
-  display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  gap: 2px;
-}
-.emoji-empty { margin: 8px 2px; font-size: 13px; }
-.emoji-pick {
-  display: grid;
-  place-items: center;
-  width: 100%;
-  aspect-ratio: 1;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  font-size: 20px;
-  line-height: 1;
-  cursor: pointer;
-}
-.emoji-pick:hover,
-.emoji-pick:focus-visible {
-  background: var(--ghost-hover);
-}
-.emoji-pick-custom img {
-  width: 22px;
-  height: 22px;
-  object-fit: contain;
-}
-.msg-emoji {
-  display: inline-block;
-  width: 22px;
-  height: 22px;
-  margin: 0 1px;
-  vertical-align: -5px;
-  object-fit: contain;
-}
-.msg-emoji-lg {
-  width: 32px;
-  height: 32px;
-  vertical-align: middle;
-}
-.richtext-editor img[data-emoji]:not([src]) {
-  visibility: hidden;
-  width: 22px;
-  height: 22px;
-}
 .post-body {
   margin: 0 0 18px;
   overflow-wrap: anywhere;
@@ -3043,40 +2957,19 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   font-size: 12px;
   text-align: right;
 }
-.message-composer .richtext {
+.message-composer textarea {
   grid-area: editor;
-  border: 0;
-  background: transparent;
-  overflow: visible;
-}
-.message-composer .richtext:focus-within {
-  border-color: transparent;
-  box-shadow: none;
-}
-.message-composer .richtext-toolbar {
-  padding: 0 2px 8px;
-  border-bottom: 0;
-  background: transparent;
-  gap: 2px;
-  overflow: visible;
-}
-.message-composer .richtext-btn {
-  min-width: 30px;
-  height: 28px;
-  padding: 0 8px;
-  border-radius: 8px;
-  font-size: 12px;
-}
-.message-composer .richtext-editor,
-.message-composer .richtext-editor.is-compact {
   min-height: 52px;
   max-height: 160px;
+  resize: vertical;
   padding: 10px 12px;
   background: var(--input);
   border: 1px solid var(--line);
   border-radius: 12px;
+  font: inherit;
   font-size: 15px;
   line-height: 1.45;
+  color: var(--text);
 }
 .message-composer .composer-send {
   grid-area: send;

@@ -2,18 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { plainTextFromHtml, sanitizePostHtml } from "./richtext.js";
 
-test("custom emoji imgs keep data-emoji and drop src", () => {
-  const out = sanitizePostHtml(
-    `<img src="https://evil.example/x.png" data-emoji="emoji-1" onerror="alert(1)">`
-  );
-  assert.match(out, /data-emoji="emoji-1"/);
-  assert.doesNotMatch(out, /src=/);
-  assert.doesNotMatch(out, /onerror/);
-  assert.doesNotMatch(out, /evil\.example/);
+test("listing HTML keeps formatting and drops scripts", () => {
+  const out = sanitizePostHtml(`<strong>hello</strong><script>alert(1)</script>`);
+  assert.match(out, /<strong>hello<\/strong>/);
+  assert.doesNotMatch(out, /<script/);
 });
 
-test("plain text counts a custom emoji as two characters", () => {
-  assert.equal(plainTextFromHtml(`hi <img data-emoji="emoji-1">`), "hi xx");
+test("images are not kept in listing HTML", () => {
+  assert.doesNotMatch(
+    sanitizePostHtml(`<img src="https://evil.example/x.png" data-emoji="emoji-1">`),
+    /<img/
+  );
 });
 
 test("unicode emoji count toward the readable cap as themselves", () => {

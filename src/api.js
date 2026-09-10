@@ -118,8 +118,4 @@ export const api = {
       body: JSON.stringify(typeof body === "string" ? { query: body } : body),
     }),
   revokeAdmin: (id) => request(`/api/admin/staff/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  emojis: () => request("/api/emojis"),
-  addEmoji: (formData) => request("/api/admin/emojis", { method: "POST", body: formData }),
-  deleteEmoji: (id) =>
-    request(`/api/admin/emojis/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };

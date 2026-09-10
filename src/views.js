@@ -43,7 +43,6 @@ import {
 } from "./richtext.js";
 import { youTubeEmbedUrl, youTubeThumbUrl } from "./video.js";
 import { MEDIA_MAX, isUploadedImage, mediaList } from "./media.js";
-import { CUSTOM_EMOJI_MAX, UNICODE_GROUPS, findEmoji } from "./emojis.js";
 import {
   CONTACT_LABEL_MAX,
   CONTACT_LABEL_SUGGESTIONS,
@@ -58,6 +57,7 @@ import {
   rolesOf,
 } from "./roles.js";
 import { listingIssues, needsBumpHighlight } from "./health.js";
+import { BODY_MAX, normalizeBody } from "../server/messages.js";
 import {
   ALLIANCE_PRESETS,
   FILTER_PRESETS,
@@ -1390,7 +1390,7 @@ function charCount(max) {
 //
 // `name` writes to a named textarea the form reads directly; a row inside a
 // repeatable list passes no name and is read out of the DOM into JSON instead.
-function richTextEditor(value, { label, placeholder = "", name = "", video = false, compact = true, limit = 0, emoji = false, emojis = [] } = {}) {
+function richTextEditor(value, { label, placeholder = "", name = "", video = false, compact = true, limit = 0 } = {}) {
   return `
     <div class="richtext" data-rich-editor-shell ${limit ? `data-plain-limit="${limit}"` : ""}>
       <div class="richtext-toolbar" role="toolbar" aria-label="${escapeHtml(label)} formatting">
@@ -1401,7 +1401,6 @@ function richTextEditor(value, { label, placeholder = "", name = "", video = fal
         <button class="richtext-btn" type="button" data-rt="olist" title="Numbered list">1.</button>
         <button class="richtext-btn" type="button" data-rt="link" title="Add link">Link</button>
         ${video ? `<button class="richtext-btn" type="button" data-insert-video title="Insert video at cursor">Video</button>` : ""}
-        ${emoji ? emojiToolbar(emojis) : ""}
       </div>
       <div
         class="richtext-editor${compact ? " is-compact" : ""}"
@@ -1413,48 +1412,6 @@ function richTextEditor(value, { label, placeholder = "", name = "", video = fal
         data-placeholder="${escapeHtml(placeholder)}"
       ></div>
       <textarea ${name ? `name="${escapeHtml(name)}"` : ""} hidden>${escapeHtml(toEditorHtml(value || ""))}</textarea>
-    </div>
-  `;
-}
-
-function emojiToolbar(custom = []) {
-  const unicode = UNICODE_GROUPS.map(
-    (group) => `
-      <div class="emoji-group">
-        <p class="kicker">${escapeHtml(group.label)}</p>
-        <div class="emoji-chars">${group.chars
-          .map(
-            (char) =>
-              `<button class="emoji-pick" type="button" data-insert-emoji="${escapeHtml(char)}" title="${escapeHtml(
-                char
-              )}">${char}</button>`
-          )
-          .join("")}</div>
-      </div>`
-  ).join("");
-  const customGrid = custom.length
-    ? `<div class="emoji-chars">${custom
-        .map(
-          (item) =>
-            `<button class="emoji-pick emoji-pick-custom" type="button" data-insert-custom="${escapeHtml(
-              item.id
-            )}" title=":${escapeHtml(item.name)}:"><img src="${escapeHtml(item.url)}" alt=":${escapeHtml(
-              item.name
-            )}:" /></button>`
-        )
-        .join("")}</div>`
-    : `<p class="muted emoji-empty">Staff can add custom emojis from the Staff page.</p>`;
-  return `
-    <div class="emoji-wrap">
-      <button class="richtext-btn" type="button" data-emoji-toggle title="Emoji" aria-expanded="false" aria-haspopup="true">😊</button>
-      <div class="emoji-pop" data-emoji-pop hidden>
-        <div class="emoji-tabs" role="tablist">
-          <button class="emoji-tab is-active" type="button" data-emoji-tab="unicode" role="tab" aria-selected="true">Emoji</button>
-          <button class="emoji-tab" type="button" data-emoji-tab="custom" role="tab" aria-selected="false">Custom</button>
-        </div>
-        <div class="emoji-pane" data-emoji-pane="unicode" role="tabpanel">${unicode}</div>
-        <div class="emoji-pane" data-emoji-pane="custom" role="tabpanel" hidden>${customGrid}</div>
-      </div>
     </div>
   `;
 }
@@ -1915,7 +1872,7 @@ function staffJumpPanel(user) {
         <div>
           <p class="eyebrow">Staff</p>
           <h2>Run the board from here</h2>
-          <p class="muted">Add other admins, custom emojis for messages, and listing reports. Hide and edit stay on the listing pages.</p>
+          <p class="muted">Add other admins and listing reports. Hide and edit stay on the listing pages.</p>
         </div>
         <div class="staff-jump-actions">
           <a class="btn btn-primary" href="/admin" data-link>Open staff dashboard</a>
@@ -2521,7 +2478,7 @@ function staffRow(person) {
     </div>`;
 }
 
-export function adminView({ staff = { admins: [], pending: [] }, reports = [], emojis = [] }) {
+export function adminView({ staff = { admins: [], pending: [] }, reports = [] }) {
   const admins = staff.admins || [];
   const pending = staff.pending || [];
   return `
@@ -2582,42 +2539,6 @@ export function adminView({ staff = { admins: [], pending: [] }, reports = [], e
               )
               .join("")}</div>`
           : `<div class="panel"><p class="muted">No Discord IDs waiting. Paste one above if they do not have an account yet.</p></div>`
-      }
-    </section>
-    <section class="section">
-      <div class="section-head"><h2>Custom emojis</h2><p class="muted">${emojis.length} of ${CUSTOM_EMOJI_MAX}</p></div>
-      <div class="panel">
-        <p class="muted">These show in the message picker for everyone. A small square PNG or WEBP works best. The file is stored the same way as a clan image: resized here, then on Cloudflare when that bucket is set up, so it does not sit on this host.</p>
-        <form class="stack staff-form" data-emoji-form>
-          <label class="field">
-            <span>Short name</span>
-            <input name="name" required maxlength="24" pattern="[A-Za-z0-9_]{2,24}" placeholder="lotus" autocomplete="off" />
-          </label>
-          <label class="field">
-            <span>Image</span>
-            <input name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" required />
-          </label>
-          <p class="error" data-emoji-note hidden></p>
-          <button class="btn btn-primary" type="submit">Add emoji</button>
-        </form>
-      </div>
-      ${
-        emojis.length
-          ? `<div class="list emoji-admin-list">${emojis
-              .map(
-                (item) => `
-        <div class="list-row">
-          <img class="msg-emoji msg-emoji-lg" src="${escapeHtml(item.url)}" alt=":${escapeHtml(item.name)}:" />
-          <div>
-            <strong>:${escapeHtml(item.name)}:</strong>
-          </div>
-          <div class="list-actions">
-            <button class="btn btn-ghost" type="button" data-delete-emoji="${escapeHtml(item.id)}">Remove</button>
-          </div>
-        </div>`
-              )
-              .join("")}</div>`
-          : `<div class="panel"><p class="muted">None yet. Add one above and it lands in every message picker.</p></div>`
       }
     </section>
     ${reportsPanel(reports)}
@@ -3339,7 +3260,7 @@ export function previewPlayer(form, imageUrl = null, mediaEntries = []) {
 
 // --- Messages --------------------------------------------------------------
 
-export const MESSAGE_MAX = 2000;
+export const MESSAGE_MAX = BODY_MAX;
 
 function messageTime(iso) {
   const at = new Date(iso);
@@ -3465,21 +3386,11 @@ function inboxTools({ q = "", unreadOnly = false, hasUnread = false } = {}) {
   `;
 }
 
-export function messageBodyHtml(body, emojis = []) {
-  const html = sanitizePostHtml(toEditorHtml(body)).replace(
-    /<span\b[^>]*\bdata-video\b[^>]*>[\s\S]*?<\/span>/gi,
-    ""
-  );
-  return html.replace(/<img\b[^>]*\bdata-emoji="([^"]+)"[^>]*>/gi, (_all, id) => {
-    const item = findEmoji(emojis, id);
-    if (!item) return "";
-    return `<img class="msg-emoji" data-emoji="${escapeHtml(item.id)}" alt=":${escapeHtml(
-      item.name
-    )}:" src="${escapeHtml(item.url)}">`;
-  });
+export function messageBodyHtml(body) {
+  return escapeHtml(normalizeBody(body)).replace(/\n/g, "<br>");
 }
 
-export function messageBubble(message, meId, emojis = []) {
+export function messageBubble(message, meId) {
   const mine = message.senderId && message.senderId === meId;
   return `
     <div class="bubble-row${mine ? " is-mine" : ""}">
@@ -3487,13 +3398,13 @@ export function messageBubble(message, meId, emojis = []) {
         <p class="bubble-who muted">${escapeHtml(
           message.from?.name || "(deleted account)"
         )}${verifiedTick(message.from?.verified)} · ${escapeHtml(messageTime(message.createdAt))}</p>
-        <div class="bubble-body">${messageBodyHtml(message.body, emojis)}</div>
+        <div class="bubble-body">${messageBodyHtml(message.body)}</div>
       </div>
     </div>
   `;
 }
 
-export function conversationHtml(thread, messages, meId, emojis = [], { snippets = [] } = {}) {
+export function conversationHtml(thread, messages, meId, { snippets = [] } = {}) {
   if (!thread) {
     return `<div class="conversation-empty"><p class="muted">Pick a conversation.</p></div>`;
   }
@@ -3550,7 +3461,7 @@ export function conversationHtml(thread, messages, meId, emojis = [], { snippets
     <div class="bubbles" data-bubbles>
       ${
         messages.length
-          ? messages.map((item) => messageBubble(item, meId, emojis)).join("")
+          ? messages.map((item) => messageBubble(item, meId)).join("")
           : `<p class="muted">No messages yet. Say hello.</p>`
       }
     </div>
@@ -3574,15 +3485,13 @@ export function conversationHtml(thread, messages, meId, emojis = [], { snippets
     }
     <form class="composer-bar message-composer" data-send-form>
       <p class="composer-count muted" data-count aria-hidden="true">0/${MESSAGE_MAX} chars.</p>
-      ${richTextEditor("", {
-        label: "Message",
-        placeholder: "Write a message…",
-        name: "body",
-        compact: true,
-        limit: MESSAGE_MAX,
-        emoji: true,
-        emojis,
-      })}
+      <textarea
+        name="body"
+        rows="2"
+        maxlength="${MESSAGE_MAX}"
+        placeholder="Write a message…"
+        aria-label="Message"
+      ></textarea>
       <button class="btn btn-primary composer-send" type="submit">Send</button>
       <p class="error" data-send-note hidden></p>
     </form>`

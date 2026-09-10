@@ -1,4 +1,4 @@
-import { plainTextFromHtml } from "./richtext.js";
+import { previewOf } from "../server/messages.js";
 
 export const ALERTS_KEY = "wfr-alerts";
 const DEFAULTS = { sound: true, desktop: false };
@@ -60,13 +60,8 @@ export function alertPlan({ viewing = false, visible = false, prefs = DEFAULTS, 
 }
 
 export function notificationBody(message, max = 80) {
-  const text = plainTextFromHtml(
-    String(message?.body || "").replace(/<img\b[^>]*\bdata-emoji\b[^>]*>/gi, " ")
-  )
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!text) return "Sent a message.";
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+  const text = previewOf(message?.body, max);
+  return text || "Sent a message.";
 }
 
 export function messageAlertHref(message) {
