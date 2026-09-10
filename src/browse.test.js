@@ -82,6 +82,16 @@ test("several playstyles require every selected chip", () => {
   assert.equal(miss.length, 0);
 });
 
+test("online-first sort puts an online clan above a newer offline one", () => {
+  const fresh = { ...open, id: "fresh", online: false, bumpedAt: "2026-09-08T00:00:00.000Z" };
+  const live = { ...open, id: "live", online: true, bumpedAt: "2026-09-01T00:00:00.000Z" };
+  const list = applyClanFilters([fresh, live], { ...defaultFilters(), sort: "online" });
+  assert.deepEqual(
+    list.map((item) => item.id),
+    ["live", "fresh"]
+  );
+});
+
 test("filtersFromSearch treats a missing recruiting param as on", () => {
   assert.equal(filtersFromSearch("q=steel").filters.recruiting, true);
   assert.equal(filtersFromSearch("recruiting=0").filters.recruiting, false);

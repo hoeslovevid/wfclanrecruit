@@ -69,6 +69,15 @@ test("marking read clears the count and does not clear it for the other side", a
   assert.equal(await store.unreadTotal("user-a"), 1);
 });
 
+test("marking all read clears every thread for that person", async () => {
+  await store.addMessage({ threadId: ID, senderId: "user-b", body: "Again" });
+  const beforeB = await store.unreadTotal("user-b");
+  assert.ok((await store.unreadTotal("user-a")) > 0);
+  await store.markAllRead("user-a");
+  assert.equal(await store.unreadTotal("user-a"), 0);
+  assert.equal(await store.unreadTotal("user-b"), beforeB, "the other side is untouched");
+});
+
 test("someone with no conversations has an empty inbox, not an error", async () => {
   assert.deepEqual(await store.inboxFor("user-nobody"), []);
   assert.equal(await store.unreadTotal("user-nobody"), 0);
@@ -246,4 +255,27 @@ test("blocksFor reports both directions, and the owned rows are separable", asyn
 
   await store.setBlock("user-a", "user-b", false);
   await store.setBlock("user-c", "user-a", false);
+});
+
+test("muting a thread is one-sided and leaves it in the inbox", async () => {
+  const id = threadId("clan", "muted", "user-a", "user-b");
+  await store.openThread({
+    id,
+    kind: "clan",
+    listingId: "muted",
+    listingName: "Muted",
+    userIds: ["user-a", "user-b"],
+  });
+  await store.addMessage({ threadId: id, senderId: "user-b", body: "hello" });
+  await store.setMuted(id, "user-a", true);
+  const forA = (await store.inboxFor("user-a")).find((item) => item.id === id);
+  const forB = (await store.inboxFor("user-b")).find((item) => item.id === id);
+  assert.equal(forA.muted, true);
+  assert.equal(forA.unread, 1);
+  assert.equal(forB.muted, false);
+  const member = (await store.membersOf(id)).find((item) => item.userId === "user-a");
+  assert.ok(member.mutedAt);
+  await store.setMuted(id, "user-a", false);
+  const unmuted = (await store.inboxFor("user-a")).find((item) => item.id === id);
+  assert.equal(unmuted.muted, false);
 });

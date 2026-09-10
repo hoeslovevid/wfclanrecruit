@@ -8,7 +8,7 @@ export function privacyView() {
       <p class="eyebrow">Legal</p>
       <h1>Privacy Policy</h1>
       <p class="lead">This page explains what WF Clan Recruit collects, why, who sees it, how long it stays, and how you can opt out. It describes this website as it works today, not a generic template.</p>
-      <p class="muted">Last updated 8 September 2026. This site is independent and is not affiliated with Digital Extremes, Warframe, Discord, or Google.</p>
+      <p class="muted">Last updated 9 September 2026. This site is independent and is not affiliated with Digital Extremes, Warframe, Discord, or Google.</p>
     </section>
 
     <section class="policy-page">
@@ -83,6 +83,10 @@ export function privacyView() {
         <ul class="policy-bullets">
           <li><strong>Theme preference.</strong> If you use the light/dark switch, the choice is stored only in your browser as <code>wfr-theme</code>. We never send that value to our server.</li>
           <li><strong>Message alerts.</strong> If you sign in, Sound ping and Desktop alert live in your account menu. Those choices stay in your browser as <code>wfr-alerts</code>. Desktop alerts use the browser’s notification permission; we do not get a push subscription, and nothing is sent when this site is closed.</li>
+          <li><strong>Saved listings.</strong> If you save a clan, alliance, or player post, the shortlist stays in your browser as <code>wfr-saves</code>. If you are signed in, we also store that list on your account so it follows you to another device. Unsave or delete the account to drop it from the server.</li>
+          <li><strong>Composer drafts.</strong> If you start a listing and leave, the text is stored in your browser as <code>wfr-drafts</code>. Images are not kept in the draft. If you are signed in, we also store those drafts on your account. Publishing or deleting the account clears them from the server.</li>
+          <li><strong>Recently viewed.</strong> Opening a listing remembers the last ten on this device as <code>wfr-viewed</code>. We never send that list to our server.</li>
+          <li><strong>Browse filters.</strong> The last filters you used on Clans, Alliances, or Players stay in your browser as <code>wfr-filters</code>. Reset on that directory, or clear this site’s data, forgets them. We never send that map to our server.</li>
           <li><strong>Google Fonts.</strong> The page loads Rajdhani from Google’s font servers. Google may process your IP address under Google’s policies. Blocking that request still lets the site run on your system fonts.</li>
         </ul>
       </article>
@@ -114,6 +118,7 @@ export function privacyView() {
               <tr><td>Forum verified flag and timestamps</td><td>Yes</td><td>No</td></tr>
               <tr><td>Recruiter roster</td><td>Which listings you were invited to, which you accepted, and whether each one gave you edit access</td><td>Only after you accept, and only your in-game name, which then appears on that listing as a contact. A pending invite is never public, and neither is whether you can edit.</td></tr>
               <tr><td>Online status</td><td>Your choice of status and how long to hold it is stored. Whether you are online right now is held in memory only and is lost when the server restarts.</td><td>Yes. If you own a listing, an online dot can appear on it. Set your status to Invisible to stop this.</td></tr>
+              <tr><td>Saved listings and listing drafts</td><td>Yes, if you are signed in. Otherwise they stay only in this browser.</td><td>No</td></tr>
               <tr><td>Session token</td><td>Yes, in the database and in an HTTP-only cookie</td><td>No</td></tr>
             </tbody>
           </table>
@@ -127,7 +132,7 @@ export function privacyView() {
           <li>Playstyles you pick, including Warframe-specific tags such as Archon, Eidolon, or Cross-save</li>
           <li>Leader name, Discord invite URL, optional alliance link</li>
           <li>Uploaded images (each up to 2 MB; we resize them on save and store WebP files on this host or Cloudflare R2) and optional YouTube links, of which we store only the video id</li>
-          <li>Created time, last bump time, paused flag, hidden flag, invite check result, and the owner id of the account that posted it</li>
+          <li>Created time, last bump time, paused flag, optional pause note, hidden flag, invite check result, and the owner id of the account that posted it</li>
         </ul>
         <p>Do not put private phone numbers, home addresses, government IDs, or passwords in a listing. Recruits and search engines can see public posts.</p>
 
@@ -135,7 +140,7 @@ export function privacyView() {
         <p>Anyone can send a listing report (dead invite, inactive, fake, stolen name, or other). We store the reason, optional details, listing id and name, time, status, and the reporter’s account id if they were signed in. Reports are not shown on the public board.</p>
 
         <h3>On-site messages</h3>
-        <p>If you use Messages, we store what you write, including formatting, any links you insert, and any emoji you pick (standard characters from the picker, or custom images staff have added). We also store who is in the conversation and the listing it is about. Messages are not shown on the public board. The other person in the thread can read them.</p>
+        <p>If you use Messages, we store what you write, including formatting, any links you insert, and any emoji you pick (standard characters from the picker, or custom images staff have added). We also store who is in the conversation, the listing it is about, and whether you muted that thread on your side. Messages are not shown on the public board. The other person in the thread can read them. Muting does not hide the chat from them.</p>
 
         <h3>Custom emojis</h3>
         <p>Staff can upload small custom emoji images (PNG, JPG, WEBP, or GIF). We resize them the same way as listing photos and, when Cloudflare R2 is configured, copy them to that bucket and delete the local file. Signed-in users see those images in the message picker. The files stay until staff remove them.</p>
@@ -177,7 +182,8 @@ export function privacyView() {
               <tr><td>Keep names and tags unique, hide stale or paused Discord buttons</td><td>Listing name, tag, bump time, paused flag, invite check</td></tr>
               <tr><td>Show a preview when a listing URL is pasted in Discord or similar</td><td>Public title, headline, summary, and listing image</td></tr>
               <tr><td>Handle “report this listing”</td><td>Report reason, optional details, reporter id if signed in</td></tr>
-              <tr><td>Let signed-in people message about a listing</td><td>Message text and formatting, emoji, thread membership</td></tr>
+              <tr><td>Let signed-in people message about a listing</td><td>Message text and formatting, emoji, thread membership, mute choice</td></tr>
+              <tr><td>Let you keep a saved shortlist and listing drafts across devices</td><td>Saved listing ids and composer text, only if you are signed in</td></tr>
               <tr><td>Ping you about a new message while this site is open</td><td>Sender name and a short preview, only in a browser notification if you turned Desktop alert on</td></tr>
               <tr><td>Staff custom emojis in the message picker</td><td>Short name, image file, uploader id</td></tr>
               <tr><td>Enforce cooldowns (new listing 15 minutes, bump 12 hours, forum check a few seconds)</td><td>Timestamps on listings and the last forum check</td></tr>
@@ -240,6 +246,34 @@ export function privacyView() {
                 <td>Remember Sound ping and Desktop alert</td>
                 <td>Turn the toggles off in the account menu, or clear this site’s data. Desktop alerts also follow the site’s notification permission in your browser</td>
               </tr>
+              <tr>
+                <td><code>wfr-saves</code></td>
+                <td>Browser local storage, not a cookie</td>
+                <td>Until you clear it</td>
+                <td>Remember listings you saved. Signed in, we also store the list on your account</td>
+                <td>Unsave them from Settings or a listing, or clear this site’s data</td>
+              </tr>
+              <tr>
+                <td><code>wfr-drafts</code></td>
+                <td>Browser local storage, not a cookie</td>
+                <td>Until you clear it or publish</td>
+                <td>Remember listing text you were writing</td>
+                <td>Publish the listing, or clear this site’s data. Signed-in drafts also live on the account until you publish or delete</td>
+              </tr>
+              <tr>
+                <td><code>wfr-viewed</code></td>
+                <td>Browser local storage, not a cookie</td>
+                <td>Until you clear it</td>
+                <td>Remember the last ten listings you opened</td>
+                <td>Clear this site’s data</td>
+              </tr>
+              <tr>
+                <td><code>wfr-filters</code></td>
+                <td>Browser local storage, not a cookie</td>
+                <td>Until you clear it</td>
+                <td>Remember the last filters on Clans, Alliances, and Players</td>
+                <td>Reset on that directory, or clear this site’s data</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -250,7 +284,7 @@ export function privacyView() {
       <article class="panel policy-section" id="public">
         <p class="kicker">09</p>
         <h2>What is public</h2>
-        <p>Treat every listing as public. That includes Discord invite links, leader names, screenshots, linked video, and the full post. Listing URLs also expose an Open Graph title, description, and image so Discord and similar apps can show a card. Other visitors, scrapers, and archives may copy public pages. Removing a listing from this site does not erase copies someone else already saved.</p>
+        <p>Treat every listing as public. That includes Discord invite links, leader names, screenshots, linked video, a pause note if the leader wrote one, and the full post. Listing URLs also expose an Open Graph title, description, and image so Discord and similar apps can show a card. Other visitors, scrapers, and archives may copy public pages. Removing a listing from this site does not erase copies someone else already saved.</p>
         <p>Forum verification requires you to put a short code on your Warframe Forum About Me. That code is public on Digital Extremes’ forums until you delete it. After you verify here, you should remove the code from About Me if you do not want it sitting on the forum.</p>
         <p>Verifying a Warframe Forum profile makes your verified Warframe name findable when a clan leader adds a recruiter. The box on their listing suggests names as they type: it needs at least two characters, returns at most eight names, and only a signed-in leader can run it, and only against a listing they own. It offers nothing else about you — no Discord name, no email, no listings you are on — and it never suggests someone who is already a recruiter on that listing. This is how a leader can add you without you first having to hand them your exact spelling. If you have not verified a forum profile, you are not in it at all.</p>
         <p>A listing can be handed to someone else. The owner offers it by your verified Warframe name, and nothing moves until you accept: while the offer is pending, only you and that listing's owner can see it. Accepting makes the post yours — your verified name becomes the one recruits whisper, and the previous owner keeps edit access but can no longer delete it. Declining leaves everything as it was.</p>
@@ -309,6 +343,8 @@ export function privacyView() {
           <li><strong>Custom emoji images</strong> until staff remove them from the Staff page. Removing one deletes that image from this host and from R2. Old messages that used it no longer show the picture.</li>
           <li><strong>Theme</strong> in your browser until you clear it.</li>
           <li><strong>Message-alert choices</strong> in your browser until you clear them or turn the toggles off.</li>
+          <li><strong>Recently viewed and browse filters</strong> in your browser until you clear them.</li>
+          <li><strong>Saved listings and drafts</strong> in your browser, and on the account if you are signed in, until you unsave, publish, or delete the account.</li>
           <li><strong>Host logs and backups</strong> according to Railway’s systems, and Cloudflare’s logs for listing images on R2. A deleted account is removed from the live database we control, and its listing images are deleted from this host and from R2; a host backup from before deletion might exist until that backup rotates. We do not keep a separate marketing archive.</li>
         </ul>
       </article>

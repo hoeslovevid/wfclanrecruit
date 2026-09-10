@@ -16,6 +16,7 @@ import {
   clanCard,
   clanPage,
   clanResultsHtml,
+  compareView,
   cropperModal,
   guideView,
   homeView,
@@ -27,6 +28,7 @@ import {
   messagePresence,
   messagesView,
   threadListHtml,
+  filterThreads,
   unreadBadge,
   PRESENCE_CLASS,
   PRESENCE_LABELS,
@@ -88,6 +90,28 @@ import {
   filtersToSearch,
   paginate,
 } from "./browse.js";
+import { isSaved, loadSaves, mergeSaves, resolveSaves, toggleSave } from "./saves.js";
+import {
+  clearDraft,
+  draftKey,
+  loadAllDrafts,
+  loadDraft,
+  mergeDrafts,
+  restoreComposer,
+  restoreComposerRows,
+  saveDraft,
+  serializeComposer,
+} from "./drafts.js";
+import { listingsDueForBumpPing, saveBumpPings } from "./health.js";
+import { REPLY_SNIPPETS, similarAlliances, similarClans, similarPlayers } from "./discover.js";
+import { loadViewed, recordView } from "./history.js";
+import {
+  clearRememberedSearch,
+  loadRememberedSearch,
+  rememberedIsDefault,
+  saveRememberedSearch,
+} from "./remember.js";
+import { cloneListingFields } from "../server/listing.js";
 
 const app = document.querySelector("#app");
 const nav = document.querySelector("#site-nav");
@@ -232,6 +256,9 @@ async function refresh() {
   state.alliances = alliancesRes.alliances;
   state.players = playersRes.players;
   if (state.user) {
+    mergeSaves(state.user.prefs?.saves);
+    mergeDrafts(state.user.prefs?.drafts);
+    syncPrefs();
     try {
       state.emojis = (await api.emojis()).emojis || [];
     } catch {
@@ -297,6 +324,7 @@ function paintAlertControls() {
 
 async function pingIncoming(message, { viewing }) {
   try {
+    if (state.threads.some((thread) => thread.id === message.threadId && thread.muted)) return;
     const visible = document.visibilityState === "visible";
     const prefs = loadAlertPrefs();
     const plan = alertPlan({
@@ -541,11 +569,55 @@ async function loadInbox(activeId = "") {
   try {
     const { threads } = await api.inbox();
     state.threads = threads;
-    const list = app.querySelector("[data-thread-list]");
-    if (list) list.innerHTML = threadListHtml(threads, activeId);
+    paintInboxList(activeId);
   } catch {
     /* leave whatever is already on screen */
   }
+}
+
+function inboxQuery() {
+  return {
+    q: app.querySelector("[data-inbox-q]")?.value || "",
+    unreadOnly: Boolean(app.querySelector("[data-inbox-unread]")?.checked),
+  };
+}
+
+function paintInboxList(activeId = "") {
+  const list = app.querySelector("[data-thread-list]");
+  if (!list) return;
+  const query = inboxQuery();
+  const visible = filterThreads(state.threads, query);
+  const empty = query.unreadOnly
+    ? "No unread chats."
+    : query.q.trim()
+      ? "No chats match that search."
+      : "";
+  list.innerHTML = threadListHtml(visible, activeId, empty);
+  const mark = app.querySelector("[data-mark-all-read]");
+  if (mark) mark.disabled = !state.threads.some((thread) => thread.unread);
+}
+
+function bindInbox() {
+  const pane = app.querySelector(".thread-pane");
+  if (!pane) return;
+  const paint = () =>
+    paintInboxList(app.querySelector("[data-conversation]")?.dataset.threadId || "");
+  pane.querySelector("[data-inbox-q]")?.addEventListener("input", paint);
+  pane.querySelector("[data-inbox-unread]")?.addEventListener("change", paint);
+  pane.querySelector("[data-mark-all-read]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const { unread } = await api.markAllRead();
+      state.unread = unread;
+      for (const thread of state.threads) thread.unread = 0;
+      paintUnread();
+      paint();
+    } catch (error) {
+      button.disabled = false;
+      alert(error.message);
+    }
+  });
 }
 
 // The ignore tab. Un-ignoring runs the same block route the conversation menu
@@ -611,7 +683,9 @@ async function openConversation(id) {
   try {
     const { thread, messages } = await readConversation(id);
     panel.dataset.threadId = thread.id;
-    panel.innerHTML = conversationHtml(thread, messages, state.user?.id, state.emojis);
+    panel.innerHTML = conversationHtml(thread, messages, state.user?.id, state.emojis, {
+      snippets: listingOwnedBy(thread.kind, thread.listingId, state.user) ? REPLY_SNIPPETS : [],
+    });
     const bubbles = panel.querySelector("[data-bubbles]");
     if (bubbles) bubbles.scrollTop = bubbles.scrollHeight;
     bindConversation(panel, thread);
@@ -738,6 +812,22 @@ function bindConversation(panel, thread) {
       alert(error.message);
     }
   });
+  panel.querySelector("[data-mute-thread]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const muted = button.dataset.muted !== "1";
+    try {
+      await api.muteThread(button.dataset.muteThread, muted);
+      const row = state.threads.find((item) => item.id === thread.id);
+      if (row) row.muted = muted;
+      thread.muted = muted;
+      await openConversation(thread.id);
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  panel.querySelectorAll("[data-snippet]").forEach((button) => {
+    button.addEventListener("click", () => insertComposerText(panel, button.dataset.snippet));
+  });
   const report = panel.querySelector(".report-form");
   report?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -810,6 +900,45 @@ function bindCards(root = app) {
     });
   });
   bindCopyText(root);
+  paintSaves(root);
+}
+
+function paintSaves(root = document) {
+  root.querySelectorAll("[data-save-kind]").forEach((button) => {
+    const on = isSaved(button.dataset.saveKind, button.dataset.saveId);
+    button.setAttribute("aria-pressed", on ? "true" : "false");
+    button.setAttribute("aria-label", on ? "Saved" : "Save");
+    button.textContent = on ? "Saved" : "Save";
+  });
+}
+
+function pingBumpReminders(listings) {
+  const prefs = loadAlertPrefs();
+  if (!prefs.sound && !prefs.desktop) return;
+  const { due, next } = listingsDueForBumpPing(listings);
+  if (!due.length) return;
+  saveBumpPings(next);
+  if (prefs.sound) playPing();
+  if (prefs.desktop && notificationAllowed()) {
+    const first = due[0];
+    const body =
+      due.length === 1
+        ? `${first.name} goes stale soon. Bump it from Settings.`
+        : `${due.length} listings go stale soon. Bump them from Settings.`;
+    try {
+      const n = new Notification("Bump reminder", { body, icon: "/favicon.png", tag: "wfr-bump" });
+      n.onclick = () => {
+        try {
+          globalThis.focus?.();
+        } catch {
+          /* ignore */
+        }
+        n.close();
+      };
+    } catch {
+      /* permission or browser */
+    }
+  }
 }
 
 // Copy buttons carry their payload in the attribute, so the same handler
@@ -862,9 +991,69 @@ function bindMediaGallery() {
   });
 }
 
+function listingOwnedBy(kind, listingId, user) {
+  if (!user || !listingId) return false;
+  if ((user.recruitingOn || []).some((item) => item.id === listingId)) return true;
+  const list = state[LISTING_LISTS[kind]] || [];
+  return list.some((item) => item.id === listingId && item.ownerId === user.id);
+}
+
+function insertComposerText(panel, text) {
+  const editor = panel.querySelector("[data-rich-editor]");
+  const box = panel.querySelector("textarea[name=body]");
+  if (editor) {
+    editor.focus();
+    document.execCommand("insertText", false, text);
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+    return;
+  }
+  if (box) {
+    box.focus();
+    box.value = box.value ? `${box.value} ${text}` : text;
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+}
+
+let prefsTimer;
+function syncPrefs() {
+  if (!state.user) return;
+  clearTimeout(prefsTimer);
+  prefsTimer = setTimeout(() => {
+    api.putPrefs({ saves: loadSaves(), drafts: loadAllDrafts() }).catch(() => {});
+  }, 700);
+}
+
+function restoreDirectorySearch(path) {
+  if (!rememberedIsDefault(window.location.search)) return;
+  const remembered = loadRememberedSearch(path);
+  if (!remembered) return;
+  history.replaceState({}, "", `${path}${remembered}`);
+}
+
+function rememberDirectory(path, qs) {
+  saveRememberedSearch(path, qs);
+}
+
+function pauseReasonPrompt(pausing) {
+  if (!pausing) return "";
+  const typed = window.prompt("Optional note for recruits (why you're paused). Leave blank to skip.", "");
+  if (typed === null) return null;
+  return typed.trim().slice(0, 140);
+}
+
+function viewedOf() {
+  return resolveSaves(loadViewed(), state);
+}
+
 function bindListingPage() {
   bindCopyText();
   bindMediaGallery();
+  paintSaves();
+  app.querySelector("[data-dismiss-live]")?.addEventListener("click", () => {
+    const url = `${window.location.pathname}`;
+    history.replaceState({}, "", url);
+    app.querySelector("[data-live-checklist]")?.remove();
+  });
   app.querySelector("[data-copy-url]")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     try {
@@ -2237,10 +2426,28 @@ function paintCharCounts(root) {
   });
 }
 
-function bindListingComposer(form, { imageUrl = null, onChange }) {
+function bindListingComposer(form, { imageUrl = null, onChange, draftKind = "", draftId = "", skipDraftRestore = false }) {
+  const key = draftKind ? draftKey(draftKind, draftId) : "";
+  if (key && !skipDraftRestore) {
+    const saved = loadDraft(key);
+    if (saved) {
+      restoreComposer(form, saved);
+      restoreComposerRows(form, saved);
+      const note = form.querySelector("[data-draft-note]");
+      if (note) note.hidden = false;
+    }
+  }
   const media = { image: imageUrl, entries: [] };
+  let timer;
   const refresh = () => {
     paintCharCounts(form);
+    if (key) {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        saveDraft(key, serializeComposer(form));
+        syncPrefs();
+      }, 400);
+    }
     onChange(media);
   };
   bindRichText(form, refresh);
@@ -2256,6 +2463,7 @@ function bindListingComposer(form, { imageUrl = null, onChange }) {
   bindRoleRows(form, refresh);
   form.addEventListener("input", refresh);
   refresh();
+  return key;
 }
 
 // The list fields sync into hidden textareas, and a hidden `required` control
@@ -2372,6 +2580,7 @@ async function render() {
               : "WF Clan Recruit — Warframe Clans & Alliances";
 
   if (path === "/browse") {
+    restoreDirectorySearch("/browse");
     const { filters: initial, page: startPage } = filtersFromSearch(window.location.search);
     let page = startPage;
     const windowed = paginate(applyClanFilters(state.clans, initial), page);
@@ -2394,6 +2603,7 @@ async function render() {
       results.innerHTML = clanResultsHtml(windowedNext.items, next, windowedNext);
       bindCards(results);
       const qs = filtersToSearch(next, page);
+      rememberDirectory("/browse", qs);
       const nextUrl = `/browse${qs}`;
       if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
         history.replaceState({}, "", nextUrl);
@@ -2402,6 +2612,7 @@ async function render() {
     bindFilterUpdates(app.querySelector(".browse"), paint);
     bindFiltersToggle();
     app.querySelector("[data-clear-filters]")?.addEventListener("click", () => {
+      clearRememberedSearch("/browse");
       resetFilterForm(form);
       paint(1);
     });
@@ -2412,10 +2623,12 @@ async function render() {
       app.querySelector("#results")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
     bindCards();
+    rememberDirectory("/browse", filtersToSearch(initial, page));
     return;
   }
 
   if (path === "/alliances") {
+    restoreDirectorySearch("/alliances");
     const { filters: initial, page: startPage } = filtersFromSearch(window.location.search);
     let page = startPage;
     const windowed = paginate(applyAllianceFilters(state.alliances, initial), page);
@@ -2436,6 +2649,7 @@ async function render() {
       results.innerHTML = allianceResultsHtml(windowedNext.items, next, windowedNext);
       bindCards(results);
       const qs = filtersToSearch(next, page);
+      rememberDirectory("/alliances", qs);
       const nextUrl = `/alliances${qs}`;
       if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
         history.replaceState({}, "", nextUrl);
@@ -2444,6 +2658,7 @@ async function render() {
     bindFilterUpdates(app.querySelector(".browse"), paint);
     bindFiltersToggle();
     app.querySelector("[data-clear-filters]")?.addEventListener("click", () => {
+      clearRememberedSearch("/alliances");
       resetFilterForm(form);
       paint(1);
     });
@@ -2454,6 +2669,7 @@ async function render() {
       app.querySelector("#results")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
     bindCards();
+    rememberDirectory("/alliances", filtersToSearch(initial, page));
     return;
   }
 
@@ -2476,13 +2692,14 @@ async function render() {
     } catch {
       state.threads = [];
     }
-    app.innerHTML = messagesView({ user: state.user, threads: state.threads });
-    // An empty inbox renders no thread list and no conversation panel, so there
-    // is nothing below this to bind.
-    if (!state.threads.length) return;
-    // ?thread= is what the Message button on a listing redirects to, so a
-    // conversation opened from a post lands on that conversation.
+    app.innerHTML = messagesView({
+      user: state.user,
+      threads: state.threads,
+      activeId: params.thread || "",
+    });
     if (params.thread) await openConversation(params.thread);
+    if (!state.threads.length && !params.thread) return;
+    bindInbox();
     app.querySelector("[data-thread-list]")?.addEventListener("click", (event) => {
       const row = event.target.closest("[data-thread]");
       if (!row) return;
@@ -2492,6 +2709,7 @@ async function render() {
   }
 
   if (path === "/players") {
+    restoreDirectorySearch("/players");
     const { filters: initial, page: startPage } = filtersFromSearch(window.location.search);
     let page = startPage;
     const windowed = paginate(applyPlayerFilters(state.players, initial), page);
@@ -2514,6 +2732,7 @@ async function render() {
       results.innerHTML = playerResultsHtml(windowedNext.items, next, windowedNext);
       bindCards(results);
       const qs = filtersToSearch(next, page);
+      rememberDirectory("/players", qs);
       const nextUrl = `/players${qs}`;
       if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
         history.replaceState({}, "", nextUrl);
@@ -2522,6 +2741,7 @@ async function render() {
     bindFilterUpdates(app.querySelector(".browse"), paint);
     bindFiltersToggle();
     app.querySelector("[data-clear-filters]")?.addEventListener("click", () => {
+      clearRememberedSearch("/players");
       resetFilterForm(form);
       paint(1);
     });
@@ -2532,6 +2752,7 @@ async function render() {
       app.querySelector("#results")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
     bindCards();
+    rememberDirectory("/players", filtersToSearch(initial, page));
     return;
   }
 
@@ -2539,8 +2760,17 @@ async function render() {
     // The edit form must never prefill from a trimmed list entry: submitting it
     // would save an empty post body over the real one. Always load the full
     // record before filling the form.
-    const draft = params.id ? await fullListing("clan", params.id) : null;
+    const source = params.clone && !params.id ? await fullListing("clan", params.clone) : null;
+    const draft = params.id
+      ? await fullListing("clan", params.id)
+      : source
+        ? cloneListingFields(source)
+        : null;
     if (params.id && !draft) {
+      app.innerHTML = `<section class="auth-card"><h1>Listing not found</h1><p class="muted">That clan post is gone or the link is wrong.</p></section>`;
+      return;
+    }
+    if (params.clone && !params.id && !draft) {
       app.innerHTML = `<section class="auth-card"><h1>Listing not found</h1><p class="muted">That clan post is gone or the link is wrong.</p></section>`;
       return;
     }
@@ -2549,7 +2779,7 @@ async function render() {
     const editorHere = (state.user?.recruitingOn || []).some(
       (item) => item.id === draft?.id && item.role === "editor"
     );
-    if (draft && state.user && draft.ownerId !== state.user.id && !state.user.admin && !editorHere) {
+    if (draft?.id && state.user && draft.ownerId !== state.user.id && !state.user.admin && !editorHere) {
       app.innerHTML = `<section class="auth-card"><h1>Not allowed</h1><p class="muted">You do not have edit access to that post.</p></section>`;
       return;
     }
@@ -2579,6 +2809,9 @@ async function render() {
     const mr = app.querySelector("#post-mr");
     bindListingComposer(form, {
       imageUrl: draft?.image || null,
+      draftKind: "clan",
+      draftId: draft?.id || "",
+      skipDraftRestore: Boolean(params.clone && !params.id),
       onChange: (media) => {
         if (mr) mr.innerHTML = masteryDisplay(form.mrRequired.value, false);
         if (form.tag) form.tag.value = form.tag.value.toUpperCase();
@@ -2600,11 +2833,13 @@ async function render() {
       }
       try {
         const payload = packForm(form, "playstyles");
-        const result = draft
+        const result = draft?.id
           ? await api.updateClan(draft.id, payload)
           : await api.createClan(payload);
+        clearDraft(draftKey("clan", draft?.id || ""));
+        syncPrefs();
         await refresh();
-        go(`/clans/${result.clan.id}`);
+        go(`/clans/${result.clan.id}${draft?.id ? "" : "?live=1"}`);
       } catch (error) {
         showNote(note, error.message);
       }
@@ -2613,12 +2848,21 @@ async function render() {
   }
 
   if (path === "/post-alliance") {
-    const draft = params.id ? await fullListing("alliance", params.id) : null;
+    const source = params.clone && !params.id ? await fullListing("alliance", params.clone) : null;
+    const draft = params.id
+      ? await fullListing("alliance", params.id)
+      : source
+        ? cloneListingFields(source)
+        : null;
     if (params.id && !draft) {
       app.innerHTML = `<section class="auth-card"><h1>Listing not found</h1><p class="muted">That alliance post is gone or the link is wrong.</p></section>`;
       return;
     }
-    if (draft && state.user && draft.ownerId !== state.user.id && !state.user.admin) {
+    if (params.clone && !params.id && !draft) {
+      app.innerHTML = `<section class="auth-card"><h1>Listing not found</h1><p class="muted">That alliance post is gone or the link is wrong.</p></section>`;
+      return;
+    }
+    if (draft?.id && state.user && draft.ownerId !== state.user.id && !state.user.admin) {
       app.innerHTML = `<section class="auth-card"><h1>Not allowed</h1><p class="muted">You can only edit your own posts.</p></section>`;
       return;
     }
@@ -2637,6 +2881,9 @@ async function render() {
     const note = app.querySelector("#form-note");
     bindListingComposer(form, {
       imageUrl: draft?.image || null,
+      draftKind: "alliance",
+      draftId: draft?.id || "",
+      skipDraftRestore: Boolean(params.clone && !params.id),
       onChange: (media) => {
         if (form.tag) form.tag.value = form.tag.value.toUpperCase();
         preview.innerHTML = previewHtml(allianceCard(previewAlliance(form, media.image, media.entries)), form, media);
@@ -2660,11 +2907,13 @@ async function render() {
       }
       try {
         const payload = packForm(form, "platforms", "rosterIds");
-        const result = draft
+        const result = draft?.id
           ? await api.updateAlliance(draft.id, payload)
           : await api.createAlliance(payload);
+        clearDraft(draftKey("alliance", draft?.id || ""));
+        syncPrefs();
         await refresh();
-        go(`/alliances/${result.alliance.id}`);
+        go(`/alliances/${result.alliance.id}${draft?.id ? "" : "?live=1"}`);
       } catch (error) {
         showNote(note, error.message);
       }
@@ -2698,6 +2947,8 @@ async function render() {
     const avatar = state.user?.discordAvatarUrl || null;
     bindListingComposer(form, {
       imageUrl: avatar,
+      draftKind: "player",
+      draftId: draft?.id || "",
       onChange: (media) => {
         if (mr) mr.innerHTML = masteryDisplay(form.mr.value, false);
         preview.innerHTML = previewHtml(
@@ -2735,11 +2986,13 @@ async function render() {
       }
       try {
         const payload = packForm(form, "playstyles", "wantsTiers");
-        const result = draft
+        const result = draft?.id
           ? await api.updatePlayer(draft.id, payload)
           : await api.createPlayer(payload);
+        clearDraft(draftKey("player", draft?.id || ""));
+        syncPrefs();
         await refresh();
-        go(`/players/${result.player.id}`);
+        go(`/players/${result.player.id}${draft?.id ? "" : "?live=1"}`);
       } catch (error) {
         showNote(note, error.message);
       }
@@ -2801,9 +3054,15 @@ async function render() {
       alliances: mineAlliances,
       players: minePlayers,
       reports,
+      saved: resolveSaves(loadSaves(), state),
+      viewed: viewedOf(),
     });
     bindForumForm();
     bindRecruiters();
+    paintSaves();
+    pingBumpReminders(
+      [...mineClans, ...mineAlliances, ...minePlayers].filter((item) => item.ownerId === state.user.id)
+    );
     return;
   }
 
@@ -2842,11 +3101,16 @@ async function render() {
       return;
     }
     document.title = `${clan.name} — WF Clan Recruit`;
+    recordView("clan", clan.id);
     app.innerHTML = clanPage(clan, {
       admin: Boolean(state.user?.admin),
       user: state.auth.messaging === false ? null : state.user,
+      similar: similarClans(clan, state.clans),
+      live: params.live === "1",
     });
     bindListingPage();
+    const similarRoot = app.querySelector(".similar-listings");
+    if (similarRoot) bindCards(similarRoot);
     return;
   }
 
@@ -2857,11 +3121,16 @@ async function render() {
       return;
     }
     document.title = `${alliance.name} — WF Clan Recruit`;
+    recordView("alliance", alliance.id);
     app.innerHTML = alliancePage(alliance, {
       admin: Boolean(state.user?.admin),
       user: state.auth.messaging === false ? null : state.user,
+      similar: similarAlliances(alliance, state.alliances),
+      live: params.live === "1",
     });
     bindListingPage();
+    const similarRoot = app.querySelector(".similar-listings");
+    if (similarRoot) bindCards(similarRoot);
     return;
   }
 
@@ -2872,12 +3141,17 @@ async function render() {
       return;
     }
     document.title = `${player.name} — WF Clan Recruit`;
+    recordView("player", player.id);
     app.innerHTML = playerPage(player, {
       admin: Boolean(state.user?.admin),
       mine: Boolean(state.user && player.ownerId === state.user.id),
       user: state.auth.messaging === false ? null : state.user,
+      similar: similarPlayers(player, state.players),
+      live: params.live === "1",
     });
     bindListingPage();
+    const similarRoot = app.querySelector(".similar-listings");
+    if (similarRoot) bindCards(similarRoot);
     return;
   }
 
@@ -2891,11 +3165,26 @@ async function render() {
     return;
   }
 
-  app.innerHTML = homeView(state);
+  if (path === "/compare") {
+    document.title = "Compare clans — WF Clan Recruit";
+    const ids = String(params.ids || "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean)
+      .slice(0, 3);
+    const clans = ids
+      .map((id) => state.clans.find((clan) => clan.id === id && !clan.hidden))
+      .filter(Boolean);
+    app.innerHTML = compareView(clans);
+    return;
+  }
+
+  app.innerHTML = homeView({ ...state, viewed: viewedOf() });
   app.querySelector("[data-hero-search]")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const destination = data.get("kind") === "alliances" ? "/alliances" : "/browse";
+    const kind = String(data.get("kind") || "clans");
+    const destination = kind === "alliances" ? "/alliances" : kind === "players" ? "/players" : "/browse";
     go(`${destination}?q=${encodeURIComponent(String(data.get("q") || ""))}`);
   });
   bindCards();
@@ -2913,6 +3202,29 @@ document.addEventListener("click", async (event) => {
     }
   }
   if (event.target.closest("[data-link]")) closeDrawer();
+  const saveBtn = event.target.closest("[data-save-kind]");
+  if (saveBtn) {
+    event.preventDefault();
+    toggleSave(saveBtn.dataset.saveKind, saveBtn.dataset.saveId);
+    paintSaves();
+    syncPrefs();
+    if (window.location.pathname === "/account") await render();
+    return;
+  }
+  const compareSaved = event.target.closest("[data-compare-saved]");
+  if (compareSaved) {
+    event.preventDefault();
+    const ids = [...app.querySelectorAll("[data-compare-id]:checked")]
+      .map((el) => el.dataset.compareId)
+      .filter(Boolean)
+      .slice(0, 3);
+    if (ids.length < 2) {
+      alert("Pick 2 or 3 clans to compare.");
+      return;
+    }
+    go(`/compare?ids=${ids.join(",")}`);
+    return;
+  }
   const jump = event.target.closest("[data-jump]");
   if (jump) {
     event.preventDefault();
@@ -2957,8 +3269,11 @@ document.addEventListener("click", async (event) => {
   const pauseClan = event.target.closest("[data-pause-clan]");
   if (pauseClan) {
     event.preventDefault();
+    const pausing = pauseClan.dataset.paused === "1";
+    const reason = pauseReasonPrompt(pausing);
+    if (reason === null) return;
     try {
-      await api.pauseClan(pauseClan.dataset.pauseClan, pauseClan.dataset.paused === "1");
+      await api.pauseClan(pauseClan.dataset.pauseClan, pausing, reason);
       await refresh();
       render();
     } catch (error) {
@@ -2969,8 +3284,11 @@ document.addEventListener("click", async (event) => {
   const pauseAlliance = event.target.closest("[data-pause-alliance]");
   if (pauseAlliance) {
     event.preventDefault();
+    const pausing = pauseAlliance.dataset.paused === "1";
+    const reason = pauseReasonPrompt(pausing);
+    if (reason === null) return;
     try {
-      await api.pauseAlliance(pauseAlliance.dataset.pauseAlliance, pauseAlliance.dataset.paused === "1");
+      await api.pauseAlliance(pauseAlliance.dataset.pauseAlliance, pausing, reason);
       await refresh();
       render();
     } catch (error) {
@@ -3009,8 +3327,11 @@ document.addEventListener("click", async (event) => {
   const pausePlayer = event.target.closest("[data-pause-player]");
   if (pausePlayer) {
     event.preventDefault();
+    const pausing = pausePlayer.dataset.paused === "1";
+    const reason = pauseReasonPrompt(pausing);
+    if (reason === null) return;
     try {
-      await api.pausePlayer(pausePlayer.dataset.pausePlayer, pausePlayer.dataset.paused === "1");
+      await api.pausePlayer(pausePlayer.dataset.pausePlayer, pausing, reason);
       await refresh();
       render();
     } catch (error) {

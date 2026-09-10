@@ -1,14 +1,73 @@
+export const PAUSE_REASON_MAX = 140;
 export const STALE_AFTER_MS = 21 * 24 * 60 * 60 * 1000;
+
+export function sanitizePauseReason(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, PAUSE_REASON_MAX);
+}
+
+export function applyPause(item, paused, reason) {
+  const next = Boolean(paused);
+  item.paused = next;
+  item.pauseReason = next ? sanitizePauseReason(reason) : "";
+  return item;
+}
+
+const CLONE_DROP = new Set([
+  "id",
+  "ownerId",
+  "stats",
+  "recent",
+  "bumpedAt",
+  "createdAt",
+  "hidden",
+  "hiddenAt",
+  "hiddenBy",
+  "paused",
+  "pauseReason",
+  "stale",
+  "recruiting",
+  "inviteOk",
+  "inviteCheckedAt",
+  "canBump",
+  "recruiters",
+  "transfer",
+  "whisperName",
+  "contacts",
+  "ownerVerified",
+  "online",
+  "presenceStatus",
+  "memberClans",
+  "rosterIds",
+  "allianceId",
+  "allianceName",
+]);
+
+export function cloneListingFields(listing) {
+  if (!listing) return null;
+  const out = {};
+  for (const [key, value] of Object.entries(listing)) {
+    if (CLONE_DROP.has(key)) continue;
+    out[key] = value;
+  }
+  const name = String(listing.name || "Listing").trim() || "Listing";
+  out.name = `${name} copy`.slice(0, 48);
+  if ("tag" in listing) out.tag = "";
+  return out;
+}
+
 export const REPORT_REASONS = ["dead_invite", "inactive", "fake", "stolen_name", "other"];
 
 export function activityAt(item) {
   return item.bumpedAt || item.createdAt;
 }
 
-export function isStale(item) {
+export function isStale(item, now = Date.now()) {
   const at = new Date(activityAt(item)).getTime();
   if (!Number.isFinite(at)) return false;
-  return Date.now() - at > STALE_AFTER_MS;
+  return now - at > STALE_AFTER_MS;
 }
 
 export function isHidden(item) {

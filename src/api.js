@@ -19,6 +19,7 @@ export const api = {
     request("/api/auth/register", { method: "POST", body: JSON.stringify({ username, password }) }),
   logout: () => request("/api/auth/logout", { method: "POST", body: "{}" }),
   exportAccount: () => request("/api/auth/export"),
+  putPrefs: (prefs) => request("/api/prefs", { method: "PUT", body: JSON.stringify(prefs) }),
   deleteAccount: () => request("/api/auth/account", { method: "DELETE" }),
   forumStart: (profileUrl) =>
     request("/api/auth/forum/start", { method: "POST", body: JSON.stringify({ profileUrl }) }),
@@ -32,8 +33,8 @@ export const api = {
   createClan: (formData) => request("/api/clans", { method: "POST", body: formData }),
   updateClan: (id, formData) => request(`/api/clans/${id}`, { method: "PUT", body: formData }),
   bumpClan: (id) => request(`/api/clans/${id}/bump`, { method: "POST", body: "{}" }),
-  pauseClan: (id, paused) =>
-    request(`/api/clans/${id}/pause`, { method: "POST", body: JSON.stringify({ paused }) }),
+  pauseClan: (id, paused, reason) =>
+    request(`/api/clans/${id}/pause`, { method: "POST", body: JSON.stringify({ paused, reason: reason || "" }) }),
   hideClan: (id, hidden) =>
     request(`/api/clans/${id}/hide`, { method: "POST", body: JSON.stringify({ hidden }) }),
   reportClan: (id, body) => request(`/api/clans/${id}/report`, { method: "POST", body: JSON.stringify(body) }),
@@ -66,8 +67,8 @@ export const api = {
   createAlliance: (formData) => request("/api/alliances", { method: "POST", body: formData }),
   updateAlliance: (id, formData) => request(`/api/alliances/${id}`, { method: "PUT", body: formData }),
   bumpAlliance: (id) => request(`/api/alliances/${id}/bump`, { method: "POST", body: "{}" }),
-  pauseAlliance: (id, paused) =>
-    request(`/api/alliances/${id}/pause`, { method: "POST", body: JSON.stringify({ paused }) }),
+  pauseAlliance: (id, paused, reason) =>
+    request(`/api/alliances/${id}/pause`, { method: "POST", body: JSON.stringify({ paused, reason: reason || "" }) }),
   hideAlliance: (id, hidden) =>
     request(`/api/alliances/${id}/hide`, { method: "POST", body: JSON.stringify({ hidden }) }),
   reportAlliance: (id, body) =>
@@ -78,8 +79,8 @@ export const api = {
   createPlayer: (formData) => request("/api/players", { method: "POST", body: formData }),
   updatePlayer: (id, formData) => request(`/api/players/${id}`, { method: "PUT", body: formData }),
   bumpPlayer: (id) => request(`/api/players/${id}/bump`, { method: "POST", body: "{}" }),
-  pausePlayer: (id, paused) =>
-    request(`/api/players/${id}/pause`, { method: "POST", body: JSON.stringify({ paused }) }),
+  pausePlayer: (id, paused, reason) =>
+    request(`/api/players/${id}/pause`, { method: "POST", body: JSON.stringify({ paused, reason: reason || "" }) }),
   hidePlayer: (id, hidden) =>
     request(`/api/players/${id}/hide`, { method: "POST", body: JSON.stringify({ hidden }) }),
   reportPlayer: (id, body) => request(`/api/players/${id}/report`, { method: "POST", body: JSON.stringify(body) }),
@@ -95,6 +96,12 @@ export const api = {
     request(`/api/messages/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify({ body }) }),
   readThread: (id) =>
     request(`/api/messages/${encodeURIComponent(id)}/read`, { method: "POST", body: "{}" }),
+  markAllRead: () => request("/api/messages/read-all", { method: "POST", body: "{}" }),
+  muteThread: (id, muted) =>
+    request(`/api/messages/${encodeURIComponent(id)}/mute`, {
+      method: "POST",
+      body: JSON.stringify({ muted }),
+    }),
   reportThread: (id, body) =>
     request(`/api/messages/${encodeURIComponent(id)}/report`, { method: "POST", body: JSON.stringify(body) }),
   blockUser: (userId, blocked) =>

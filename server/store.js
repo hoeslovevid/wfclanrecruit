@@ -92,6 +92,7 @@ export async function initStore(dataDir) {
         -- everything up to this moment simply stops being theirs to see. A
         -- later message brings the thread back with only what is new in it.
         cleared_at TIMESTAMPTZ,
+        muted_at TIMESTAMPTZ,
         PRIMARY KEY (thread_id, user_id)
       );
       CREATE TABLE IF NOT EXISTS messages (
@@ -118,6 +119,7 @@ export async function initStore(dataDir) {
     // CREATE TABLE IF NOT EXISTS is a no-op against a table that already
     // exists, so a column added after the first deploy needs saying twice.
     await query("ALTER TABLE thread_members ADD COLUMN IF NOT EXISTS cleared_at TIMESTAMPTZ");
+    await query("ALTER TABLE thread_members ADD COLUMN IF NOT EXISTS muted_at TIMESTAMPTZ");
     return;
   }
   filePath = path.join(dataDir, "messages.json");
@@ -177,6 +179,7 @@ export async function membersOf(threadId) {
       userId: row.user_id,
       readAt: iso(row.read_at),
       clearedAt: iso(row.cleared_at),
+      mutedAt: iso(row.muted_at),
     }));
   }
   return cache.members.filter((item) => item.threadId === threadId);
@@ -226,7 +229,7 @@ export async function openThread({ id, kind, listingId, listingName, userIds }) 
 export async function inboxFor(userId, limit = 50) {
   if (usingPostgres) {
     const { rows } = await query(
-      `SELECT t.*, m.read_at,
+      `SELECT t.*, m.read_at, m.muted_at,
               last.body AS last_body, last.created_at AS last_created_at, last.sender_id AS last_sender_id,
               (SELECT count(*) FROM messages u
                 WHERE u.thread_id = t.id
@@ -250,6 +253,7 @@ export async function inboxFor(userId, limit = 50) {
     return rows.map((row) => ({
       ...rowToThread(row),
       readAt: iso(row.read_at),
+      muted: Boolean(row.muted_at),
       unread: row.unread || 0,
       last: row.last_created_at
         ? { body: row.last_body, createdAt: iso(row.last_created_at), senderId: row.last_sender_id || null }
@@ -275,6 +279,7 @@ export async function inboxFor(userId, limit = 50) {
       return {
         ...thread,
         readAt: member.readAt,
+        muted: Boolean(member.mutedAt),
         unread: messages.filter(
           (item) => item.senderId !== userId && new Date(item.createdAt).getTime() > since
         ).length,
@@ -423,6 +428,37 @@ export async function markRead(threadId, userId) {
   return write((db) => {
     const member = db.members.find((item) => item.threadId === threadId && item.userId === userId);
     if (member) member.readAt = now;
+    return now;
+  });
+}
+
+export async function setMuted(threadId, userId, muted) {
+  const now = muted ? nextStamp() : null;
+  if (usingPostgres) {
+    await query("UPDATE thread_members SET muted_at = $3 WHERE thread_id = $1 AND user_id = $2", [
+      threadId,
+      userId,
+      now,
+    ]);
+    return now;
+  }
+  return write((db) => {
+    const member = db.members.find((item) => item.threadId === threadId && item.userId === userId);
+    if (member) member.mutedAt = now;
+    return now;
+  });
+}
+
+export async function markAllRead(userId) {
+  const now = nextStamp();
+  if (usingPostgres) {
+    await query("UPDATE thread_members SET read_at = $2 WHERE user_id = $1", [userId, now]);
+    return now;
+  }
+  return write((db) => {
+    for (const member of db.members) {
+      if (member.userId === userId) member.readAt = now;
+    }
     return now;
   });
 }

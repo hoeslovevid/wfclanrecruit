@@ -8,7 +8,15 @@ import {
   accountMenu,
   accountView,
   adminView,
+  alliancesView,
+  browseView,
+  clanCard,
+  clanPage,
+  compareView,
   conversationHtml,
+  filterThreads,
+  guideView,
+  homeView,
   navAccount,
   ignoreListHtml,
   ignoreRow,
@@ -16,10 +24,13 @@ import {
   messageBubble,
   messagePresence,
   messagesView,
+  playersView,
   relativeTime,
+  saveButton,
   threadRow,
   verifiedTick,
 } from "./views.js";
+import { defaultFilters } from "./browse.js";
 
 const verified = { id: "u1", name: "Gunson", verified: true, online: false };
 const plain = { id: "u2", name: "NasNotDaily", verified: false, online: false };
@@ -106,6 +117,7 @@ test("a draft conversation offers ignore but not leave", () => {
   const html = conversationHtml({ ...thread, draft: true }, [], "u1");
   assert.match(html, /Ignore user/);
   assert.doesNotMatch(html, /Leave chat/);
+  assert.doesNotMatch(html, /Mute chat/);
 });
 
 test("an ignored conversation offers the way back and no composer", () => {
@@ -388,3 +400,185 @@ test("the status line reserves the widest label so the nav cannot shift", () => 
     assert.match(html, /account-status-sizer[^>]*>Online in game</, `sizer missing for ${status}`);
   }
 });
+
+test("a listing card and page both offer a save control", () => {
+  const clan = {
+    id: "steel",
+    name: "Steel Meridian",
+    tag: "SM",
+    headline: "Endgame",
+    summary: "Nights",
+    playstyles: ["Late Steel Path"],
+    platform: "PC",
+    tier: "Moon",
+    region: "North America",
+    status: "Open",
+    recruiting: true,
+    members: 40,
+    mrRequired: 10,
+    createdAt: "2026-08-01T00:00:00.000Z",
+  };
+  assert.match(clanCard(clan), /data-save-kind="clan"/);
+  assert.match(saveButton("clan", "steel"), /Save/);
+  assert.equal(saveButton("clan", "preview"), "");
+  const page = clanPage(clan, { similar: [{ ...clan, id: "other", name: "Other" }] });
+  assert.match(page, /Similar clans/);
+  assert.doesNotMatch(page, /Invite was valid/);
+});
+
+test("invite last-checked is shown when the invite is live", () => {
+  const html = clanPage({
+    id: "steel",
+    name: "Steel Meridian",
+    tag: "SM",
+    headline: "",
+    summary: "",
+    playstyles: [],
+    platform: "PC",
+    tier: "Ghost",
+    region: "Global",
+    language: "English",
+    status: "Open",
+    recruiting: true,
+    members: 1,
+    mrRequired: 0,
+    createdAt: "2026-08-01T00:00:00.000Z",
+    discord: "https://discord.gg/abc",
+    contact: "discord",
+    inviteOk: true,
+    inviteCheckedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+  });
+  assert.match(html, /Invite was valid/);
+});
+
+test("home search includes players", () => {
+  const html = homeView({ clans: [], alliances: [] });
+  assert.match(html, /<option value="players">Players<\/option>/);
+  assert.match(html, /href="\/players"/);
+  assert.match(html, /LOOKING FOR A CLAN/);
+});
+
+test("the clan directory has filter presets and an online-first sort", () => {
+  const html = browseView([], defaultFilters(), { items: [], page: 1, pages: 1, total: 0 });
+  assert.match(html, /PC · NA/);
+  assert.match(html, /PC · EU/);
+  assert.match(html, /Online first/);
+});
+
+test("alliance and player directories have their own presets", () => {
+  assert.match(alliancesView([], defaultFilters(), { items: [], page: 1, pages: 1, total: 0 }), /PC · EU/);
+  assert.match(playersView([], defaultFilters(), { items: [], page: 1, pages: 1, total: 0 }), /PC · EU/);
+});
+
+test("an empty settings page points at browse and looking-for-clan", () => {
+  const html = accountView({
+    user: { ...me, admin: false, canPublish: true },
+    clans: [],
+    alliances: [],
+    players: [],
+  });
+  assert.match(html, /Nothing posted yet/);
+  assert.match(html, /href="\/lfc"/);
+  assert.match(html, />Saved</);
+});
+
+test("the guide tells a recruit how to pick a clan", () => {
+  const html = guideView();
+  assert.match(html, /How to pick a clan/);
+  assert.match(html, /inactivity kick/i);
+});
+
+test("inbox search filters by name, listing, and preview", () => {
+  const unread = { ...thread, unread: 2, with: { name: "NasNotDaily" } };
+  assert.equal(filterThreads([thread, unread], { unreadOnly: true }).length, 1);
+  assert.equal(filterThreads([thread], { q: "zylok" }).length, 1);
+  assert.equal(filterThreads([thread], { q: "nope" }).length, 0);
+});
+
+test("the inbox offers search, unread only, and mark all read", () => {
+  const html = messagesView({ user: { id: "u1" }, threads: [{ ...thread, unread: 1 }] });
+  assert.match(html, /data-inbox-q/);
+  assert.match(html, /data-inbox-unread/);
+  assert.match(html, /data-mark-all-read/);
+});
+
+test("a conversation can mute the thread and insert leader snippets", () => {
+  const html = conversationHtml(thread, [], "u1", [], {
+    snippets: [{ id: "discord", label: "Join Discord", text: "Join the Discord." }],
+  });
+  assert.match(html, /data-mute-thread=/);
+  assert.match(html, /Mute chat/);
+  assert.match(html, /data-snippet="Join the Discord."/);
+});
+
+test("filtered clan cards say why they matched", () => {
+  const html = clanCard(
+    {
+      id: "steel",
+      name: "Steel Meridian",
+      tag: "SM",
+      headline: "Endgame",
+      summary: "Nights",
+      playstyles: ["Late Steel Path"],
+      platform: "PC",
+      tier: "Moon",
+      region: "North America",
+      status: "Open",
+      recruiting: true,
+      members: 40,
+      mrRequired: 10,
+      createdAt: "2026-08-01T00:00:00.000Z",
+    },
+    { platform: "PC", playstyles: ["Late Steel Path"] }
+  );
+  assert.match(html, /Matches PC · Late Steel Path/);
+});
+
+test("a published listing can show the live checklist", () => {
+  const html = clanPage(
+    {
+      id: "steel",
+      name: "Steel",
+      tag: "SM",
+      headline: "",
+      summary: "",
+      playstyles: [],
+      platform: "PC",
+      tier: "Ghost",
+      region: "Global",
+      language: "English",
+      status: "Open",
+      recruiting: true,
+      members: 1,
+      mrRequired: 0,
+      createdAt: "2026-08-01T00:00:00.000Z",
+    },
+    { live: true }
+  );
+  assert.match(html, /Just published/);
+  assert.match(html, /data-dismiss-live/);
+  assert.match(html, /Copy intro/);
+});
+
+test("compare needs two clans and lists MR and inactivity", () => {
+  assert.match(compareView([]), /Pick two or three/);
+  const html = compareView([
+    { id: "a", name: "Alpha", platform: "PC", region: "NA", status: "Open", mrRequired: 16, members: 10, tier: "Ghost", inactiveDays: 14, playstyles: ["Social"] },
+    { id: "b", name: "Beta", platform: "PC", region: "EU", status: "Trial Required", mrRequired: 8, members: 20, tier: "Shadow", inactiveDays: 0, playstyles: ["Endgame"] },
+  ]);
+  assert.match(html, /Inactivity kick/);
+  assert.match(html, /14 days/);
+});
+
+test("saved clans offer a compare checkbox", () => {
+  const html = accountView({
+    user: { ...me, admin: false, canPublish: true },
+    clans: [{ id: "mine", name: "Mine", ownerId: "u1", status: "Open" }],
+    alliances: [],
+    players: [],
+    saved: [{ kind: "clan", id: "steel", href: "/clans/steel", item: { id: "steel", name: "Steel" } }],
+  });
+  assert.match(html, /data-compare-id="steel"/);
+  assert.match(html, />Viewed</);
+});
+

@@ -44,12 +44,14 @@ import {
   REPORT_REASONS,
   activityAt as listingActivity,
   applyAllianceRoster,
+  applyPause,
   isHidden,
   listingConflict,
   ownerVerified,
   whisperName,
   withListingState,
 } from "./listing.js";
+import { userPrefs } from "./prefs.js";
 import {
   aboutTooLong,
   isSafeHref,
@@ -1120,6 +1122,7 @@ app.get("/api/auth/me", (req, res) => {
     user: account
       ? {
           ...account,
+          prefs: userPrefs(user),
           presence: { ...presenceOf(user), keepMinutes: keepMinutesOf(user) },
           keepMinutes: KEEP_MINUTES,
           invites: pendingInvitesFor(readDb(), user.id),
@@ -1530,6 +1533,25 @@ app.get("/api/auth/export", requireUser, exportLimiter, (req, res) => {
     alliances: (db.alliances || []).filter((item) => item.ownerId === user.id),
     players: (db.players || []).filter((item) => item.ownerId === user.id),
     reports: (db.reports || []).filter((item) => item.reporterId === user.id),
+    prefs: userPrefs(user),
+  });
+});
+
+app.put("/api/prefs", requireUser, (req, res) => {
+  writeDb((db) => {
+    const user = db.users.find((item) => item.id === req.user.id);
+    if (!user) {
+      res.status(404).json({ error: "Account not found." });
+      return db;
+    }
+    const prefs = userPrefs({
+      saves: req.body?.saves,
+      drafts: req.body?.drafts,
+    });
+    user.saves = prefs.saves;
+    user.drafts = prefs.drafts;
+    res.json({ prefs });
+    return db;
   });
 });
 
@@ -2002,7 +2024,7 @@ app.post("/api/clans/:id/pause", requireUser, (req, res) => {
       res.status(403).json({ error: "You do not have edit access to that post." });
       return db;
     }
-    clan.paused = Boolean(req.body.paused);
+    applyPause(clan, req.body.paused, req.body.reason ?? req.body.pauseReason);
     res.json({ clan: decorateClan(clan, db) });
     return db;
   });
@@ -2239,7 +2261,7 @@ app.post("/api/players/:id/pause", requireUser, (req, res) => {
       res.status(403).json({ error: "You can only pause your own profile." });
       return db;
     }
-    player.paused = Boolean(req.body.paused);
+    applyPause(player, req.body.paused, req.body.reason ?? req.body.pauseReason);
     res.json({ player: decoratePlayer(player, db) });
     return db;
   });
@@ -2455,7 +2477,7 @@ app.post("/api/alliances/:id/pause", requireUser, (req, res) => {
       res.status(403).json({ error: "You can only pause your own posts." });
       return db;
     }
-    alliance.paused = Boolean(req.body.paused);
+    applyPause(alliance, req.body.paused, req.body.reason ?? req.body.pauseReason);
     res.json({ alliance: decorateAlliance(alliance, db) });
     return db;
   });
@@ -2697,6 +2719,7 @@ async function decorateThread(db, thread, userId, blocks = []) {
     // Without this the client had no way of knowing, so a block held until the
     // page was reloaded and then quietly appeared to have come undone.
     blocked: Boolean(otherId) && blockedBetween(blocks, userId, otherId),
+    muted: Boolean(members.find((item) => item.userId === userId)?.mutedAt || thread.muted),
   };
 }
 
@@ -2771,6 +2794,11 @@ app.get("/api/messages/stream", requireUser, requireStore, (req, res) => {
 
 app.get("/api/messages/unread", requireUser, requireStore, async (req, res) => {
   res.json({ unread: await store.unreadTotal(req.user.id) });
+});
+
+app.post("/api/messages/read-all", requireUser, requireStore, async (req, res) => {
+  const readAt = await store.markAllRead(req.user.id);
+  res.json({ readAt, unread: await store.unreadTotal(req.user.id) });
 });
 
 // Blocking cuts both directions at once - see blockedBetween in messages.js.
@@ -2992,6 +3020,14 @@ app.post("/api/messages/:id/read", requireUser, requireStore, async (req, res) =
   if (!found) return;
   const readAt = await store.markRead(found.thread.id, req.user.id);
   res.json({ readAt, unread: await store.unreadTotal(req.user.id) });
+});
+
+app.post("/api/messages/:id/mute", requireUser, requireStore, async (req, res) => {
+  const found = await requireMember(req, res);
+  if (!found) return;
+  const muted = req.body.muted !== false;
+  const mutedAt = await store.setMuted(found.thread.id, req.user.id, muted);
+  res.json({ muted, mutedAt });
 });
 
 app.post("/api/messages/:id/report", requireUser, requireStore, reportLimiter, async (req, res) => {

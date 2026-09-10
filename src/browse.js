@@ -142,6 +142,12 @@ export function applyClanFilters(clans, filters) {
     list.sort((a, b) => TIER_CAPS[b.tier] - b.members - (TIER_CAPS[a.tier] - a.members));
   } else if (filters.sort === "mr") {
     list.sort((a, b) => a.mrRequired - b.mrRequired);
+  } else if (filters.sort === "online") {
+    list.sort((a, b) => {
+      if (Boolean(a.online) !== Boolean(b.online)) return a.online ? -1 : 1;
+      if (a.recruiting !== b.recruiting) return a.recruiting ? -1 : 1;
+      return new Date(b.bumpedAt || b.createdAt) - new Date(a.bumpedAt || a.createdAt);
+    });
   } else {
     list.sort((a, b) => {
       if (a.recruiting !== b.recruiting) return a.recruiting ? -1 : 1;
